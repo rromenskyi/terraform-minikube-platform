@@ -1,0 +1,3 @@
+image: mendhak/http-echo:latest
+port: 8080
+replicas: 2

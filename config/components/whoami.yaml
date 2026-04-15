@@ -1,0 +1,3 @@
+image: traefik/whoami:latest
+port: 80
+replicas: 2

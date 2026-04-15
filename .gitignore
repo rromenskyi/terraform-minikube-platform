@@ -1,0 +1,20 @@
+# Env files
+.env
+.env.*
+!.env.example
+
+# Terraform secrets/overrides
+*.tfvars
+*.tfvars.json
+
+# Local cluster access
+kubeconfig*.yaml
+
+# Kubernetes secrets
+manifests/**/secret*.yaml
+
+*.tfstate
+*.tfstate.backup
+.terraform/
+.terraform.lock.hcl
+.DS_Store
