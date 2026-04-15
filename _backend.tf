@@ -1,4 +1,5 @@
-# Root stack backend for remote state in Backblaze B2 (S3-compatible).
+# Remote S3 backend on Backblaze B2 (S3-compatible)
+# Credentials loaded from .env
 terraform {
   backend "s3" {
     bucket = "tfstate-unique"
