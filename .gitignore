@@ -17,6 +17,9 @@ kubeconfig*.yaml
 # Kubernetes secrets
 manifests/**/secret*.yaml
 
+# Local terraform wrapper
+tf
+
 *.tfstate
 *.tfstate.backup
 .terraform/

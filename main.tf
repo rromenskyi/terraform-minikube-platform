@@ -26,18 +26,26 @@
 #   Requires: SSH daemon reachable at ssh_host:ssh_port and a user with
 #   passwordless sudo on the target host (127.0.0.1 for a local install).
 #   A single `terraform apply` is enough: the root `kubernetes` and `helm`
-#   providers wire themselves through `config_path = module.platform.kubeconfig_path`
+#   providers wire themselves through `config_path = module.k8s.kubeconfig_path`
 #   (see `_providers.tf`), which is opened lazily at resource-apply time —
 #   by then `null_resource.k3s_install` has already written the kubeconfig.
 # -----------------------------------------------------------------------------
 
 # --- Option A: minikube ------------------------------------------------------
-module "platform" {
+module "k8s" {
   source = "../terraform-minikube-k8s"
 
   cluster_name       = var.cluster_name
   kubernetes_version = var.kubernetes_version
   letsencrypt_email  = var.letsencrypt_email
+  memory             = var.memory
+
+  # Keep Pod and Service ranges in separate CGNAT slices so neither collides
+  # with the host LAN nor with each other.
+  pod_cidr     = var.pod_cidr
+  service_cidr = "100.64.0.0/12"
+  dns_ip       = "100.64.0.10"
+  cni          = "flannel"
 
   enable_traefik           = true
   enable_traefik_dashboard = true
@@ -47,7 +55,7 @@ module "platform" {
 }
 
 # --- Option B: k3s -----------------------------------------------------------
-# module "platform" {
+# module "k8s" {
 #   source = "../terraform-k3s-k8s"
 #
 #   cluster_name      = var.cluster_name
@@ -92,7 +100,7 @@ module "project" {
   for_each = local.projects
 
   source     = "./modules/project"
-  depends_on = [module.platform]
+  depends_on = [module.k8s]
 
   project_config = each.value
   components     = local.components
@@ -106,6 +114,6 @@ output "projects" {
 }
 
 output "grafana_credentials" {
-  value     = module.platform.grafana_credentials
+  value     = module.k8s.grafana_credentials
   sensitive = true
 }

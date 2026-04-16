@@ -1,12 +1,25 @@
 variable "cluster_name" {
   description = "Kubernetes cluster context name"
   type        = string
+  default     = "minikube"
+}
+
+variable "memory" {
+  description = "Memory allocated to the Minikube cluster in MB"
+  type        = number
+  default     = 4096
 }
 
 variable "kubernetes_version" {
   description = "Kubernetes version to run inside the cluster. For minikube use `stable` or a `v1.x.y` tag. For k3s pin a build like `v1.31.4+k3s1`, or leave this alone because the k3s block does not pass it."
   type        = string
-  default     = "stable"
+  default     = "v1.34.4"
+}
+
+variable "pod_cidr" {
+  description = "CIDR range to use for Pod IPs inside the Minikube cluster"
+  type        = string
+  default     = "100.80.0.0/12"
 }
 
 # ---------------------------------------------------------------------------
@@ -55,8 +68,8 @@ variable "cloudflare_account_id" {
   type        = string
 }
 
-variable "cloudflare_tunnel_token" {
-  description = "Cloudflare Tunnel Token"
+variable "cloudflare_tunnel_secret" {
+  description = "Arbitrary secret used when creating the Cloudflare Tunnel (base64-encoded by Terraform). Not the same as the JWT token cloudflared uses to connect."
   type        = string
   sensitive   = true
 }
