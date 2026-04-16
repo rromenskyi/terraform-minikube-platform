@@ -1,4 +1,4 @@
-# Env files
+# Env files (contain secrets)
 .env
 .env.*
 !.env.example
@@ -11,17 +11,20 @@ config/domains/*.yaml
 *.tfvars
 *.tfvars.json
 
+# Domain configs (contain Cloudflare zone IDs — personal per setup)
+config/domains/*.yaml
+!config/domains/*.yaml.example
+
 # Local cluster access
 kubeconfig*.yaml
 
 # Kubernetes secrets
 manifests/**/secret*.yaml
 
-# Local terraform wrapper
-tf
-
+# Terraform internals
 *.tfstate
 *.tfstate.backup
 .terraform/
 .terraform.lock.hcl
+
 .DS_Store

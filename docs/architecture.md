@@ -4,144 +4,138 @@
 
 ```
 terraform-minikube-platform/
-├── main.tf                  # Module wiring + outputs
+├── main.tf                  # Module wiring (k8s, mysql, project)
 ├── variables.tf             # Input variables
-├── locals.tf                # YAML loading + merging logic
-├── cloudflare.tf            # Tunnel resource + ingress rules + DNS records
+├── locals.tf                # YAML loading + project/component expansion
+├── outputs.tf               # Platform outputs + cheatsheet
+├── cloudflare.tf            # Tunnel + DNS (fully dynamic from project outputs)
 ├── cloudflared.tf           # cloudflared Deployment + Secret in ops namespace
-├── _providers.tf            # All provider configs (kubernetes, kubectl, cloudflare)
+├── traefik-dashboard.tf     # Traefik dashboard IngressRoute
+├── mysql.tf                 # Shared MySQL module instantiation
+├── _providers.tf            # All provider configs (cloudflare, kubernetes, kubectl, helm)
 ├── _versions.tf             # Provider version constraints
-├── _backend.tf              # Remote state (Backblaze B2 / S3)
+├── _backend.tf              # State backend (local or remote S3)
 ├── tf                       # Wrapper script: loads .env, adds bootstrap subcommand
 ├── config/
-│   ├── domains/             # One YAML per project/domain
+│   ├── domains/             # One YAML per domain (gitignored — contains zone IDs)
 │   ├── components/          # Reusable component defaults (image, port, replicas)
-│   └── limits/default.yaml  # Default namespace ResourceQuota profile
+│   └── limits/default.yaml  # Default namespace ResourceQuota
 └── modules/
-    ├── project/             # Namespace + quota + component orchestration + IngressRoutes
-    └── component/           # Deployment + Service only
+    ├── project/             # Namespace + quota + DB provisioning + components + IngressRoutes
+    ├── component/           # Deployment + Service + PV/PVC + ConfigMap
+    └── mysql/               # Shared MySQL StatefulSet + Secret + namespace
 ```
 
 ## Assembly Flow
 
 ```
 locals.tf
-  → loads config/domains/*.yaml    → local.projects
+  → loads config/domains/*.yaml    → local.projects  (domain × env expansion)
   → loads config/components/*.yaml → local.components
   → loads config/limits/default.yaml → local.default_limits
+  → derives local.minikube_volume_path from host_volume_path
 
 main.tf
-  → module.k8s       (terraform-minikube-k8s)
+  → module.k8s       (../terraform-minikube-k8s — cluster, Traefik, cert-manager, monitoring)
+  → module.mysql     (shared MySQL in {prefix}platform namespace)
   → module.project   (for_each = local.projects)
-  → cloudflare_record, cloudflared resources
+
+cloudflare.tf
+  → merges all project hostnames + infra hostnames
+  → creates tunnel, ingress rules, DNS CNAMEs — fully dynamic
 
 modules/project/main.tf
   → merges component_defaults + config/components + per-domain overrides
-  → kubernetes_namespace_v1
-  → kubernetes_resource_quota_v1
-  → module.component  (for each component in project)
-  → kubectl_manifest (IngressRoute, for components with ingress_enabled: true)
+  → kubernetes_namespace_v1 + kubernetes_resource_quota_v1
+  → kubernetes_job_v1 (MySQL DB + user provisioning via in-cluster job)
+  → kubernetes_secret_v1 (db-credentials)
+  → module.component (for each component)
+  → kubectl_manifest (IngressRoute per routed component, supports aliases)
 
 modules/component/main.tf
-  → kubernetes_deployment
-  → kubernetes_service
+  → kubernetes_persistent_volume_v1 + PVC (hostPath storage)
+  → kubernetes_config_map_v1 (config_files)
+  → kubernetes_deployment_v1 (with env mapping, probes, volumes, config mounts)
+  → kubernetes_service_v1
 ```
 
 ## Module Responsibility Split
 
 | Module | Responsibility |
 |---|---|
-| `modules/component` | `Deployment` + `Service` only. No routing, no namespace concerns. |
-| `modules/project` | Namespace, ResourceQuota, component orchestration, IngressRoutes. |
-| `cloudflare.tf` | Tunnel resource, per-hostname ingress rules, DNS CNAME records. |
-| `cloudflared.tf` | cloudflared Deployment + token Secret in the `ops` namespace. |
+| `modules/mysql` | Platform namespace, MySQL StatefulSet, root Secret, PV/PVC. |
+| `modules/project` | Namespace, ResourceQuota, DB provisioning (Job), db-credentials Secret, component orchestration, IngressRoutes. |
+| `modules/component` | Deployment, Service, PV/PVC, ConfigMap. No routing, no namespace concerns. |
+| `cloudflare.tf` | Tunnel resource, dynamic ingress rules from all project outputs, DNS CNAME records. |
+| `cloudflared.tf` | cloudflared Deployment + token Secret in ops namespace. |
 
 ## Bootstrap Flow
 
 ```
 ./tf bootstrap
-  Step 0:   delete the local minikube profile for cluster_name
-              → removes stale ~/.minikube profile metadata before bootstrap
-
-  Step 0.25: delete local terraform.tfstate / backup / lock files
-              → forces bootstrap to create from scratch instead of refreshing stale resources from local state
-
-  Step 0.5: delete the stale Cloudflare tunnel named platform
-              → prevents tunnel-name collisions on repeated debug bootstraps
-
-  Step 1:   terraform apply -target=module.k8s.minikube_cluster.this
-              → Minikube cluster created (Flannel CNI, docker driver)
-
-  Step 1.5: Clean stale CNI interfaces inside the Docker node container
-              → docker exec <node> ip link delete cni0
-              → docker exec <node> ip link delete flannel.1
-              (prevents "cni0 already has an IP different from 10.244.0.1/24"
-               on re-bootstrap without full cluster delete)
-
-  Step 2:   terraform apply
-              → module.k8s        (Traefik, cert-manager, Prometheus/Grafana, ops StatefulSet)
-              → module.project    (namespaces, quotas, Deployments, Services, IngressRoutes)
-              → cloudflared       (Deployment + Secret with tunnel token)
-              → cloudflare_record (DNS CNAMEs → tunnel CNAME)
+  Step 0:    Delete local minikube profile metadata
+  Step 0.25: Delete local terraform.tfstate / backup / lock
+  Step 0.5:  Purge stale Cloudflare tunnel + DNS CNAMEs (all zones)
+  Step 1:    terraform apply -target=module.k8s.minikube_cluster.this
+  Step 1.5:  Clean stale CNI (cni0, flannel.1), disable podman bridge,
+             wait for Flannel, restart kube-system
+  Step 1.7:  terraform apply -target=module.mysql, wait for MySQL readiness
+  Step 2:    terraform apply (everything else)
 ```
 
-## Why IngressRoute Lives in `modules/project`
-
-IngressRoutes use `kubectl_manifest` (`gavinbunney/kubectl`) instead of `kubernetes_manifest` (`hashicorp/kubernetes`):
+## Why IngressRoute Uses kubectl_manifest
 
 | Provider | Plan behaviour |
 |---|---|
-| `hashicorp/kubernetes_manifest` | Queries the cluster API during plan to validate the CRD schema. Fails on a fresh cluster before Traefik is installed. |
-| `gavinbunney/kubectl_manifest` | Passes YAML through as-is. No CRD lookup at plan time. |
+| `hashicorp/kubernetes_manifest` | Queries cluster API during plan → fails on fresh cluster before Traefik CRDs exist. |
+| `gavinbunney/kubectl_manifest` | Passes YAML as-is, no CRD lookup at plan time. |
 
-Apply ordering is still correct — `module.project` has `depends_on = [module.k8s]` in `main.tf`, so IngressRoutes are only created after Traefik CRDs are registered.
+Apply ordering is correct — `depends_on = [module.k8s]` ensures IngressRoutes are created after Traefik is installed.
 
 ## Cloudflare Tunnel Wiring
 
 ```
-Cloudflare edge
-  → DNS CNAME: grafana.domain → <tunnel-id>.cfargotunnel.com
-  → Tunnel ingress rule: grafana.domain → http://kube-prometheus-stack-grafana.monitoring:80
+Internet → Cloudflare edge
+  → DNS CNAME: web.example.com → <tunnel-id>.cfargotunnel.com
+  → Tunnel ingress rule: web.example.com → http://web.example-com-prod.svc.cluster.local:80
 
 cloudflared pod (ops namespace, 2 replicas)
-  → connects to Cloudflare using JWT token from cloudflare_zero_trust_tunnel_cloudflared.main.tunnel_token
-  → proxies inbound requests to in-cluster service DNS names
-
-kubernetes_secret (ops/cloudflared-token)
-  → populated by Terraform directly from the tunnel resource output
-  → not stored in .env — the JWT is derived from the tunnel resource itself
+  → connects using JWT token from tunnel resource (not the tunnel secret!)
+  → proxies requests to in-cluster Service DNS names
 ```
 
-> `.env` contains `CLOUDFLARE_TUNNEL_SECRET` — an arbitrary string used as the tunnel's creation secret in the Cloudflare API. This is different from the JWT token cloudflared uses to connect, which Terraform reads from `cloudflare_zero_trust_tunnel_cloudflared.main.tunnel_token`.
+`CLOUDFLARE_TUNNEL_SECRET` in `.env` is the tunnel creation secret. The JWT token cloudflared uses to connect is derived automatically by Terraform from the tunnel resource.
 
-## Networking Notes
-
-- **CNI**: Flannel (required on macOS Docker driver — Calico has pod-to-service routing issues in this setup)
-- **service_cidr**: `10.96.0.0/12` — minikube ignores `kubeadm.service-cluster-ip-range` extra_config; kube-apiserver always starts with this range regardless
-- **dns_ip**: `10.96.0.10` — must match the real kube-dns ClusterIP; passed from `main.tf` so module defaults don't interfere
-- **Traefik**: deployed via Helm to `ingress-controller` namespace, `service.type=NodePort` (no cloud LB needed — Cloudflare Tunnel handles external access)
-- **Pod CIDR**: `10.244.0.0/16` (Flannel default)
-
-## Resource Quotas
-
-Each project namespace gets a `ResourceQuota` with limits from `config/limits/default.yaml` (or per-domain override):
+## Storage Model
 
 ```
-limits.cpu    = "2"     → namespace-wide CPU limit ceiling
-limits.memory = "4Gi"   → namespace-wide memory limit ceiling
+Mac host:    /Users/Shared/vol/{namespace}/{component}/{slug}/
+Minikube:    /minikube-host/Shared/vol/{namespace}/{component}/{slug}/
+Pod mount:   /{mount-path}
 ```
 
-Component defaults (in `modules/project`):
-```
-requests.cpu    = 50m
-requests.memory = 64Mi
-limits.cpu      = 200m
-limits.memory   = 256Mi
-```
+Data survives cluster re-creation. The `host_volume_path` variable controls the Mac path; the minikube path is derived automatically (`replace("Users", "minikube-host")`).
 
-With 3 components × 2 replicas × 200m = 1200m steady-state, well within the 2000m quota. Rolling update adds one extra pod briefly — still fits.
+**Gotcha**: `replace()` with `/pattern/` = regex in Terraform! Use `replace(s, "Users", "minikube-host")` not `replace(s, "/Users/", "/minikube-host/")`.
+
+## MySQL Architecture
+
+- Single MySQL 8.0 StatefulSet in `{prefix}platform` namespace
+- Per-project DB + user provisioned via `kubernetes_job_v1` (runs mysql client in-cluster)
+- DB is NOT dropped on destroy (data preservation)
+- Root password: `random_password` → state → `terraform output -json mysql`
+- Probes use `sh -c` wrapper (Kubernetes does NOT expand `$(VAR)` in exec probe commands)
+
+## Networking
+
+- **CNI**: Flannel (required on macOS Docker driver)
+- **Pod CIDR**: `10.244.0.0/16` (Flannel hardcodes this; changing it breaks Flannel)
+- **Service CIDR**: `100.64.0.0/12` (CGNAT range, avoids LAN collisions)
+- **Traefik**: Helm chart in `ingress-controller` namespace, NodePort service
+- **Cloudflare Tunnel**: replaces LoadBalancer for external access
 
 ## Known Limitations
 
-- Cloudflare DNS records and tunnel ingress rules are defined statically in `cloudflare.tf` rather than generated from `config/domains/*.yaml`. Adding a new domain requires both a YAML file and a manual entry in `cloudflare.tf`.
-- Single-node cluster only in the current default configuration (`nodes = 1`).
+- Single-node only (Minikube)
+- Re-bootstrap regenerates MySQL root password but persistent data retains the old one
+- macOS-specific hostPath storage (Linux needs different path)

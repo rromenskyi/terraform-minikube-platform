@@ -1,5 +1,5 @@
 # `terraform { required_version }` and provider pins live in `_versions.tf`;
-# the S3 backend block lives in `_backend.tf`. This file is composition only.
+# the backend block lives in `_backend.tf`. This file is composition only.
 
 # =============================================================================
 # Cluster distribution — pick ONE
@@ -8,8 +8,9 @@
 # This platform runs on top of a local Kubernetes cluster provisioned by one of
 # two sibling modules. They are drop-in replacements because they export the
 # same output signature (cluster_host, client_certificate, client_key,
-# cluster_ca_certificate, grafana_credentials, …). Everything below this block
-# (providers, Cloudflare tunnel, project modules) is cluster-agnostic.
+# cluster_ca_certificate, grafana_credentials, kubeconfig_path, …). Everything
+# below this block (providers, MySQL, Cloudflare tunnel, project modules) is
+# cluster-agnostic.
 #
 # Switching distribution = comment one block, uncomment the other.
 #
@@ -94,26 +95,18 @@ module "k8s" {
 # }
 
 # =============================================================================
-# Projects — one YAML file per domain, cluster-agnostic from here down.
+# Projects — one entry per domain × env combination (e.g. "example-com-prod")
 # =============================================================================
 module "project" {
   for_each = local.projects
 
   source     = "./modules/project"
-  depends_on = [module.k8s]
+  depends_on = [module.k8s, module.mysql]
 
-  project_config = each.value
-  components     = local.components
-  default_limits = local.default_limits
-}
-
-output "projects" {
-  value = {
-    for k, v in module.project : k => v.namespace
-  }
-}
-
-output "grafana_credentials" {
-  value     = module.k8s.grafana_credentials
-  sensitive = true
+  project_config   = each.value
+  components       = local.components
+  default_limits   = local.default_limits
+  mysql_namespace  = module.mysql.namespace
+  mysql_host       = module.mysql.host
+  volume_base_path = local.minikube_volume_path
 }
