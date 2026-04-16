@@ -9,15 +9,18 @@ resource "kubectl_manifest" "traefik_dashboard_public" {
       namespace = "ingress-controller"
     }
     spec = {
-      entryPoints = ["web"]
+      entryPoints = ["websecure"]
       routes = [{
-        match = "Host(`traefik.${var.cloudflare_tunnel_domain}`)"
+        match = "Host(`traefik.${local._infra_domain}`)"
         kind  = "Rule"
         services = [{
           kind = "TraefikService"
           name = "api@internal"
         }]
       }]
+      tls = {
+        certResolver = "letsencrypt-production"
+      }
     }
   })
 }

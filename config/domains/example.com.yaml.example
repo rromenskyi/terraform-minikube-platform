@@ -1,18 +1,28 @@
-# Rename this file to `<your-domain>.yaml` to register a new tenant.
-# The file name (minus `.yaml`) is used as the local key in `locals.tf`.
+# Domain configuration example.
+# Copy this file without the .example suffix and adjust for your domain:
+#   cp example.com.yaml.example mydomain.com.yaml
 #
 # Real tenant files are gitignored (see .gitignore); only the
 # `.yaml.example` templates are tracked.
 
-name: example.com
-namespace: "example"
-environment: "prod"
+name: example.com                              # Domain name (used in hostnames)
+slug: example-com                              # URL-safe slug (used in namespace names)
+cloudflare_zone_id: "your-zone-id-from-cf"     # Cloudflare Zone ID for this domain
+
+envs:
+  - prod
+  # - staging                                  # Uncomment to add staging environment
 
 components:
-  - web
-  - echo
-  - whoami
+  - web                                        # nginx:alpine — static site
+  - whoami                                     # traefik/whoami — debugging
+  # - echo                                     # echo-server — request inspector
+  # - name: wordpress                          # WordPress with DB and persistent storage
+  #   aliases:
+  #     - ""                                   # bare domain (example.com)
+  #     - www                                  # www.example.com
 
-limits:
-  cpu: "2"
-  memory: "4Gi"
+# (Optional) Override default resource quota for this project's namespace
+# limits:
+#   cpu: "2"
+#   memory: "4Gi"

@@ -1,0 +1,26 @@
+image: wordpress:6.7-php8.3-apache
+port: 80
+replicas: 1
+health_path: null   # WordPress setup returns 302 — disable HTTP probes
+db: true
+env:
+  WORDPRESS_DB_HOST: DB_HOST
+  WORDPRESS_DB_NAME: DB_NAME
+  WORDPRESS_DB_USER: DB_USER
+  WORDPRESS_DB_PASSWORD: DB_PASS
+storage:
+  - mount: /var/www/html/wp-content
+    size: 10Gi
+
+# Apache IP restriction via mod_remoteip + Cloudflare CF-Connecting-IP header.
+# Traffic path: Client → Cloudflare → Tunnel → Traefik → Apache.
+# Apache sees Traefik's IP without mod_remoteip; with it, sees the real client IP.
+# Remove config_files to allow public access.
+config_files:
+  /etc/apache2/mods-enabled/remoteip.load: |
+    LoadModule remoteip_module /usr/lib/apache2/modules/mod_remoteip.so
+  /etc/apache2/conf-enabled/ip-restrict.conf: |
+    RemoteIPHeader CF-Connecting-IP
+    <Location />
+      Require ip 24.11.26.9
+    </Location>
