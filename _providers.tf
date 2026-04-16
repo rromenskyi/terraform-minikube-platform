@@ -10,11 +10,16 @@ provider "cloudflare" {
 # `-target` bootstrap that inline host/cert attributes would otherwise force
 # on the k3s distribution.
 provider "kubernetes" {
-  config_path = module.platform.kubeconfig_path
+  config_path = module.k8s.kubeconfig_path
+}
+
+provider "kubectl" {
+  config_path      = module.k8s.kubeconfig_path
+  load_config_file = true
 }
 
 provider "helm" {
   kubernetes {
-    config_path = module.platform.kubeconfig_path
+    config_path = module.k8s.kubeconfig_path
   }
 }

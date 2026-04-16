@@ -1,11 +1,30 @@
-variable "name" {}
-variable "namespace" {}
-variable "image" {}
-variable "port" {}
-variable "replicas" {
-  default = 2
+variable "name" {
+  description = "Component name — used as Deployment/Service name and label selector"
+  type        = string
 }
+
+variable "namespace" {
+  description = "Kubernetes namespace to deploy into"
+  type        = string
+}
+
+variable "image" {
+  description = "Container image (e.g. nginx:alpine)"
+  type        = string
+}
+
+variable "port" {
+  description = "Container port exposed by the application"
+  type        = number
+}
+
+variable "replicas" {
+  description = "Desired number of pod replicas"
+  default     = 2
+}
+
 variable "resources" {
+  description = "CPU/memory requests and limits"
   default = {
     requests = {
       cpu    = "100m"
@@ -17,14 +36,10 @@ variable "resources" {
     }
   }
 }
+
 variable "health_path" {
-  default = "/"
-}
-variable "domain" {
-  default = null
-}
-variable "ingress_enabled" {
-  default = true
+  description = "HTTP path used for liveness and readiness probes"
+  default     = "/"
 }
 
 resource "kubernetes_deployment" "this" {
@@ -106,33 +121,6 @@ resource "kubernetes_service" "this" {
     port {
       port        = var.port
       target_port = var.port
-    }
-  }
-}
-
-resource "kubernetes_manifest" "ingressroute" {
-  count = var.ingress_enabled && var.domain != null ? 1 : 0
-
-  manifest = {
-    apiVersion = "traefik.io/v1alpha1"
-    kind       = "IngressRoute"
-    metadata = {
-      name      = var.name
-      namespace = var.namespace
-    }
-    spec = {
-      entryPoints = ["websecure"]
-      routes = [{
-        match = "Host(`${var.domain}`)"
-        kind  = "Rule"
-        services = [{
-          name = var.name
-          port = var.port
-        }]
-      }]
-      tls = {
-        certResolver = "letsencrypt-production"
-      }
     }
   }
 }

@@ -3,7 +3,7 @@ resource "cloudflare_zero_trust_tunnel_cloudflared" "main" {
   account_id = var.cloudflare_account_id
   name       = "platform"
   config_src = "cloudflare"
-  secret     = base64encode(var.cloudflare_tunnel_token)
+  secret     = base64encode(var.cloudflare_tunnel_secret)
 }
 
 locals {

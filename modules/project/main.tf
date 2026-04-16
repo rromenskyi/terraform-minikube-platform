@@ -4,6 +4,10 @@ terraform {
       source  = "hashicorp/kubernetes"
       version = "~> 2.0"
     }
+    kubectl = {
+      source  = "gavinbunney/kubectl"
+      version = "~> 1.14"
+    }
   }
 }
 
@@ -33,12 +37,12 @@ locals {
     ingress_enabled = true
     resources = {
       requests = {
-        cpu    = "100m"
-        memory = "128Mi"
+        cpu    = "50m"
+        memory = "64Mi"
       }
       limits = {
-        cpu    = "500m"
-        memory = "512Mi"
+        cpu    = "200m"
+        memory = "256Mi"
       }
     }
   }
@@ -59,9 +63,16 @@ locals {
       }
     )
   }
+
+  # Components that should get a Traefik IngressRoute
+  routed_components = {
+    for name, component in local.normalized_components :
+    name => component
+    if try(component.ingress_enabled, true) && try(component.enabled, true)
+  }
 }
 
-# Create namespace for the project
+# Namespace for the project
 resource "kubernetes_namespace_v1" "this" {
   metadata {
     name = var.project_config.namespace
@@ -73,7 +84,7 @@ resource "kubernetes_namespace_v1" "this" {
   }
 }
 
-# ResourceQuota per namespace
+# Resource quota per namespace
 resource "kubernetes_resource_quota_v1" "limits" {
   metadata {
     name      = "limits"
@@ -90,7 +101,7 @@ resource "kubernetes_resource_quota_v1" "limits" {
   }
 }
 
-# Deploy all components for this project
+# Deployment + Service per component
 module "component" {
   for_each = {
     for name, component in local.normalized_components :
@@ -99,18 +110,47 @@ module "component" {
 
   source = "../component"
 
-  name            = each.key
-  namespace       = kubernetes_namespace_v1.this.metadata[0].name
-  image           = each.value.image
-  port            = each.value.port
-  replicas        = each.value.replicas
-  resources       = each.value.resources
-  health_path     = try(each.value.health.path, each.value.health_path)
-  ingress_enabled = try(each.value.ingress_enabled, true)
-  domain          = each.value.domain
+  name        = each.key
+  namespace   = kubernetes_namespace_v1.this.metadata[0].name
+  image       = each.value.image
+  port        = each.value.port
+  replicas    = each.value.replicas
+  resources   = each.value.resources
+  health_path = try(each.value.health.path, each.value.health_path)
 }
 
-# TODO: Add synonyms (CNAME), additional IngressRoute, Cloudflare records
+# Traefik IngressRoute per routed component
+# Uses kubectl_manifest (gavinbunney/kubectl) instead of kubernetes_manifest so that
+# Terraform does not query the Kubernetes API for CRD schema during plan.
+# This allows `terraform plan` and bootstrap to work before Traefik is installed.
+resource "kubectl_manifest" "ingressroute" {
+  for_each = local.routed_components
+
+  depends_on = [module.component]
+
+  yaml_body = yamlencode({
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "IngressRoute"
+    metadata = {
+      name      = each.key
+      namespace = kubernetes_namespace_v1.this.metadata[0].name
+    }
+    spec = {
+      entryPoints = ["websecure"]
+      routes = [{
+        match = "Host(`${each.value.domain}`)"
+        kind  = "Rule"
+        services = [{
+          name = each.key
+          port = tostring(each.value.port)
+        }]
+      }]
+      tls = {
+        certResolver = "letsencrypt-production"
+      }
+    }
+  })
+}
 
 output "namespace" {
   value = kubernetes_namespace_v1.this.metadata[0].name
