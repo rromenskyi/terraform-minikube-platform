@@ -3,6 +3,10 @@
 .env.*
 !.env.example
 
+# Real tenant configs — ship `.yaml.example` templates, not live data
+config/domains/*.yaml
+!config/domains/*.yaml.example
+
 # Terraform secrets/overrides
 *.tfvars
 *.tfvars.json
