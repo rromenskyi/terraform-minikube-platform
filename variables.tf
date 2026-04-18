@@ -65,3 +65,13 @@ variable "cloudflare_zone_id" {
   description = "Primary Cloudflare Zone ID used for tunnel DNS records"
   type        = string
 }
+
+variable "cloudflare_tunnel_domain" {
+  description = "Apex domain used to build tunnel ingress hostnames (e.g. setting `example.com` produces `echo.example.com`, `grafana.example.com`, ...). Must match the Cloudflare zone referenced by `cloudflare_zone_id`. Required — set via TF_VAR_cloudflare_tunnel_domain in `.env`."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$", var.cloudflare_tunnel_domain))
+    error_message = "cloudflare_tunnel_domain must be a valid DNS label sequence (lowercase alphanumerics, dots, hyphens)."
+  }
+}

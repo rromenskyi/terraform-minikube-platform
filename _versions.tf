@@ -12,7 +12,7 @@ terraform {
     }
     helm = {
       source  = "hashicorp/helm"
-      version = "~> 2.0"
+      version = "~> 2.17"
     }
     # minikube and k3s provider requirements are declared by the child modules
     # (`terraform-minikube-k8s` / `terraform-k3s-k8s`). The root stack does not
