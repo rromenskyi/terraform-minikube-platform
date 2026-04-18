@@ -1,6 +1,5 @@
-terraform {
-  required_version = ">= 1.5.0"
-}
+# `terraform { required_version }` and provider pins live in `_versions.tf`;
+# the S3 backend block lives in `_backend.tf`. This file is composition only.
 
 # =============================================================================
 # Cluster distribution — pick ONE
