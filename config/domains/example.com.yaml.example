@@ -1,0 +1,18 @@
+# Rename this file to `<your-domain>.yaml` to register a new tenant.
+# The file name (minus `.yaml`) is used as the local key in `locals.tf`.
+#
+# Real tenant files are gitignored (see .gitignore); only the
+# `.yaml.example` templates are tracked.
+
+name: example.com
+namespace: "example"
+environment: "prod"
+
+components:
+  - web
+  - echo
+  - whoami
+
+limits:
+  cpu: "2"
+  memory: "4Gi"
