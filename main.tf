@@ -34,7 +34,7 @@
 
 # --- Option A: minikube ------------------------------------------------------
 module "k8s" {
-  source = "../terraform-minikube-k8s"
+  source = "git::https://github.com/rromenskyi/terraform-minikube-k8s.git?ref=v2.1.0"
 
   cluster_name       = var.cluster_name
   kubernetes_version = var.kubernetes_version
@@ -57,7 +57,7 @@ module "k8s" {
 
 # --- Option B: k3s -----------------------------------------------------------
 # module "k8s" {
-#   source = "../terraform-k3s-k8s"
+#   source = "git::https://github.com/rromenskyi/terraform-k3s-k8s.git?ref=v0.2.0"
 #
 #   cluster_name      = var.cluster_name
 #   letsencrypt_email = var.letsencrypt_email
