@@ -64,13 +64,12 @@ terraform-minikube-platform/
 
 ### External dependency
 
-This repo uses `../terraform-minikube-k8s` (sibling checkout) for the base cluster. Clone both:
+The base cluster is provided by a sibling module fetched directly from GitHub at a pinned release — no sibling checkout required:
 
-```bash
-cd ~/minikube   # or your preferred directory
-git clone <terraform-minikube-k8s-repo>
-git clone <terraform-minikube-platform-repo>
-```
+- [`terraform-minikube-k8s`](https://github.com/rromenskyi/terraform-minikube-k8s) — Option A (default), pinned to `v2.1.0`
+- [`terraform-k3s-k8s`](https://github.com/rromenskyi/terraform-k3s-k8s) — Option B (k3s), pinned to `v0.2.0`
+
+`terraform init` downloads the selected module automatically. To upgrade, bump the `?ref=vX.Y.Z` in `main.tf` and re-run `terraform init -upgrade`.
 
 ### Alternative cluster distribution: k3s
 
@@ -79,8 +78,8 @@ The cluster module is swappable. `main.tf` has an **Option A — minikube** (act
 To switch to k3s (native install via SSH):
 
 1. In `main.tf`, comment out the Option A block and uncomment Option B.
-2. Clone the sibling checkout: `git clone <terraform-k3s-k8s-repo>` next to this repo.
-3. In `.env`, set `TF_VAR_ssh_user` and `TF_VAR_ssh_private_key_path` (see `.env.example`).
+2. In `.env`, set `TF_VAR_ssh_user` and `TF_VAR_ssh_private_key_path` (see `.env.example`).
+3. `terraform init -upgrade` to pull the k3s module.
 4. `./tf apply` — the root `kubernetes` and `helm` providers lazily open `module.k8s.kubeconfig_path`, so a single apply is enough (no two-phase `-target` bootstrap).
 
 Switching between distributions on a live state recreates the cluster — the underlying resources are different module sources.
