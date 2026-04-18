@@ -69,6 +69,21 @@ module "platform" {
 #   enable_cert_manager      = true
 #   enable_monitoring        = true
 #   create_ops_workload      = true
+#
+#   # Fail fast at plan time instead of deep inside the child module's SSH
+#   # provisioner if the operator forgot to set ssh_user / ssh_private_key_path
+#   # (empty-string defaults make them optional for the minikube path).
+#   lifecycle {
+#     precondition {
+#       condition     = var.ssh_user != "" && var.ssh_private_key_path != ""
+#       error_message = "ssh_user and ssh_private_key_path are required when the k3s distribution is active (set TF_VAR_ssh_user and TF_VAR_ssh_private_key_path, see .env.example)."
+#     }
+#
+#     precondition {
+#       condition     = fileexists(var.ssh_private_key_path)
+#       error_message = "ssh_private_key_path does not point to a readable file: ${var.ssh_private_key_path}"
+#     }
+#   }
 # }
 
 # =============================================================================
