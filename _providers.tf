@@ -2,18 +2,19 @@ provider "cloudflare" {
   api_token = var.cloudflare_api_token
 }
 
+# Consume the kubeconfig emitted by the chosen cluster module. Both sibling
+# modules (`terraform-minikube-k8s` and `terraform-k3s-k8s`) export a
+# `kubeconfig_path` output as a static, plan-time-known string. `config_path`
+# is opened lazily — only when a resource actually makes an API call — so the
+# file does not have to exist at plan time, which removes the two-phase
+# `-target` bootstrap that inline host/cert attributes would otherwise force
+# on the k3s distribution.
 provider "kubernetes" {
-  host                   = module.platform.cluster_host
-  client_certificate     = module.platform.client_certificate
-  client_key             = module.platform.client_key
-  cluster_ca_certificate = module.platform.cluster_ca_certificate
+  config_path = module.platform.kubeconfig_path
 }
 
 provider "helm" {
   kubernetes {
-    host                   = module.platform.cluster_host
-    client_certificate     = module.platform.client_certificate
-    client_key             = module.platform.client_key
-    cluster_ca_certificate = module.platform.cluster_ca_certificate
+    config_path = module.platform.kubeconfig_path
   }
 }
