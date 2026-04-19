@@ -23,22 +23,18 @@ security:
   run_as_user: 33
   fs_group:    33
 
-# Apache IP restriction via mod_remoteip + Cloudflare CF-Connecting-IP header.
-# Traffic path: Client → Cloudflare → Tunnel → Traefik → Apache.
-# Apache sees Traefik's IP without mod_remoteip; with it, sees the real client IP.
-# Remove config_files to allow public access.
+# Apache + mod_remoteip to recover the real client IP from Cloudflare's
+# `CF-Connecting-IP` header. Traffic path:
+#   Client → Cloudflare → Tunnel → Traefik → Apache.
+# Without mod_remoteip, Apache's REMOTE_ADDR is Traefik's pod IP, so the
+# access log and any IP-based logic see the internal CGNAT address
+# instead of the user. With this module + trusted-proxy declaration,
+# REMOTE_ADDR is rewritten to the real client. Sites are public —
+# re-add a `<Location /> Require ip …</Location>` block below to lock
+# the tenant down to a single operator IP.
 config_files:
   /etc/apache2/mods-enabled/remoteip.load: |
     LoadModule remoteip_module /usr/lib/apache2/modules/mod_remoteip.so
-  /etc/apache2/conf-enabled/ip-restrict.conf: |
+  /etc/apache2/conf-enabled/remoteip.conf: |
     RemoteIPHeader CF-Connecting-IP
-    # mod_remoteip silently keeps the original REMOTE_ADDR unless the
-    # immediate upstream is trusted. Trust the CGNAT pod+service CIDRs
-    # k3s uses by default (100.64.0.0/10 covers both `100.64.0.0/13`
-    # service range and `100.72.0.0/13` pod range) so CF-Connecting-IP
-    # from Cloudflare → cloudflared → Traefik → Apache actually
-    # becomes REMOTE_ADDR.
     RemoteIPInternalProxy 100.64.0.0/10
-    <Location />
-      Require ip 24.11.26.9
-    </Location>

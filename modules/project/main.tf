@@ -390,6 +390,20 @@ resource "kubernetes_job_v1" "mysql_setup" {
             }
           }
 
+          # Tiny one-shot — runs a few DDL statements and exits. Explicit
+          # resources are required because the platform namespace's
+          # ResourceQuota rejects pods without `limits` and `requests`.
+          resources {
+            requests = {
+              cpu    = "50m"
+              memory = "64Mi"
+            }
+            limits = {
+              cpu    = "200m"
+              memory = "256Mi"
+            }
+          }
+
           command = [
             "sh", "-c",
             join("", [
@@ -489,6 +503,18 @@ resource "kubernetes_job_v1" "postgres_setup" {
             value = "$(POSTGRES_PASSWORD)"
           }
 
+          # Tiny one-shot — see the mysql-setup container for the reasoning.
+          resources {
+            requests = {
+              cpu    = "50m"
+              memory = "64Mi"
+            }
+            limits = {
+              cpu    = "200m"
+              memory = "256Mi"
+            }
+          }
+
           # `CREATE DATABASE` / `CREATE ROLE` are not idempotent in vanilla SQL.
           # The DO-blocks below noop when the role or db already exists so
           # re-applies are safe (tenant DB survives terraform destroy → re-apply).
@@ -584,6 +610,18 @@ resource "kubernetes_job_v1" "redis_setup" {
           env_from {
             secret_ref {
               name = var.redis_default_secret
+            }
+          }
+
+          # Tiny one-shot — see the mysql-setup container for the reasoning.
+          resources {
+            requests = {
+              cpu    = "50m"
+              memory = "64Mi"
+            }
+            limits = {
+              cpu    = "200m"
+              memory = "256Mi"
             }
           }
 
