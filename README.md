@@ -1,11 +1,11 @@
 # terraform-minikube-platform
 
-Terraform-first multi-domain Kubernetes hosting platform. One domain = one YAML file. Zero-trust public access via Cloudflare Tunnel. Shared platform services (MySQL, PostgreSQL, Redis, Ollama) with per-tenant isolation.
+Terraform-first multi-domain Kubernetes hosting platform. One domain = one YAML file. Zero-trust public access via Cloudflare Tunnel. Shared platform services (MySQL, PostgreSQL, Redis, Ollama) with per-tenant credentials and quota, single-operator cluster by design.
 
 ## What you get
 
 - **Multi-domain hosting** on a single cluster (minikube OR k3s)
-- **Per-project isolation**: namespace + resource quota + per-tenant DB/Redis ACL user
+- **Per-tenant scoping**: dedicated namespace, `ResourceQuota`, and per-project DB/Postgres/Redis ACL credentials — tenants get separate accounts and budgets, but the cluster is a single-operator trust boundary (no `NetworkPolicy`, Traefik allows cross-namespace `Service` references). Intended for cases where every tenant is something *you* run
 - **Shared MySQL 8.0** with auto-provisioned DB + user per project (opt-in per component)
 - **Shared PostgreSQL 16** with auto-provisioned database + role per project (opt-in per component)
 - **Shared Redis 7** with per-namespace ACL user + key prefix (opt-in per component)

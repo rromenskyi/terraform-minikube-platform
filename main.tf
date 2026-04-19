@@ -94,7 +94,7 @@ module "addons" {
   enable_traefik      = true
   enable_cert_manager = true
   enable_monitoring   = true
-  create_ops_workload = true
+  enable_ops_workload = true
 
   # Traefik's chart-side dashboard IngressRoute at `traefik.<base_domain>`
   # stays off — this platform owns dashboard routing through the tenant
