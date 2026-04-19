@@ -1,4 +1,41 @@
 locals {
+  # Platform-service config. `config/platform.yaml` is gitignored; the
+  # repo ships `.example` with every service off. Schema is
+  # `services.<name>` → object; every field is optional and falls back
+  # to the default below. Missing file = full defaults.
+  _platform_defaults = {
+    services = {
+      mysql = {
+        enabled = false
+      }
+      postgres = {
+        enabled = false
+      }
+      redis = {
+        enabled = false
+      }
+      ollama = {
+        enabled        = false
+        models         = ["deepseek-r1:1.5b"]
+        memory_request = "4Gi"
+        memory_limit   = "16Gi"
+        cpu_request    = "200m"
+        cpu_limit      = "10"
+      }
+    }
+  }
+  _platform_file     = "${path.module}/config/platform.yaml"
+  _platform_raw      = fileexists(local._platform_file) ? yamldecode(file(local._platform_file)) : {}
+  _platform_services = try(local._platform_raw.services, {})
+  platform = {
+    services = {
+      mysql    = merge(local._platform_defaults.services.mysql, try(local._platform_services.mysql, {}))
+      postgres = merge(local._platform_defaults.services.postgres, try(local._platform_services.postgres, {}))
+      redis    = merge(local._platform_defaults.services.redis, try(local._platform_services.redis, {}))
+      ollama = merge(local._platform_defaults.services.ollama, try(local._platform_services.ollama, {}))
+    }
+  }
+
   # Load raw domain configs from YAML files
   _domain_configs = {
     for f in fileset("${path.module}/config/domains", "*.yaml") :
@@ -45,6 +82,13 @@ locals {
     trimsuffix(basename(f), ".yaml") => yamldecode(file("${path.module}/config/components/${f}"))
   }
 
-  # Default namespace resource quota
-  default_limits = yamldecode(file("${path.module}/config/limits/default.yaml"))
+  # Resource-quota settings per namespace. `config/limits/<namespace>.yaml`
+  # overrides `config/limits/default.yaml` — e.g. `config/limits/platform.yaml`
+  # bumps the root platform namespace above the tenant-default tier
+  # because Ollama alone can burn 10 CPU during inference.
+  namespace_limits = {
+    for f in fileset("${path.module}/config/limits", "*.yaml") :
+    trimsuffix(basename(f), ".yaml") => yamldecode(file("${path.module}/config/limits/${f}"))
+  }
+  default_limits = local.namespace_limits.default
 }

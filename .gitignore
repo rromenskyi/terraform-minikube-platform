@@ -7,6 +7,10 @@
 config/domains/*.yaml
 !config/domains/*.yaml.example
 
+# Platform-service toggles — the live file is per-operator
+config/platform.yaml
+!config/platform.yaml.example
+
 # Terraform secrets/overrides
 *.tfvars
 *.tfvars.json

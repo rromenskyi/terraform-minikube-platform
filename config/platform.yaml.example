@@ -1,0 +1,35 @@
+# Platform-service config.
+#
+# Copy this file without the .example suffix and flip the bits your
+# local cluster actually wants on:
+#   cp platform.yaml.example platform.yaml
+#
+# The live file is gitignored — defaults committed to the repo stay
+# `enabled: false` so a clean clone lands nothing beyond the addon
+# layer. Each service here costs a hostPath volume, some RAM, and a
+# chunk of apply time, so enable only what you use.
+#
+# Every field under a service is optional; omitting it falls back to
+# the default in `locals._platform_defaults`.
+
+services:
+  mysql:
+    enabled: false     # ~10Gi volume; DB + user per tenant namespace (components with `db: true`)
+
+  postgres:
+    enabled: false     # ~10Gi volume; DB + user per tenant namespace (components with `postgres: true`)
+
+  redis:
+    enabled: false     # ~5Gi volume; ACL user + key prefix per tenant namespace (components with `redis: true`)
+
+  ollama:
+    enabled: false     # ~50Gi volume; first-time apply downloads every model in the list below
+    models:
+      - deepseek-r1:1.5b
+    # Ollama inference saturates CPU and sizes memory by loaded model.
+    # Defaults below fit a single 7B model comfortably; bump for larger
+    # models or heavier traffic.
+    memory_request: 4Gi
+    memory_limit:   16Gi
+    cpu_request:    200m
+    cpu_limit:      "10"

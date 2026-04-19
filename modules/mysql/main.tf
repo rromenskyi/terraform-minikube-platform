@@ -11,50 +11,60 @@ terraform {
   }
 }
 
-variable "namespace_prefix" {
-  description = "Optional prefix for the platform namespace"
+variable "enabled" {
+  description = "Deploy the MySQL StatefulSet. When `false`, no resources are created and every output collapses to null — a disabled MySQL cleanly cascades into `modules/project` (components with `db: true` fail a precondition instead of silently deploying a broken StatefulSet)."
+  type        = bool
+  default     = true
+}
+
+variable "namespace" {
+  description = "Namespace the MySQL StatefulSet lives in. Expected to exist already — the root-level `kubernetes_namespace_v1.platform` resource owns it so the sibling Postgres/Redis/Ollama modules can share the same namespace without piggybacking on this module. Null when `enabled = false`."
   type        = string
-  default     = ""
+  default     = null
 }
 
 variable "volume_base_path" {
-  description = "Parent path used verbatim by the hostPath PersistentVolume for MySQL data. MySQL lands at <volume_base_path>/<namespace_prefix>platform/mysql/. Must resolve to a real writable directory from the kubelet's point of view (native k3s / --driver=none: any host dir; macOS minikube Docker driver: /minikube-host/Shared/vol)."
+  description = "Parent path used verbatim by the hostPath PersistentVolume for MySQL data. MySQL lands at <volume_base_path>/<namespace>/mysql/. Must resolve to a real writable directory from the kubelet's point of view (native k3s / --driver=none: any host dir; macOS minikube Docker driver: /minikube-host/Shared/vol)."
   type        = string
   default     = "/data/vol"
 }
 
-# ── Namespace ────────────────────────────────────────────────────────────────
-
-resource "kubernetes_namespace_v1" "platform" {
-  metadata {
-    name = "${var.namespace_prefix}platform"
-    labels = {
-      "app.kubernetes.io/managed-by" = "terraform"
-    }
-  }
+locals {
+  # Singleton-ish toggle. All resources below use `for_each =
+  # local.instances` — yields one instance keyed "enabled" when the
+  # module is on, and an empty set when off. Pattern matches the
+  # sibling terraform-k8s-addons module so `terraform state list`
+  # looks uniform across the platform stack.
+  instances = var.enabled ? toset(["enabled"]) : toset([])
 }
 
 # ── Root password ─────────────────────────────────────────────────────────────
 
 resource "random_password" "root" {
+  for_each = local.instances
+
   length  = 32
   special = false
 }
 
 resource "kubernetes_secret_v1" "mysql_root" {
+  for_each = local.instances
+
   metadata {
     name      = "mysql-root"
-    namespace = kubernetes_namespace_v1.platform.metadata[0].name
+    namespace = var.namespace
   }
 
   data = {
-    MYSQL_ROOT_PASSWORD = random_password.root.result
+    MYSQL_ROOT_PASSWORD = random_password.root["enabled"].result
   }
 }
 
 # ── Persistent storage ────────────────────────────────────────────────────────
 
 resource "kubernetes_persistent_volume_v1" "mysql" {
+  for_each = local.instances
+
   metadata {
     name = "platform-mysql-data"
   }
@@ -69,7 +79,7 @@ resource "kubernetes_persistent_volume_v1" "mysql" {
 
     persistent_volume_source {
       host_path {
-        path = "${var.volume_base_path}/${kubernetes_namespace_v1.platform.metadata[0].name}/mysql"
+        path = "${var.volume_base_path}/${var.namespace}/mysql"
         type = "DirectoryOrCreate"
       }
     }
@@ -77,15 +87,17 @@ resource "kubernetes_persistent_volume_v1" "mysql" {
 }
 
 resource "kubernetes_persistent_volume_claim_v1" "mysql" {
+  for_each = local.instances
+
   metadata {
     name      = "mysql-data"
-    namespace = kubernetes_namespace_v1.platform.metadata[0].name
+    namespace = var.namespace
   }
 
   spec {
     access_modes       = ["ReadWriteOnce"]
     storage_class_name = "standard"
-    volume_name        = kubernetes_persistent_volume_v1.mysql.metadata[0].name
+    volume_name        = kubernetes_persistent_volume_v1.mysql["enabled"].metadata[0].name
 
     resources {
       requests = {
@@ -98,9 +110,11 @@ resource "kubernetes_persistent_volume_claim_v1" "mysql" {
 # ── StatefulSet ───────────────────────────────────────────────────────────────
 
 resource "kubernetes_stateful_set_v1" "mysql" {
+  for_each = local.instances
+
   metadata {
     name      = "mysql"
-    namespace = kubernetes_namespace_v1.platform.metadata[0].name
+    namespace = var.namespace
     labels    = { app = "mysql" }
   }
 
@@ -128,7 +142,7 @@ resource "kubernetes_stateful_set_v1" "mysql" {
 
           env_from {
             secret_ref {
-              name = kubernetes_secret_v1.mysql_root.metadata[0].name
+              name = kubernetes_secret_v1.mysql_root["enabled"].metadata[0].name
             }
           }
 
@@ -186,7 +200,7 @@ resource "kubernetes_stateful_set_v1" "mysql" {
         volume {
           name = "data"
           persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim_v1.mysql.metadata[0].name
+            claim_name = kubernetes_persistent_volume_claim_v1.mysql["enabled"].metadata[0].name
           }
         }
       }
@@ -198,9 +212,11 @@ resource "kubernetes_stateful_set_v1" "mysql" {
 
 # In-cluster access (pods → mysql.platform.svc.cluster.local:3306)
 resource "kubernetes_service_v1" "mysql" {
+  for_each = local.instances
+
   metadata {
     name      = "mysql"
-    namespace = kubernetes_namespace_v1.platform.metadata[0].name
+    namespace = var.namespace
     labels    = { app = "mysql" }
   }
 
@@ -216,29 +232,41 @@ resource "kubernetes_service_v1" "mysql" {
 }
 
 # ── Outputs ───────────────────────────────────────────────────────────────────
+#
+# All outputs collapse to `null` when the module is disabled. Downstream
+# consumers (modules/project) pass these through to tenant-side
+# precondition checks, so a disabled MySQL produces a clear error the
+# first time a component asks for it instead of a silent mis-deploy.
+
+output "enabled" {
+  value = var.enabled
+}
 
 output "namespace" {
-  value       = kubernetes_namespace_v1.platform.metadata[0].name
-  description = "Namespace where MySQL is deployed"
+  value       = var.enabled ? var.namespace : null
+  description = "Namespace where MySQL is deployed, or null if the module is disabled."
 }
 
 output "host" {
-  value       = "${kubernetes_service_v1.mysql.metadata[0].name}.${kubernetes_namespace_v1.platform.metadata[0].name}.svc.cluster.local"
-  description = "MySQL in-cluster hostname"
+  value = one([
+    for s in kubernetes_service_v1.mysql :
+    "${s.metadata[0].name}.${var.namespace}.svc.cluster.local"
+  ])
+  description = "MySQL in-cluster hostname, or null if the module is disabled."
 }
 
 output "service_name" {
-  value       = kubernetes_service_v1.mysql.metadata[0].name
-  description = "MySQL Service name"
+  value       = one([for s in kubernetes_service_v1.mysql : s.metadata[0].name])
+  description = "MySQL Service name, or null if the module is disabled."
 }
 
 output "port" {
-  value       = kubernetes_service_v1.mysql.spec[0].port[0].port
-  description = "MySQL Service port"
+  value       = one([for s in kubernetes_service_v1.mysql : s.spec[0].port[0].port])
+  description = "MySQL Service port, or null if the module is disabled."
 }
 
 output "root_password" {
-  value       = random_password.root.result
+  value       = one([for p in random_password.root : p.result])
   sensitive   = true
-  description = "MySQL root password (also in the mysql-root Secret)"
+  description = "MySQL root password (also in the mysql-root Secret), or null if the module is disabled."
 }

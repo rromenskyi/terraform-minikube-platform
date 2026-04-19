@@ -1,0 +1,14 @@
+# External component — routing only, no Deployment. Points at the
+# shared Ollama Service installed by `modules/ollama`.
+#
+# Ollama has no native auth, so never route to it publicly without
+# `basic_auth: true` — anyone on the internet would get free inference
+# and could chew through your hostPath volume pulling models.
+kind: external
+
+service:
+  name:      ollama
+  namespace: platform
+  port:      11434
+
+basic_auth: true

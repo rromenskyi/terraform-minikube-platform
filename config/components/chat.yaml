@@ -1,0 +1,63 @@
+image: ghcr.io/open-webui/open-webui:main
+port: 8080
+replicas: 1
+
+# WebUI proxies every LLM call AND every RAG embedding call to the
+# shared Ollama in the platform namespace, so it keeps no model in its
+# own RAM — 1Gi is comfortable for the Python server + SQLite + light
+# in-memory caches. (When RAG runs locally via sentence-transformers,
+# this has to be ~2Gi to hold the embedding model.)
+resources:
+  requests: { cpu: "50m",  memory: "256Mi" }
+  limits:   { cpu: "500m", memory: "1Gi" }
+
+# Open WebUI's start.sh writes `.webui_secret_key` into its working
+# directory (`/app/backend`) on first boot if WEBUI_SECRET_KEY is unset.
+# `/app/backend` is baked into the image and not writable by uid 1000,
+# so unattended boot fails with "Permission denied". Handing the key
+# via env skips the file-write path entirely. Generated per-tenant by
+# terraform (random_password), stored in the `chat-random-env` Secret,
+# never persisted in YAML.
+env_random:
+  - WEBUI_SECRET_KEY
+
+# Route RAG embeddings to the shared Ollama instead of pulling
+# sentence-transformers locally. `RAG_OLLAMA_BASE_URL` is set to the
+# same in-cluster URL Open WebUI already uses for chat completions —
+# one model server, one place to manage models.
+env_static:
+  RAG_EMBEDDING_ENGINE: ollama
+  RAG_OLLAMA_BASE_URL:  http://ollama.platform.svc.cluster.local:11434
+  RAG_EMBEDDING_MODEL:  all-minilm:latest
+
+  # `all-minilm` is embeddings-only; picking it in the chat UI returns
+  # "model does not support chat". Hide it from the UI — the RAG backend
+  # still uses it directly via RAG_EMBEDDING_MODEL above. The three chat
+  # models stay visible so the user can A/B them side-by-side.
+  DEFAULT_MODELS:      qwen2.5:7b
+  ENABLE_MODEL_FILTER: "True"
+  MODEL_FILTER_LIST:   qwen2.5:7b,qwen2.5:14b,qwen2.5-coder:7b
+
+# The image's landing page returns 200 only after the backend SQLite
+# is seeded — first container boot can take 30–60s. `health_path` left
+# at the default `/` is fine; the 5-minute startup_probe in
+# modules/component covers the warmup.
+
+# Open WebUI talks to Ollama over HTTP. The platform injects
+# `OLLAMA_HOST=http://ollama.platform.svc...:11434` via the Secret —
+# Open WebUI expects `OLLAMA_BASE_URL`, so this component also sets it
+# to the same value via the shared secret by reading `OLLAMA_HOST` on
+# container start (env passthrough handled by the image's entrypoint).
+ollama: true
+
+# Persistent state: users, chat history, uploaded files. hostPath lives
+# at <host_volume_path>/<namespace>/chat/app-backend-data/ so the operator
+# can back it up.
+storage:
+  - mount: /app/backend/data
+    size: 5Gi
+
+# Open WebUI runs as UID 1000 by default.
+security:
+  run_as_user: 1000
+  fs_group:    1000
