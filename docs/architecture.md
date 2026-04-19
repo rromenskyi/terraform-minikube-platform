@@ -33,10 +33,9 @@ locals.tf
   → loads config/domains/*.yaml    → local.projects  (domain × env expansion)
   → loads config/components/*.yaml → local.components
   → loads config/limits/default.yaml → local.default_limits
-  → derives local.minikube_volume_path from host_volume_path
 
 main.tf
-  → module.k8s       (../terraform-minikube-k8s — cluster, Traefik, cert-manager, monitoring)
+  → module.k8s       (cluster distribution — minikube or k3s sibling; see Option A/B)
   → module.mysql     (shared MySQL in {prefix}platform namespace)
   → module.project   (for_each = local.projects)
 
@@ -108,15 +107,23 @@ cloudflared pod (ops namespace, 2 replicas)
 
 ## Storage Model
 
+Every persistent volume is a `hostPath` rooted at `var.host_volume_path`, which is passed through the project/mysql/component modules as `volume_base_path` without any transformation:
+
 ```
-Mac host:    /Users/Shared/vol/{namespace}/{component}/{slug}/
-Minikube:    /minikube-host/Shared/vol/{namespace}/{component}/{slug}/
+Node FS:     {host_volume_path}/{namespace}/{component}/{slug}/
 Pod mount:   /{mount-path}
 ```
 
-Data survives cluster re-creation. The `host_volume_path` variable controls the Mac path; the minikube path is derived automatically (`replace("Users", "minikube-host")`).
+The knob is used verbatim — whatever you set, the kubelet sees literally. Which value is correct depends on how the distribution exposes the host FS to the kubelet:
 
-**Gotcha**: `replace()` with `/pattern/` = regex in Terraform! Use `replace(s, "Users", "minikube-host")` not `replace(s, "/Users/", "/minikube-host/")`.
+| Distribution | `host_volume_path` example | Notes |
+|---|---|---|
+| Native k3s on Linux (Option B) | `/data/vol` | k3s runs directly on the host; host path = node path. Browse files with `ls /data/vol/...` from the Linux shell. |
+| minikube on Linux, `--driver=none` | `/data/vol` | Same semantics as k3s. |
+| minikube on macOS, Docker driver (Option A) | `/minikube-host/Shared/vol` | The minikube VM auto-mounts `/Users` as `/minikube-host`. Files live at `/Users/Shared/vol` on the Mac and the kubelet sees them as `/minikube-host/Shared/vol`. |
+| minikube on Linux, `--driver=docker` | path of your own `minikube mount` target | minikube under Linux Docker does not auto-mount the host FS; bind in a directory explicitly and point the variable at it. |
+
+Data survives cluster re-creation because the hostPath lives on the host, not in the ephemeral node layer.
 
 ## MySQL Architecture
 
@@ -136,6 +143,6 @@ Data survives cluster re-creation. The `host_volume_path` variable controls the 
 
 ## Known Limitations
 
-- Single-node only (Minikube)
-- Re-bootstrap regenerates MySQL root password but persistent data retains the old one
-- macOS-specific hostPath storage (Linux needs different path)
+- Single-node only (minikube or a single k3s server). For multi-node k3s, the hostPath model would need to be replaced with a network-backed StorageClass (e.g. longhorn, nfs-subdir).
+- Re-bootstrap regenerates MySQL root password but persistent data retains the old one (wipe `{host_volume_path}/{prefix}platform/mysql/` to reset)
+- `host_volume_path` is distribution-coupled: the value must match how the kubelet sees the FS (see the Storage Model table above)

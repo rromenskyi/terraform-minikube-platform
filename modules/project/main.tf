@@ -41,7 +41,7 @@ variable "mysql_host" {
 }
 
 variable "volume_base_path" {
-  description = "Base path for hostPath volumes inside the minikube node"
+  description = "Parent path used verbatim by hostPath PersistentVolumes for every component in this project. Must resolve to a real writable directory from the kubelet's point of view. Forwarded unchanged to modules/component."
   type        = string
 }
 

@@ -35,8 +35,4 @@ locals {
 
   # Default namespace resource quota
   default_limits = yamldecode(file("${path.module}/config/limits/default.yaml"))
-
-  # Minikube Docker driver mounts /Users → /minikube-host inside the node.
-  # Convert Mac host path to in-node path for hostPath volumes.
-  minikube_volume_path = replace(var.host_volume_path, "Users", "minikube-host")
 }

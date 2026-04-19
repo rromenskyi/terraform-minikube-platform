@@ -280,7 +280,7 @@ env:
   WORDPRESS_DB_USER: DB_USER
   WORDPRESS_DB_PASSWORD: DB_PASS
 
-# Persistent volumes (hostPath on Mac, survives cluster re-creation)
+# Persistent volumes (hostPath on the node, survives cluster re-creation)
 storage:
   - mount: /var/www/html/wp-content
     size: 10Gi
@@ -307,10 +307,19 @@ memory: "4Gi"
 
 ## Persistent storage
 
-Data is stored on the Mac host at `/Users/Shared/vol/` (configurable via `host_volume_path` variable). Minikube Docker driver mounts `/Users` into the node at `/minikube-host`, so the data persists across cluster re-creations.
+One knob — `host_volume_path` — is used **verbatim** as the parent of every `hostPath` PersistentVolume. It must resolve to a real, writable directory from the Kubernetes node's point of view. The correct value depends on how the kubelet sees the filesystem, which differs by distribution:
+
+| Distribution | `host_volume_path` | Why this value |
+|---|---|---|
+| **Native k3s on Linux** (Option B) | `/data/vol` (or any other host dir) | k3s runs directly on the host; the kubelet sees the host FS 1:1. The path you set is the path the pods bind-mount, and is also where you `ls` from the Linux shell. |
+| **minikube on Linux, `--driver=none`** | `/data/vol` (same as k3s) | `--driver=none` is bare-metal minikube; identical semantics to k3s. |
+| **minikube on macOS, Docker driver** (Option A default) | `/minikube-host/Shared/vol` | The minikube VM auto-mounts `/Users` from the Mac host as `/minikube-host` inside the node. Put your data at `/Users/Shared/vol` on the Mac and the kubelet sees it as `/minikube-host/Shared/vol`. |
+| **minikube on Linux, `--driver=docker`** | a path you bind in explicitly | minikube does **not** auto-mount the host FS under Linux Docker. Run `minikube mount <host-dir>:<node-dir>` and set `host_volume_path=<node-dir>`. |
+
+Data layout under the prefix (same structure on every distribution):
 
 ```
-/Users/Shared/vol/
+{host_volume_path}/
 ├── platform/mysql/                          # MySQL data directory
 ├── example-org-prod/wordpress/
 │   └── var-www-html-wp-content/             # WordPress uploads, plugins, themes
@@ -321,8 +330,12 @@ Data is stored on the Mac host at `/Users/Shared/vol/` (configurable via `host_v
 
 **Important**: `./tf bootstrap` resets the cluster and Terraform state but does NOT delete host volumes. Data survives.
 
-**Gotcha**: On re-bootstrap, MySQL root password is regenerated (new state = new `random_password`), but the existing data directory retains the old password. If this happens, clear MySQL data:
+**Gotcha**: On re-bootstrap, MySQL root password is regenerated (new state = new `random_password`), but the existing data directory retains the old password. Clear the MySQL data from wherever it physically lives on the host:
 ```bash
+# native k3s on Linux (default host_volume_path=/data/vol):
+sudo rm -rf /data/vol/platform/mysql/*
+
+# macOS minikube (files live at /Users/Shared/vol on the Mac, /minikube-host/... inside the node):
 docker exec minikube sh -c 'rm -rf /minikube-host/Shared/vol/platform/mysql/*'
 ```
 
@@ -467,7 +480,7 @@ kubectl describe pod -l app=wordpress -n example-org-prod
 ./tf bootstrap
 ```
 
-This deletes the Minikube cluster, resets Terraform state, purges Cloudflare tunnel + DNS, and rebuilds everything. Host volume data at `/Users/Shared/vol/` is preserved.
+This deletes the Minikube cluster, resets Terraform state, purges Cloudflare tunnel + DNS, and rebuilds everything. Host volume data under `host_volume_path` (default `/data/vol`) is preserved.
 
 ## Variables reference
 
@@ -483,13 +496,13 @@ This deletes the Minikube cluster, resets Terraform state, purges Cloudflare tun
 | `cloudflare_tunnel_secret` | *(required)* | Random secret for tunnel creation |
 | `cloudflare_zone_id` | *(required)* | Primary zone for infra services (traefik, grafana) |
 | `namespace_prefix` | `""` | Optional prefix for all namespaces (e.g. `h-`) |
-| `host_volume_path` | `/Users/Shared/vol` | Mac host directory for persistent data |
+| `host_volume_path` | `/data/vol` | Parent path for hostPath PVs, used verbatim by the kubelet. Override to `/minikube-host/Shared/vol` for macOS minikube Docker driver. See [Persistent storage](#persistent-storage). |
 
 ## Known limitations
 
 - **Single-node only**: Minikube runs one node. Not for production.
 - **Re-bootstrap password mismatch**: On `./tf bootstrap`, MySQL root password is regenerated but persistent data retains the old one. Clear MySQL data dir manually if needed.
-- **macOS only**: hostPath storage relies on Docker Desktop's `/Users` mount. Linux would need a different path.
+- **hostPath storage is distribution-coupled**: the `host_volume_path` value must match how the kubelet sees the filesystem (native-Linux k3s/`--driver=none` use a regular host dir; macOS Docker-driver minikube uses `/minikube-host/...` because it auto-mounts `/Users`; Linux Docker-driver minikube needs an explicit `minikube mount`).
 - **No CI/CD**: `./tf bootstrap` uses `-auto-approve`. Add manual review gates for team use.
 
 ## License

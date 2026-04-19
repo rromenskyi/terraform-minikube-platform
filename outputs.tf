@@ -30,7 +30,7 @@ output "tunnel_cname" {
 
 output "grafana_credentials" {
   description = "Grafana admin credentials"
-  value       = module.k8s.grafana_credentials
+  value       = module.addons.grafana_credentials
   sensitive   = true
 }
 
@@ -90,11 +90,8 @@ output "cheatsheet" {
         sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -e "SHOW DATABASES;"'
 
     ── Storage ────────────────────────────────────────────────────
-    Host path (Mac):
+    hostPath prefix (host_volume_path):
       ${var.host_volume_path}/
-
-    In-node path (minikube):
-      ${local.minikube_volume_path}/
 
     Structure:
       ${var.host_volume_path}/<namespace>/              — project data
