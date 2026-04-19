@@ -232,6 +232,66 @@ purge_dns_records_for_tunnel() {
   done <<< "${zone_ids}"
 }
 
+preflight_config_files() {
+  # Abort bootstrap before any destructive action if the per-operator
+  # config files are missing. Both `config/platform.yaml` and every
+  # `config/domains/*.yaml` are gitignored (they hold Cloudflare zone
+  # IDs, service toggles, ollama model lists — per-cluster, per-operator
+  # values). A fresh clone has `*.example` templates only. Without the
+  # live files Terraform silently falls back to empty defaults:
+  # `fileexists(...) ? yamldecode(...) : {}` in locals.tf disables every
+  # shared service and `local.projects = {}` skips every tenant — the
+  # cluster boots "successfully" with no databases and no routed
+  # hostnames, which is confusing to debug.
+  local missing=0
+  if [[ ! -f "${SCRIPT_DIR}/config/platform.yaml" ]]; then
+    cat >&2 <<EOF
+Error: ${SCRIPT_DIR}/config/platform.yaml is missing.
+  This file controls which shared services (mysql / postgres / redis /
+  ollama) the platform layer brings up. Without it every service
+  defaults to \`enabled: false\` and tenants relying on them get a
+  cluster with no database.
+
+  Fix:
+    cp ${SCRIPT_DIR}/config/platform.yaml.example ${SCRIPT_DIR}/config/platform.yaml
+    # then edit the file and flip the services you want on
+
+EOF
+    missing=1
+  fi
+
+  local domain_count=0
+  if [[ -d "${SCRIPT_DIR}/config/domains" ]]; then
+    shopt -s nullglob
+    local f
+    for f in "${SCRIPT_DIR}/config/domains"/*.yaml; do
+      domain_count=$((domain_count + 1))
+    done
+    shopt -u nullglob
+  fi
+  if [[ "${domain_count}" -eq 0 ]]; then
+    cat >&2 <<EOF
+Error: ${SCRIPT_DIR}/config/domains/ contains no *.yaml tenant files.
+  A bootstrap with zero domains produces a cluster where \`local.projects\`
+  is empty and no tenant namespaces, deployments, IngressRoutes or
+  Cloudflare CNAMEs are created. That is almost never what you want —
+  the point of running bootstrap is to stand the cluster up FOR a set
+  of tenants.
+
+  Fix: create at least one tenant file, e.g.:
+    cp ${SCRIPT_DIR}/config/domains/example.com.yaml.example \\
+       ${SCRIPT_DIR}/config/domains/<your-domain>.yaml
+    # then edit name / slug / cloudflare_zone_id / envs / routes
+
+EOF
+    missing=1
+  fi
+
+  if [[ "${missing}" -ne 0 ]]; then
+    exit 1
+  fi
+}
+
 confirm_bootstrap_destructive() {
   # Interactive gate in front of every `bootstrap-*` subcommand. Consolidates
   # the destructive actions (profile delete, state wipe, Cloudflare tunnel
@@ -312,6 +372,7 @@ case "${SUBCOMMAND}" in
 
   bootstrap-minikube)
     shift
+    preflight_config_files
     MINIKUBE_PROFILE="$(resolve_cluster_name)"
     CLOUDFLARE_TUNNEL_NAME="$(resolve_cloudflare_tunnel_name)"
 
@@ -414,6 +475,7 @@ remote tfstate in B2 if the remote backend was ever configured (local backend ov
 
   bootstrap-k3s)
     shift
+    preflight_config_files
     CLOUDFLARE_TUNNEL_NAME="$(resolve_cloudflare_tunnel_name)"
 
     confirm_bootstrap_destructive \
