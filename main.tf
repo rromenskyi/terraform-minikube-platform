@@ -2,51 +2,98 @@
 # the backend block lives in `_backend.tf`. This file is composition only.
 
 # =============================================================================
-# Cluster distribution — pick ONE
+# Three-layer stack
 # =============================================================================
 #
-# This platform runs on top of a local Kubernetes cluster provisioned by one of
-# two sibling modules. They are drop-in replacements because they export the
-# same output signature (cluster_host, client_certificate, client_key,
-# cluster_ca_certificate, grafana_credentials, kubeconfig_path, …). Everything
-# below this block (providers, MySQL, Cloudflare tunnel, project modules) is
-# cluster-agnostic.
+# Layer 1 — module "k8s"    (cluster bootstrap)
+#   Picks ONE of:
+#     `terraform-minikube-k8s` — local minikube via the minikube provider
+#     `terraform-k3s-k8s`      — native k3s over SSH
+#   Both export an identical signature (cluster_host, *_certificate,
+#   cluster_ca_certificate, kubeconfig_path, cluster_name,
+#   cluster_distribution) so everything above is distribution-agnostic.
 #
-# Switching distribution = comment one block, uncomment the other.
+# Layer 2 — module "addons"  (platform services)
+#   `terraform-k8s-addons` — Traefik, cert-manager + Let's Encrypt,
+#   kube-prometheus-stack (Grafana), PodSecurity-labeled namespaces with
+#   default ResourceQuota/LimitRange, optional ops StatefulSet. Consumes
+#   the Layer-1 kubeconfig_path via `config_path`.
 #
+# Layer 3 — module "mysql", module "project"  (tenant workloads)
+#   Shared MySQL plus the per-domain project modules. They need
+#   namespaces/ingress/cert issuers from Layer 2, so they depend_on
+#   module.addons.
+
 # -----------------------------------------------------------------------------
-# Option A — minikube (default)
-# -----------------------------------------------------------------------------
-#   Requires: docker + minikube CLI on PATH.
-#   The scott-the-programmer/minikube Terraform provider creates the cluster
-#   synchronously inside a single `terraform apply`.
-#
-# -----------------------------------------------------------------------------
-# Option B — k3s (native, via SSH)
-# -----------------------------------------------------------------------------
-#   Requires: SSH daemon reachable at ssh_host:ssh_port and a user with
-#   passwordless sudo on the target host (127.0.0.1 for a local install).
-#   A single `terraform apply` is enough: the root `kubernetes` and `helm`
-#   providers wire themselves through `config_path = module.k8s.kubeconfig_path`
-#   (see `_providers.tf`), which is opened lazily at resource-apply time —
-#   by then `null_resource.k3s_install` has already written the kubeconfig.
+# Layer 1: Cluster distribution — pick ONE (the other stays commented out).
 # -----------------------------------------------------------------------------
 
 # --- Option A: minikube ------------------------------------------------------
+# module "k8s" {
+#   source = "git::https://github.com/rromenskyi/terraform-minikube-k8s.git?ref=v3.0.0"
+#
+#   cluster_name       = var.cluster_name
+#   kubernetes_version = var.kubernetes_version
+#   memory             = var.memory
+#
+#   # Keep Pod and Service ranges in separate CGNAT slices so neither collides
+#   # with the host LAN nor with each other.
+#   pod_cidr     = var.pod_cidr
+#   service_cidr = "100.64.0.0/12"
+#   dns_ip       = "100.64.0.10"
+#   cni          = "flannel"
+# }
+
+# --- Option B: k3s -----------------------------------------------------------
 module "k8s" {
-  source = "git::https://github.com/rromenskyi/terraform-minikube-k8s.git?ref=v2.1.0"
+  # TEMPORARY: local source during the addons-extraction bring-up. Flip back to
+  # `source = "git::https://github.com/rromenskyi/terraform-k3s-k8s.git?ref=vX.Y.Z"`
+  # once a full bootstrap-k3s succeeds end-to-end on this machine.
+  source = "/home/roman220/minikube/terraform-k3s-k8s"
 
-  cluster_name       = var.cluster_name
-  kubernetes_version = var.kubernetes_version
-  letsencrypt_email  = var.letsencrypt_email
-  memory             = var.memory
+  cluster_name = var.cluster_name
 
-  # Keep Pod and Service ranges in separate CGNAT slices so neither collides
-  # with the host LAN nor with each other.
-  pod_cidr     = var.pod_cidr
-  service_cidr = "100.64.0.0/12"
-  dns_ip       = "100.64.0.10"
-  cni          = "flannel"
+  # Leave kubernetes_version unset to pull the default k3s channel ("stable"),
+  # or pin a specific build like "v1.31.4+k3s1". The minikube-style "stable"
+  # string is not a valid k3s version.
+  # kubernetes_version = "v1.31.4+k3s1"
+
+  ssh_host             = var.ssh_host
+  ssh_port             = var.ssh_port
+  ssh_user             = var.ssh_user
+  ssh_private_key_path = var.ssh_private_key_path
+}
+
+# Fail fast at plan time if the operator forgot to set ssh_user /
+# ssh_private_key_path when the k3s distribution is active. Module blocks do
+# not accept `lifecycle { precondition }` in current Terraform, so a `check`
+# block is used. When the minikube distribution is active instead, the k3s
+# SSH vars are unused — the check still runs but is harmless informational
+# noise.
+check "k3s_ssh_vars_set" {
+  assert {
+    condition     = var.ssh_user != "" && var.ssh_private_key_path != ""
+    error_message = "ssh_user and ssh_private_key_path are required when the k3s distribution is active (set TF_VAR_ssh_user and TF_VAR_ssh_private_key_path, see .env.example)."
+  }
+
+  assert {
+    condition     = var.ssh_private_key_path == "" || fileexists(var.ssh_private_key_path)
+    error_message = "ssh_private_key_path does not point to a readable file: ${var.ssh_private_key_path}"
+  }
+}
+
+# -----------------------------------------------------------------------------
+# Layer 2: Platform add-ons (Traefik, cert-manager, monitoring, namespaces).
+# -----------------------------------------------------------------------------
+module "addons" {
+  # TEMPORARY: local source during bring-up, see the Layer-1 note above.
+  source = "/home/roman220/minikube/terraform-k8s-addons"
+
+  kubeconfig_path      = module.k8s.kubeconfig_path
+  cluster_name         = module.k8s.cluster_name
+  cluster_distribution = module.k8s.cluster_distribution
+
+  letsencrypt_email = var.letsencrypt_email
 
   enable_traefik           = true
   enable_traefik_dashboard = true
@@ -55,58 +102,19 @@ module "k8s" {
   create_ops_workload      = true
 }
 
-# --- Option B: k3s -----------------------------------------------------------
-# module "k8s" {
-#   source = "git::https://github.com/rromenskyi/terraform-k3s-k8s.git?ref=v0.2.0"
-#
-#   cluster_name      = var.cluster_name
-#   letsencrypt_email = var.letsencrypt_email
-#
-#   # Leave kubernetes_version unset to pull the default k3s channel ("stable"),
-#   # or pin a specific build like "v1.31.4+k3s1". The minikube-style "stable"
-#   # string is not a valid k3s version.
-#   # kubernetes_version = "v1.31.4+k3s1"
-#
-#   ssh_host             = var.ssh_host
-#   ssh_port             = var.ssh_port
-#   ssh_user             = var.ssh_user
-#   ssh_private_key_path = var.ssh_private_key_path
-#
-#   enable_traefik           = true
-#   enable_traefik_dashboard = true
-#   enable_cert_manager      = true
-#   enable_monitoring        = true
-#   create_ops_workload      = true
-#
-#   # Fail fast at plan time instead of deep inside the child module's SSH
-#   # provisioner if the operator forgot to set ssh_user / ssh_private_key_path
-#   # (empty-string defaults make them optional for the minikube path).
-#   lifecycle {
-#     precondition {
-#       condition     = var.ssh_user != "" && var.ssh_private_key_path != ""
-#       error_message = "ssh_user and ssh_private_key_path are required when the k3s distribution is active (set TF_VAR_ssh_user and TF_VAR_ssh_private_key_path, see .env.example)."
-#     }
-#
-#     precondition {
-#       condition     = fileexists(var.ssh_private_key_path)
-#       error_message = "ssh_private_key_path does not point to a readable file: ${var.ssh_private_key_path}"
-#     }
-#   }
-# }
-
 # =============================================================================
-# Projects — one entry per domain × env combination (e.g. "example-com-prod")
+# Layer 3: Projects — one entry per domain × env combination.
 # =============================================================================
 module "project" {
   for_each = local.projects
 
   source     = "./modules/project"
-  depends_on = [module.k8s, module.mysql]
+  depends_on = [module.addons, module.mysql]
 
   project_config   = each.value
   components       = local.components
   default_limits   = local.default_limits
   mysql_namespace  = module.mysql.namespace
   mysql_host       = module.mysql.host
-  volume_base_path = local.minikube_volume_path
+  volume_base_path = var.host_volume_path
 }

@@ -18,9 +18,9 @@ variable "namespace_prefix" {
 }
 
 variable "volume_base_path" {
-  description = "Base path for hostPath volumes inside the minikube node"
+  description = "Parent path used verbatim by the hostPath PersistentVolume for MySQL data. MySQL lands at <volume_base_path>/<namespace_prefix>platform/mysql/. Must resolve to a real writable directory from the kubelet's point of view (native k3s / --driver=none: any host dir; macOS minikube Docker driver: /minikube-host/Shared/vol)."
   type        = string
-  default     = "/minikube-host/Shared/vol"
+  default     = "/data/vol"
 }
 
 # ── Namespace ────────────────────────────────────────────────────────────────

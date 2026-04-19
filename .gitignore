@@ -24,6 +24,8 @@ manifests/**/secret*.yaml
 # Terraform internals
 *.tfstate
 *.tfstate.backup
+*.tfstate.*.backup
+tfplan
 .terraform/
 .terraform.lock.hcl
 

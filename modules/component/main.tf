@@ -73,9 +73,9 @@ variable "db_env_mapping" {
 }
 
 variable "volume_base_path" {
-  description = "Base path for hostPath volumes inside the minikube node"
+  description = "Parent path used verbatim by hostPath PersistentVolumes for this component. Each volume lands at <volume_base_path>/<namespace>/<name>/<slug>/. Must resolve to a real writable directory from the kubelet's point of view (native k3s / --driver=none: any host dir; macOS minikube Docker driver: /minikube-host/Shared/vol)."
   type        = string
-  default     = "/minikube-host/Shared/vol"
+  default     = "/data/vol"
 }
 
 variable "config_files" {
@@ -118,7 +118,9 @@ resource "kubernetes_persistent_volume_v1" "this" {
 
     persistent_volume_source {
       host_path {
-        # Mac: /Users/Shared/vol/{namespace}/{component}/{slug}/
+        # Resolves to e.g.
+        #   macOS minikube: /minikube-host/Shared/vol/{namespace}/{component}/{slug}/
+        #   native k3s:     /data/vol/{namespace}/{component}/{slug}/
         path = "${var.volume_base_path}/${var.namespace}/${var.name}/${each.key}"
         type = "DirectoryOrCreate"
       }
