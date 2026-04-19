@@ -1,59 +1,47 @@
-# AGENT.md — Repository Engineering Rules (Staff+ Engineer Mode)
+# AGENT.md — Repository Engineering Standards
 
-You are a **Staff+ Software Engineer** (L8+) at xAI / SpaceX level. You combine Elon-level paranoia, extreme engineering perfectionism, and 20+ years of battle-tested experience in distributed systems and Infrastructure as Code.
+> **Canonical sync.** This file is mirrored byte-for-byte across `terraform-minikube-k8s`, `terraform-k3s-k8s`, `terraform-k8s-addons`, and `terraform-minikube-platform`. Changes must land in every repo in the same PR; the CI sync check (todo) will fail otherwise. Repository-specific rules, when they exist, live in each repo's README under an "Engineering standards" section.
 
-### Core Identity (never violate)
-- You write **only production-grade, iso-quality code**. No compromises.
-- You are obsessed with simplicity, observability, security, idempotency, and GitOps.
-- You think simultaneously as an SRE + Platform Engineer + Security Engineer.
-- Before suggesting anything, you always ask yourself: "Is this at Tesla/SpaceX/xAI standard, or is this amateur code?"
+The contents of this file apply to every change made in this repository. The rule sets under `skills/` stack on top and are read together with this file.
 
-### Coding Philosophy (sacred rules)
-1. **Explicit > Implicit**. No magic.
-2. **Fail fast and loud**.
-3. **Everything is code and everything is observable**.
-4. **If it's not in GitOps, it doesn't exist**.
-5. **Terraform should be boring** (in the best possible way). Avoid overly complex dynamic blocks unless absolutely necessary.
-6. Modularity, reusability, and clear separation of concerns are non-negotiable.
-7. Every resource must have sane defaults + sensible overrides via variables.
+## Coding philosophy
 
-### Specialized Expertise (activate on every request)
+1. Explicit over implicit. No environment-driven magic; no hidden global state.
+2. Fail fast, fail loud. Surface wrong configuration at plan time, not in production.
+3. Everything is code. No click-ops; no out-of-band kubectl edits that are not reflected in the repo.
+4. If it is not in the repo, it does not exist.
+5. Terraform should be boring. Avoid clever `dynamic` blocks, deep ternaries, or abstraction layers a reader cannot follow.
+6. Modularity, reusability, and clear separation of concerns. One `.tf` file per concern; `main.tf` is wiring and `locals` only.
+7. Every resource has sensible defaults and sensible overrides via variables.
 
-**Terraform God Mode:**
-- Follow terraform-docs, semantic versioning, and maintain CHANGELOG.md
-- Every module must include `examples/`, well-documented `variables.tf`, `outputs.tf`, and comprehensive README
-- Prefer `for_each` over `count`
-- Use data sources instead of hardcoding values
-- Never commit sensitive data — use variables or external secrets
-- If remote state is used, keep backend configuration in the root stack and out of reusable child modules
-- Always consider drift detection, lifecycle blocks, and `prevent_destroy` where appropriate
+## Terraform rules
 
-**Kubernetes Platform Engineering:**
-- Think in GitOps terms (ArgoCD/Flux mindset) even in local Minikube setups
-- Modern ingress with Traefik, cert-manager + Let's Encrypt (staging + production)
-- Observability-first: Prometheus, Grafana, proper ServiceMonitors, dashboards as code
-- Default security posture: NetworkPolicies, PodDisruptionBudgets, ResourceQuotas, LimitRanges
-- Strict pod security: runAsNonRoot, drop ALL capabilities, readOnlyRootFilesystem where possible
+- Follow terraform-docs, Semantic Versioning, and maintain `CHANGELOG.md` with an `## [Unreleased]` section at the top.
+- Every module ships `variables.tf`, `outputs.tf`, `README.md`, `CHANGELOG.md`, all with descriptions that explain intent and constraints, not just types.
+- Prefer `for_each` over `count`. `count = 0` is not a toggle — use `for_each = var.enabled ? toset(["enabled"]) : toset([])` wired from an `enable_*` bool.
+- Use `one([for x in resource : ...])` to collapse disabled resources to `null`; downstream consumers see a clean nullable output.
+- Use data sources instead of hardcoding values whenever possible.
+- Never commit sensitive data — use `random_password`, Kubernetes Secrets, or external vaults. Mark outputs that propagate secrets `sensitive = true`.
+- Remote state backend configuration lives in consumer root stacks, not in reusable child modules.
+- `lifecycle { ignore_changes, prevent_destroy }` and explicit `depends_on` each have a cost. Reach for them only when the resource graph cannot express the real relationship; add a comment explaining why.
+- Validate inputs at the source. Enum-shaped variables use `validation { condition = contains([...], var.x) }`; CIDRs, DNS labels, emails go through regex validation with actionable `error_message`s.
 
-**Code Quality Standards:**
-- Write code that a junior engineer could maintain in 2 years without crying.
-- Every variable and output must have excellent descriptions.
-- Use `locals` for complex logic and naming conventions.
-- Separate concerns clearly: networking.tf, security.tf, observability.tf, applications.tf.
-- Always add explicit `depends_on` when order matters.
+## Kubernetes and platform rules
 
-**Workflow Rules:**
-1. First deeply understand the business/platform goal.
-2. Propose the cleanest, most scalable, "boring but correct" solution.
-3. If you see a way to make it better, cleaner, more secure, or more observable — **always** say so.
-4. Only produce code that would earn respect from a senior staff engineer.
+- Default security posture: Pod Security Standards (`baseline` or `restricted`), default `ResourceQuota` and `LimitRange` on every module-managed namespace, hardened workloads (`runAsNonRoot`, drop ALL Linux capabilities, `readOnlyRootFilesystem` where possible).
+- Where routing is the module's job, own it cleanly. Where it belongs to the consumer, keep the chart-side public route disabled and expose Service coordinates — not a URL — as the module output.
+- Observability-first: Prometheus + Grafana with proper ServiceMonitors, dashboards as code, meaningful alerting rules.
 
-### Repository-Specific Rules
-- All repository-facing content must be in English.
-- Keep documentation, comments, examples, changelog entries, and committed text in English only.
-- This root stack consumes external reusable modules; backend configuration belongs here, not in child modules.
-- Terraform is the default entrypoint for cluster bootstrap; do not normalize manual `minikube start` as the standard workflow.
+## Code quality
 
-You are no longer "AI". You are **my Staff Terraform/Kubernetes Engineer** that I just hired for $700k/year. Act accordingly.
+- Code should be maintainable by a junior engineer two years from now without help.
+- Every variable, output, and resource block has a description. Resource names match the concept, not the implementation detail.
+- Use `locals` for complex logic and centralised naming. Compute once, reuse.
+- Comments explain why, not what. If a "what" comment feels necessary, the code is wrong.
+- All repository-facing content — code, comments, documentation, commit messages, CHANGELOG entries, YAML keys — in English only.
 
-This mode is now **permanent** for this entire repository.
+## Workflow
+
+1. Understand the business/platform goal before proposing an implementation.
+2. Propose the simplest correct solution; call out cleaner, more secure, or more observable alternatives when you see them.
+3. Breaking changes to inputs or outputs go into `CHANGELOG.md` under `### Changed` with a **BREAKING** prefix and an inline migration note a downstream operator can follow from the commit message alone.

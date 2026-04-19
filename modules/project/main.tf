@@ -174,43 +174,48 @@ locals {
   #   external (plain): cross-namespace reference to a pre-existing Service
   #     — safe because the addons module enables
   #     `providers.kubernetesCRD.allowCrossNamespace=true` on Traefik.
+  # Traefik v3 is strict about `port`: an integer is matched as a port
+  # *number*, a string as a port *name*. We always want number lookup —
+  # so every branch here emits a homogeneously-typed map (via a
+  # conditional-filter trick on null-valued keys: `yamlencode` drops
+  # keys whose value is `null`, giving us an optional-field effect
+  # without Terraform collapsing the whole value to `map(string)`).
   ir_service_refs = {
     for name, c in local.normalized_components :
-    name => (
-      try(c.ingress_service, null) != null
-      ? { kind = c.ingress_service.kind, name = c.ingress_service.name }
-      : c.kind == "external"
-      ? {
-        name      = c.service.name
-        namespace = c.service.namespace
-        port      = tostring(c.service.port)
-      }
-      : { name = name, port = tostring(c.port) }
-    )
+    name => {
+      for k, v in {
+        kind      = try(c.ingress_service.kind, null)
+        name      = try(c.ingress_service.name, c.kind == "external" ? c.service.name : name)
+        namespace = c.kind == "external" && try(c.ingress_service, null) == null ? c.service.namespace : null
+        port      = try(c.ingress_service, null) != null ? null : (c.kind == "external" ? tonumber(c.service.port) : tonumber(c.port))
+      } : k => v if v != null
+    }
   }
 
-  # Traefik entryPoints the IngressRoute answers on. Default is
-  # `websecure` so TLS termination via `letsencrypt-production` works for
-  # direct LAN ingress. Components that need `web` (HTTP on port 80) — e.g.
-  # the Traefik dashboard, where cloudflared forwards HTTP straight to
-  # Traefik's web entrypoint and expects an IR match there — override.
+  # Traefik entryPoints the IngressRoute answers on.
+  #
+  # Cloudflare Tunnel terminates TLS at the edge and forwards plain HTTP
+  # to cloudflared → Traefik on the `web` entrypoint, so that is the
+  # default. A component can override to `websecure` if it is reachable
+  # by direct LAN/node-IP (outside the tunnel) and wants Let's Encrypt
+  # termination via `letsencrypt-production`.
   ir_entry_points = {
     for name, c in local.normalized_components :
-    name => try(c.entry_points, ["websecure"])
+    name => try(c.entry_points, ["web"])
   }
 
   # URL cloudflared forwards this route's requests to.
-  #   deployable: the in-namespace Service (bypasses Traefik).
-  #   external: the service named in the component spec. For a TraefikService
-  #     passthrough (dashboard), that's Traefik's own web entrypoint — the
-  #     IR completes the routing inside Traefik.
+  #
+  # Single uniform target: Traefik's in-cluster Service. Traefik then
+  # matches the IngressRoute (host + middlewares) and proxies to the
+  # tenant workload or external Service. Keeping one hop through Traefik
+  # means BasicAuth, rate-limit, strip-prefix middlewares — anything
+  # declared on the IngressRoute — actually runs on every request
+  # regardless of component kind. The previous direct-to-Service shortcut
+  # bypassed all of that for `kind: deployment`.
   component_service_urls = {
-    for name, c in local.normalized_components :
-    name => (
-      c.kind == "external"
-      ? "http://${c.service.name}.${c.service.namespace}.svc.cluster.local:${c.service.port}"
-      : "http://${name}.${local.namespace}.svc.cluster.local:${c.port}"
-    )
+    for name, _ in local.normalized_components :
+    name => "http://traefik.ingress-controller.svc.cluster.local:80"
   }
 
   # Components that opted into HTTP BasicAuth (set `basic_auth: true` in
