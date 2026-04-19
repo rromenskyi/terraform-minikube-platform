@@ -14,14 +14,14 @@
 #     at *.cfargotunnel.com. Useful when Terraform state was wiped mid-apply
 #     and the tunnel or DNS records were orphaned on the Cloudflare side.
 #
-#   ./tf bootstrap-minikube
+#   ./tf bootstrap-minikube [-y|--yes]
 #     Full-reset flow for the minikube distribution (Option A in main.tf):
 #     resets the local minikube profile, wipes Terraform state, purges the
 #     Cloudflare tunnel, and runs a phased apply (cluster first, then MySQL,
 #     then the rest) with Flannel/CNI cleanup between phases. Host volume
 #     data is NOT deleted — it survives.
 #
-#   ./tf bootstrap-k3s
+#   ./tf bootstrap-k3s [-y|--yes]
 #     Full-reset flow for the k3s distribution (Option B in main.tf):
 #     `terraform destroy` (tears down the tunnel + tries SSH uninstall of k3s),
 #     force-uninstalls k3s over SSH in case the destroy-time provisioner was
@@ -29,6 +29,13 @@
 #     a single-phase `terraform apply` (k3s single-phase works with lazy
 #     `config_path` providers). Host volume data under `$HOST_VOLUME_PATH` is
 #     NOT deleted.
+#
+# Both `bootstrap-*` subcommands stop on an interactive confirmation prompt
+# BEFORE running anything destructive. The prompt lists exactly what will be
+# destroyed and what will be preserved, so the operator sees the blast
+# radius before the first `rm -rf`. Skip the prompt in CI / scripted flows
+# with `BOOTSTRAP_YES=1` in the environment or `-y` / `--yes` on the
+# command line.
 
 set -euo pipefail
 
@@ -225,6 +232,49 @@ purge_dns_records_for_tunnel() {
   done <<< "${zone_ids}"
 }
 
+confirm_bootstrap_destructive() {
+  # Interactive gate in front of every `bootstrap-*` subcommand. Consolidates
+  # the destructive actions (profile delete, state wipe, Cloudflare tunnel
+  # purge, SSH k3s uninstall) into one prompt so the operator sees ALL of
+  # them laid out before any `rm -rf` runs. Skippable for CI via
+  # `BOOTSTRAP_YES=1` or `-y` / `--yes` anywhere on the command line.
+  local label="$1"
+  local destroy_list="$2"
+  local preserve_list="$3"
+  shift 3
+
+  local skip=${BOOTSTRAP_YES:-0}
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      -y|--yes) skip=1 ;;
+    esac
+  done
+  if [[ "${skip}" == "1" ]]; then
+    echo "${label}: confirmation skipped (BOOTSTRAP_YES=1 or -y/--yes)."
+    return 0
+  fi
+
+  cat <<EOF
+
+────────────────────────────────────────────────────────
+ ${label}
+────────────────────────────────────────────────────────
+
+This will DESTROY:
+$(printf '%s\n' "${destroy_list}" | sed 's/^/  - /')
+
+This will PRESERVE:
+$(printf '%s\n' "${preserve_list}" | sed 's/^/  - /')
+
+EOF
+  read -r -p "Type 'yes' to continue, anything else to abort: " answer
+  if [[ "${answer}" != "yes" ]]; then
+    echo "Aborted — no destructive action taken."
+    exit 1
+  fi
+}
+
 uninstall_k3s_over_ssh() {
   # Called by bootstrap-k3s as a belt-and-suspenders after `terraform destroy`.
   # `terraform destroy` already invokes the module's destroy-time provisioner
@@ -261,10 +311,21 @@ case "${SUBCOMMAND}" in
     ;;
 
   bootstrap-minikube)
-    echo "=== Phased Bootstrap Mode (minikube / Option A) ==="
+    shift
     MINIKUBE_PROFILE="$(resolve_cluster_name)"
     CLOUDFLARE_TUNNEL_NAME="$(resolve_cloudflare_tunnel_name)"
 
+    confirm_bootstrap_destructive \
+      "Bootstrap: minikube (Option A) — cluster \"${MINIKUBE_PROFILE}\"" \
+      "minikube profile \"${MINIKUBE_PROFILE}\" — the docker-driver VM container plus ${HOME}/.minikube/profiles/${MINIKUBE_PROFILE} and ${HOME}/.minikube/machines/${MINIKUBE_PROFILE}
+local Terraform state — ${SCRIPT_DIR}/terraform.tfstate, ${SCRIPT_DIR}/terraform.tfstate.backup, ${SCRIPT_DIR}/.terraform.tfstate.lock.info
+Cloudflare tunnel \"${CLOUDFLARE_TUNNEL_NAME}\" and every DNS CNAME pointing at its <tunnel_id>.cfargotunnel.com (other tunnels in the account are scoped out by UUID and kept)" \
+      "host volume data at ${TF_VAR_host_volume_path:-${HOST_VOLUME_PATH:-/data/vol}} — tenant PVCs on disk survive
+Cloudflare API token, zones, and tunnels OTHER than \"${CLOUDFLARE_TUNNEL_NAME}\"
+remote tfstate in B2 if the remote backend was ever configured (local backend override wins while active)" \
+      "$@"
+
+    echo "=== Phased Bootstrap Mode (minikube / Option A) ==="
     reset_minikube_profile "${MINIKUBE_PROFILE}"
     reset_terraform_state
     purge_cloudflare_tunnel "${CLOUDFLARE_TUNNEL_NAME}"
@@ -277,9 +338,38 @@ case "${SUBCOMMAND}" in
       # Remove stale Flannel bridge interfaces left from a previous cluster run.
       # If cni0 still has an IP from before, Flannel refuses to start with:
       # "cni0 already has an IP address different from 10.244.0.1/24"
-      echo "  Removing stale cni0 and flannel.1 from ${MINIKUBE_PROFILE}..."
+      # Three interfaces need disarming before Flannel starts from scratch:
+      #   cni0         — Flannel's own bridge from a previous run. Deleted
+      #                  outright: if it still holds an IP from before,
+      #                  Flannel refuses to start with "cni0 already has an
+      #                  IP address different from 10.244.0.1/24".
+      #   flannel.1    — Flannel's VXLAN interface, same staleness concern,
+      #                  also deleted outright so Flannel recreates it
+      #                  cleanly.
+      #   cni-podman0  — the podman bridge, baked into kicbase (see the
+      #                  Disabling... block below). It is created by kubeadm
+      #                  at initial cluster boot — the podman conflist is
+      #                  the ONLY CNI config available during kubeadm's
+      #                  coredns install, before Flannel's DaemonSet has had
+      #                  a chance to drop its own conflist. Once the bridge
+      #                  exists with 10.244.0.1/16, it fights Flannel's
+      #                  cni0 (10.244.0.1/24) over the SAME address. ARP
+      #                  goes non-deterministic, then a few minutes in the
+      #                  bootstrap in-cluster Service NAT starts failing
+      #                  ("dial tcp 100.64.0.1:443: no route to host"
+      #                  from coredns / metrics-server). `ip link delete`
+      #                  on the bridge silently fails while it still has
+      #                  slave veths from the initial kubeadm pods, so
+      #                  instead of deleting, flush the IP and bring it
+      #                  DOWN — this disarms the bridge regardless of what
+      #                  happens to it during the rest of the boot.
+      echo "  Disarming stale cni0, flannel.1 (delete) and cni-podman0 (down + no IP) on ${MINIKUBE_PROFILE}..."
       docker exec "${MINIKUBE_PROFILE}" ip link delete cni0 2>/dev/null || true
       docker exec "${MINIKUBE_PROFILE}" ip link delete flannel.1 2>/dev/null || true
+      docker exec "${MINIKUBE_PROFILE}" sh -c '
+        ip addr flush dev cni-podman0 2>/dev/null
+        ip link set cni-podman0 down  2>/dev/null
+      ' || true
 
       # The kicbase image ships 87-podman-bridge.conflist alongside 10-flannel.conflist.
       # Both use 10.244.0.1 as gateway. Before Flannel is ready, pods created by kubelet
@@ -323,9 +413,20 @@ case "${SUBCOMMAND}" in
     ;;
 
   bootstrap-k3s)
-    echo "=== Single-phase Bootstrap Mode (k3s / Option B) ==="
+    shift
     CLOUDFLARE_TUNNEL_NAME="$(resolve_cloudflare_tunnel_name)"
 
+    confirm_bootstrap_destructive \
+      "Bootstrap: k3s (Option B) — ssh target \"${TF_VAR_ssh_user:-?}@${TF_VAR_ssh_host:-?}\"" \
+      "the k3s cluster on ${TF_VAR_ssh_user:-?}@${TF_VAR_ssh_host:-?}:${TF_VAR_ssh_port:-22} — \`terraform destroy\` then \`/usr/local/bin/k3s-uninstall.sh\` over SSH. All pods, Services, PVCs, in-cluster data disappear with k3s
+local Terraform state — ${SCRIPT_DIR}/terraform.tfstate, ${SCRIPT_DIR}/terraform.tfstate.backup, ${SCRIPT_DIR}/.terraform.tfstate.lock.info
+Cloudflare tunnel \"${CLOUDFLARE_TUNNEL_NAME}\" and every DNS CNAME pointing at its <tunnel_id>.cfargotunnel.com (other tunnels in the account are scoped out by UUID and kept)" \
+      "host volume data at ${TF_VAR_host_volume_path:-${HOST_VOLUME_PATH:-/data/vol}} on ${TF_VAR_ssh_host:-?} — k3s hostPath PVs survive because only the k3s control plane / kubelet are uninstalled, not the directory tree
+the SSH host itself — OS, user accounts, other services running on ${TF_VAR_ssh_host:-?} are untouched
+Cloudflare API token, zones, and tunnels OTHER than \"${CLOUDFLARE_TUNNEL_NAME}\"" \
+      "$@"
+
+    echo "=== Single-phase Bootstrap Mode (k3s / Option B) ==="
     echo "Step 0: Destroying existing Terraform state (if any)..."
     terraform destroy -auto-approve
 
