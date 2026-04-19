@@ -630,17 +630,29 @@ resource "kubernetes_job_v1" "redis_setup" {
             }
           }
 
+          # The `>` prefix on the password is Redis ACL syntax ("add this
+          # password to the user"), *not* shell redirection — escape it so
+          # `sh -c` does not strip the password into a stray output file
+          # and leave the ACL user without any credentials.
           command = [
             "sh", "-c",
             join(" ", [
               "redis-cli -h ${var.redis_host} -a \"$REDIS_PASSWORD\"",
               "ACL SETUSER ${local.redis_user}",
               "on",
-              ">${random_password.redis[0].result}",
+              "\\>${random_password.redis[0].result}",
               "resetkeys",
               "~${local.redis_key_prefix}*",
               "+@all",
               "-@dangerous",
+              # Object-cache plugins (WP redis-cache, Drupal Redis, …)
+              # use INFO for health / server-version detection and
+              # FLUSHDB to drop their tenant keyspace on admin action.
+              # Both live in `@dangerous` in Redis 7's category tree, so
+              # re-granting them explicitly is safer and cheaper than
+              # removing the whole `-@dangerous` ceiling.
+              "+INFO",
+              "+FLUSHDB",
             ])
           ]
         }
