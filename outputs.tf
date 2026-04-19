@@ -29,13 +29,23 @@ output "tunnel_cname" {
 }
 
 output "grafana_credentials" {
-  description = "Grafana admin credentials"
+  description = "Grafana admin credentials (user + password)."
   value       = module.addons.grafana_credentials
   sensitive   = true
 }
 
+output "basic_auth" {
+  description = "HTTP BasicAuth credentials per project → component. Populated for every component with `basic_auth: true` in its spec (e.g. the Traefik dashboard). Shape: {<project_key>: {<component>: {user, password}}}."
+  sensitive   = true
+  value = {
+    for proj_key, proj in module.project :
+    proj_key => proj.basic_auth_credentials
+    if length(proj.basic_auth_credentials) > 0
+  }
+}
+
 output "mysql" {
-  description = "Shared MySQL connection info"
+  description = "Shared MySQL connection info (host, port, namespace, service, root_password)."
   value = {
     host          = module.mysql.host
     port          = module.mysql.port
@@ -47,41 +57,39 @@ output "mysql" {
 }
 
 output "namespaces" {
-  description = "All project namespaces"
+  description = "All project namespaces managed by this platform."
   value       = [for _, proj in module.project : proj.namespace]
 }
 
 output "cheatsheet" {
-  description = "Common commands for working with the platform"
+  description = "Common commands for working with the platform."
   value       = <<-EOT
 
     ╔══════════════════════════════════════════════════════════════╗
-    ║                    Platform Cheatsheet                      ║
+    ║                     Platform Cheatsheet                      ║
     ╚══════════════════════════════════════════════════════════════╝
 
     ── Secrets ────────────────────────────────────────────────────
-    MySQL root password:
-      terraform output -json mysql | jq -r '.root_password'
-
     Grafana admin password:
       terraform output -json grafana_credentials | jq -r '.password'
 
-    DB credentials for a project namespace:
+    MySQL root password:
+      terraform output -json mysql | jq -r '.root_password'
+
+    Traefik dashboard login (user: admin):
+      terraform output -json basic_auth \
+        | jq -r '[.[].traefik?.password] | map(select(.)) | .[0]'
+
+    Every BasicAuth credential (Traefik dashboard + any other
+    `basic_auth: true` component):
+      terraform output -json basic_auth | jq
+
+    Per-project DB credentials (created when a component has `db: true`):
       kubectl get secret db-credentials -n <namespace> -o json \
         | jq '.data | map_values(@base64d)'
 
-    ── Dashboards ─────────────────────────────────────────────────
-    Kubernetes dashboard:
-      minikube dashboard -p ${var.cluster_name}
-
-    Grafana (port-forward):
-      kubectl port-forward svc/kube-prometheus-stack-grafana 3000:80 -n monitoring
-
-    Traefik dashboard (port-forward):
-      kubectl port-forward svc/traefik 9000:9000 -n ingress-controller
-
     ── MySQL ──────────────────────────────────────────────────────
-    Connect to MySQL from host:
+    Connect to MySQL (run inside the mysql pod):
       kubectl exec -it statefulset/mysql -n ${module.mysql.namespace} -- \
         sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD"'
 
@@ -89,36 +97,29 @@ output "cheatsheet" {
       kubectl exec statefulset/mysql -n ${module.mysql.namespace} -- \
         sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -e "SHOW DATABASES;"'
 
-    ── Storage ────────────────────────────────────────────────────
-    hostPath prefix (host_volume_path):
-      ${var.host_volume_path}/
-
-    Structure:
-      ${var.host_volume_path}/<namespace>/              — project data
+    ── Host storage ───────────────────────────────────────────────
+    Every hostPath PV lives under `${var.host_volume_path}`:
       ${var.host_volume_path}/${module.mysql.namespace}/mysql/   — MySQL data
-
-    Browse MySQL data:
-      ls ${var.host_volume_path}/${module.mysql.namespace}/mysql/
-
-    Browse WordPress uploads:
-      ls ${var.host_volume_path}/<namespace>/wordpress/var-www-html-wp-content/
+      ${var.host_volume_path}/<namespace>/<component>/<mount>    — project data
 
     ── Debugging ──────────────────────────────────────────────────
-    All pods across project namespaces:
-      kubectl get pods ${join(" ", [for ns in [for _, p in module.project : p.namespace] : "-n ${ns}"])}
+    Pods in every project namespace (label-filtered across the cluster):
+      kubectl get pods -A -l app.kubernetes.io/managed-by=terraform
 
-    Pod logs:
+    Pods in a single project:
+      kubectl get pods -n <namespace>
+
+    Logs / shell for a component:
       kubectl logs -f deploy/<component> -n <namespace>
-
-    Shell into a pod:
-      kubectl exec -it deploy/<component> -n <namespace> -- sh
+      kubectl exec  -it deploy/<component> -n <namespace> -- sh
 
     ── Terraform ──────────────────────────────────────────────────
-    Plan:           ./tf plan
-    Apply:          ./tf apply
-    Full bootstrap: ./tf bootstrap
-    Show outputs:   terraform output
-    Show projects:  terraform output -json projects | jq .
+    Plan:       ./tf plan
+    Apply:      ./tf apply
+    Bootstrap:  ./tf bootstrap-k3s      (or: ./tf bootstrap-minikube)
+    Purge CF:   ./tf cloudflare-purge
+    Outputs:    terraform output
+    Projects:   terraform output -json projects | jq .
 
   EOT
 }

@@ -1,0 +1,9 @@
+# External component — routing only, no Deployment. Points at the
+# kube-prometheus-stack chart's Grafana Service installed by the
+# terraform-k8s-addons module.
+kind: external
+
+service:
+  name:      kube-prometheus-stack-grafana
+  namespace: monitoring
+  port:      80

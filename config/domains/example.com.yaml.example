@@ -9,20 +9,34 @@ name: example.com                              # Domain name (used in hostnames)
 slug: example-com                              # URL-safe slug (used in namespace names)
 cloudflare_zone_id: "your-zone-id-from-cf"     # Cloudflare Zone ID for this domain
 
+# `envs` is a map of env name → per-env routing config.
+# Hostnames and components are decoupled:
+#   - the map key is the HOST PREFIX    ("" = bare apex, "www" = www.example.com)
+#   - the map value is the COMPONENT NAME (resolved from config/components/<name>.yaml)
+# A component is deployed iff at least one route points at it. The same
+# component can back multiple hosts; different hosts can back different
+# components.
+#
+# Final hostname per route: "{host_prefix}.{domain}" literally, with
+# "" collapsing to the apex. The env name is NOT injected into the
+# hostname — if two envs need distinct URLs, spell out the subdomain
+# in the key (e.g. `api.dev: whoami` → api.dev.example.com).
 envs:
-  - prod
-  # - staging                                  # Uncomment to add staging environment
+  prod:
+    routes:
+      "":    web          # example.com              → web
+      www:   web          # www.example.com          → web
+      api:   whoami       # api.example.com          → whoami
+      debug: echo         # debug.example.com        → echo
 
-components:
-  - web                                        # nginx:alpine — static site
-  - whoami                                     # traefik/whoami — debugging
-  # - echo                                     # echo-server — request inspector
-  # - name: wordpress                          # WordPress with DB and persistent storage
-  #   aliases:
-  #     - ""                                   # bare domain (example.com)
-  #     - www                                  # www.example.com
+  # Optional additional env. Pick prefixes that don't collide with prod:
+  # dev:
+  #   routes:
+  #     api.dev:   whoami   # api.dev.example.com     → whoami
+  #     admin.dev: echo     # admin.dev.example.com   → echo
 
-# (Optional) Override default resource quota for this project's namespace
+# (Optional) Override the default ResourceQuota for this project's namespace.
+# Applies per-env if placed under `envs.<env>.limits`, or project-wide here.
 # limits:
 #   cpu: "2"
 #   memory: "4Gi"
