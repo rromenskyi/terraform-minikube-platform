@@ -237,11 +237,6 @@ output "port" {
   description = "MySQL Service port"
 }
 
-output "root_secret_name" {
-  value       = kubernetes_secret_v1.mysql_root.metadata[0].name
-  description = "Name of the Secret containing MYSQL_ROOT_PASSWORD"
-}
-
 output "root_password" {
   value       = random_password.root.result
   sensitive   = true

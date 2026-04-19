@@ -18,13 +18,10 @@ variable "kubernetes_version" {
 
 variable "pod_cidr" {
   # NOTE: minikube's Flannel addon hardcodes "Network": "10.244.0.0/16" in its
-  # kube-flannel-cfg ConfigMap and ignores kubeadm.pod-network-cidr. If this
-  # variable is set to anything outside 10.244.0.0/16, Flannel crashes with
-  # "subnet does not contain node PodCIDR" and all new pods get stuck in
-  # ContainerCreating. Keep at 10.244.0.0/16 until the minikube provider
-  # properly wires the Flannel net-conf from the pod_cidr input.
-  # TODO: switch to "100.80.0.0/12" (CGNAT) once Flannel ConfigMap is patched
-  # automatically during bootstrap.
+  # kube-flannel-cfg ConfigMap and ignores kubeadm.pod-network-cidr. Anything
+  # outside 10.244.0.0/16 causes Flannel to crash ("subnet does not contain
+  # node PodCIDR") and leaves all pods stuck in ContainerCreating. The k3s
+  # sibling does not have this limitation.
   description = "CIDR range to use for Pod IPs inside the Minikube cluster"
   type        = string
   default     = "10.244.0.0/16"
@@ -97,12 +94,4 @@ variable "host_volume_path" {
   description = "Parent path used verbatim by hostPath persistent volumes — set this to whatever the kubelet sees on the node. Native k3s / minikube --driver=none / any Linux bare-metal: use a regular host directory (default /data/vol). macOS Docker-driver minikube: use /minikube-host/Shared/vol (the in-VM mount of /Users/Shared/vol on the Mac)."
   type        = string
   default     = "/data/vol"
-}
-
-variable "minikube_node_ip" {
-  # minikube with Docker driver on macOS always assigns 192.168.49.2 to the node.
-  # Used to reach NodePort services (e.g. MySQL) from Terraform running on the host.
-  description = "IP of the minikube cluster node (Docker driver default: 192.168.49.2)"
-  type        = string
-  default     = "192.168.49.2"
 }
