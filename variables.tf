@@ -85,9 +85,9 @@ variable "cloudflare_zone_id" {
 }
 
 variable "namespace_prefix" {
-  description = "Optional prefix for project namespaces (e.g. 'h-' → 'h-example-com-prod'). Empty by default."
+  description = "Prefix prepended to every tenant-project namespace created from `config/domains/*.yaml` (e.g. `phost-` → `phost-example-com-prod`). Groups all project-tenant namespaces together under a common prefix in `kubectl get ns`, separate from the infra namespaces (`cert-manager`, `ingress-controller`, `monitoring`, `ops`, `platform`) that have their own fixed names. Set to `\"\"` to disable prefixing."
   type        = string
-  default     = ""
+  default     = "phost-"
 }
 
 variable "host_volume_path" {

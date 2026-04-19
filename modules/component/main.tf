@@ -84,6 +84,15 @@ variable "config_files" {
   default     = {}
 }
 
+variable "security" {
+  description = "Optional pod `securityContext` knobs. `run_as_user` pins the container UID; `fs_group` makes kubelet chown every hostPath volume to that GID at mount time — the latter is how a WordPress image (www-data, UID 33) writes to a host-owned directory without a separate init container."
+  type = object({
+    run_as_user = optional(number)
+    fs_group    = optional(number)
+  })
+  default = {}
+}
+
 # ── Locals ────────────────────────────────────────────────────────────────────
 
 locals {
@@ -190,6 +199,62 @@ resource "kubernetes_deployment_v1" "this" {
       }
 
       spec {
+        dynamic "security_context" {
+          for_each = (
+            try(var.security.run_as_user, null) != null
+            || try(var.security.fs_group, null) != null
+          ) ? [1] : []
+          content {
+            run_as_user = try(var.security.run_as_user, null)
+            fs_group    = try(var.security.fs_group, null)
+          }
+        }
+
+        # hostPath volumes ignore the pod-level `fsGroup` — the kubelet
+        # refuses to recursively chown something on the host filesystem
+        # it didn't create. Without this init container, a non-root main
+        # container (e.g. WordPress's www-data, UID 33) fails on first
+        # start with `mkdir: Permission denied` trying to seed
+        # `/var/www/html/wp-content` from the image. Run a one-shot root
+        # container that chowns every mounted volume to the configured
+        # UID/GID, then the main container can read/write normally.
+        dynamic "init_container" {
+          for_each = (
+            try(var.security.fs_group, null) != null
+            && length(local.volumes) > 0
+          ) ? [1] : []
+          content {
+            name  = "chown-volumes"
+            image = "busybox:stable-musl"
+
+            security_context {
+              run_as_user = 0
+            }
+
+            # Minimal resources — the init container runs once per pod
+            # start, for milliseconds, and only issues a chown. Explicit
+            # values are required because tenant namespaces carry a
+            # LimitRange that rejects any container missing them.
+            resources {
+              requests = { cpu = "10m", memory = "16Mi" }
+              limits   = { cpu = "50m", memory = "32Mi" }
+            }
+
+            command = ["sh", "-c", join(" && ", [
+              for k, v in local.volumes :
+              "chown -R ${try(var.security.run_as_user, 0)}:${var.security.fs_group} ${v.mount}"
+            ])]
+
+            dynamic "volume_mount" {
+              for_each = local.volumes
+              content {
+                name       = volume_mount.key
+                mount_path = volume_mount.value.mount
+              }
+            }
+          }
+        }
+
         container {
           name  = var.name
           image = var.image

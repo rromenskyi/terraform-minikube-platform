@@ -1,0 +1,32 @@
+# External component — routing only, no Deployment. Exposes the Traefik
+# built-in dashboard (served by the `api@internal` TraefikService inside
+# Traefik itself) via the platform's tenant route machinery.
+#
+# Traffic flow:
+#   cloudflared → `service` (Traefik's web entrypoint on port 80)
+#   Traefik sees the Host header, matches the IngressRoute below,
+#   and routes the request to the TraefikService named in
+#   `ingress_service`.
+#
+# Why `web` instead of `websecure`: cloudflared forwards plain HTTP to
+# port 80 — the IR has to answer on the same entrypoint cloudflared
+# lands on, and TLS is already terminated at Cloudflare's edge.
+kind: external
+
+service:
+  name:      traefik
+  namespace: ingress-controller
+  port:      80
+
+ingress_service:
+  kind: TraefikService
+  name: api@internal
+
+entry_points:
+  - web
+
+# The Traefik dashboard has no built-in auth. Traffic reaching `web` on
+# `traefik.<domain>` has already passed Cloudflare's edge, so BasicAuth
+# is the last gate before the operator-facing API. Password is generated
+# per project and retrievable via `terraform output -json basic_auth_credentials`.
+basic_auth: true

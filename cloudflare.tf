@@ -1,39 +1,15 @@
-# ── Locals: flatten all project hostnames + infra services ────────────────────
+# ── Locals: flatten all project hostnames ─────────────────────────────────────
 
 locals {
-  # Collect every routed hostname from every project module.
-  _project_hostnames = merge([
+  # Every routed hostname, collected from every project module.
+  # Single source of truth for both the Cloudflare tunnel ingress rules and
+  # the per-host CNAME DNS records below. Infra routes (Grafana, Traefik
+  # dashboard, …) are emitted by the same tenant machinery via
+  # `kind: external` components in `config/components/` — no separate
+  # infra code path here.
+  all_hostnames = merge([
     for _, proj in module.project : proj.hostnames
   ]...)
-
-  # The domain whose zone_id matches cloudflare_zone_id — hosts infra services.
-  # Nullable: a fresh clone with no tenant YAML files yet still has to plan and
-  # `terraform validate`. When no domain matches, infra hostnames collapse to
-  # an empty map and the tunnel config reduces to the catch-all rule.
-  _infra_domain_candidates = [
-    for _, config in local._domain_configs : config.name
-    if try(config.cloudflare_zone_id, "") == var.cloudflare_zone_id
-  ]
-  _infra_domain = length(local._infra_domain_candidates) > 0 ? local._infra_domain_candidates[0] : null
-
-  # Infrastructure services that live outside project modules.
-  # These use the primary cloudflare_zone_id. Empty when no matching domain
-  # is configured yet.
-  _infra_hostnames = local._infra_domain == null ? {} : {
-    "traefik.${local._infra_domain}" = {
-      component = "traefik"
-      service   = "http://traefik.ingress-controller.svc.cluster.local:80"
-      zone_id   = var.cloudflare_zone_id
-    }
-    "grafana.${local._infra_domain}" = {
-      component = "grafana"
-      service   = "http://kube-prometheus-stack-grafana.monitoring.svc.cluster.local:80"
-      zone_id   = var.cloudflare_zone_id
-    }
-  }
-
-  # All hostnames: projects + infra — single source of truth for tunnel + DNS.
-  all_hostnames = merge(local._project_hostnames, local._infra_hostnames)
 }
 
 # ── Cloudflare Zero Trust Tunnel ─────────────────────────────────────────────
