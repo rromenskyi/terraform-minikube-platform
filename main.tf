@@ -46,7 +46,7 @@
 
 # --- Option B: k3s -----------------------------------------------------------
 module "k8s" {
-  source = "git::https://github.com/rromenskyi/terraform-k3s-k8s.git?ref=v0.3.0"
+  source = "git::https://github.com/rromenskyi/terraform-k3s-k8s.git?ref=v0.3.1"
 
   cluster_name = var.cluster_name
 
