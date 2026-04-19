@@ -1,13 +1,46 @@
-image: wordpress:6.7-php8.3-apache
+image: wordpress:6.9-php8.3-apache
 port: 80
 replicas: 1
 health_path: null   # WordPress setup returns 302 — disable HTTP probes
 db: true
+redis: true
 env:
   WORDPRESS_DB_HOST: DB_HOST
   WORDPRESS_DB_NAME: DB_NAME
   WORDPRESS_DB_USER: DB_USER
   WORDPRESS_DB_PASSWORD: DB_PASS
+
+# Redis coordinates land as env_from the per-tenant `redis-credentials`
+# Secret (platform Redis module, provisioned when `redis: true` above):
+# `REDIS_HOST`, `REDIS_PORT`, `REDIS_USER`, `REDIS_PASSWORD`,
+# `REDIS_KEY_PREFIX` — all exposed verbatim on the container. The
+# snippet below is appended to `wp-config.php` by the WP image
+# entrypoint; it wires the `redis-cache` plugin (bundled Predis
+# client — no phpredis extension required) and reads credentials
+# straight from env so they never hit disk in wp-config.
+env_static:
+  WORDPRESS_CONFIG_EXTRA: |
+    // TLS terminates at Cloudflare; origin is HTTP. Teach WordPress
+    // that the *client-visible* scheme is HTTPS, otherwise /wp-admin
+    // 302-loops between WP ("redirect to HTTPS") and Cloudflare
+    // ("already HTTPS, send plain HTTP to origin"). The CF-Visitor
+    // header is Cloudflare-issued; X-Forwarded-Proto is added by
+    // Traefik — both are treated as authoritative because the only
+    // path to the origin goes through the Cloudflare Tunnel →
+    // Traefik chain.
+    if ((isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https')
+        || (isset($_SERVER['HTTP_CF_VISITOR']) && strpos($_SERVER['HTTP_CF_VISITOR'], 'https') !== false)) {
+        $_SERVER['HTTPS'] = 'on';
+    }
+
+    define('WP_CACHE', true);
+    define('WP_REDIS_CLIENT',   'predis');
+    define('WP_REDIS_HOST',     getenv('REDIS_HOST'));
+    define('WP_REDIS_PORT',     (int) getenv('REDIS_PORT'));
+    define('WP_REDIS_USERNAME', getenv('REDIS_USER'));
+    define('WP_REDIS_PASSWORD', getenv('REDIS_PASSWORD'));
+    define('WP_REDIS_PREFIX',   getenv('REDIS_KEY_PREFIX'));
+    define('WP_REDIS_DATABASE', 0);
 storage:
   - mount: /var/www/html/wp-content
     size: 10Gi
