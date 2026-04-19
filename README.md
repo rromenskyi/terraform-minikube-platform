@@ -62,18 +62,20 @@ terraform-minikube-platform/
     └── mysql/                  # Shared MySQL StatefulSet + Secret
 ```
 
-### External dependency
+### External dependencies
 
-The base cluster is provided by a sibling module fetched directly from GitHub at a pinned release — no sibling checkout required:
+Three sibling modules are fetched directly from GitHub at pinned releases — no sibling checkout required:
 
-- [`terraform-minikube-k8s`](https://github.com/rromenskyi/terraform-minikube-k8s) — Option A (default), pinned to `v2.1.0`
-- [`terraform-k3s-k8s`](https://github.com/rromenskyi/terraform-k3s-k8s) — Option B (k3s), pinned to `v0.2.0`
+- Layer 1 (cluster bootstrap, pick ONE):
+  - [`terraform-minikube-k8s`](https://github.com/rromenskyi/terraform-minikube-k8s) — Option A (minikube), pinned to `v3.0.0`
+  - [`terraform-k3s-k8s`](https://github.com/rromenskyi/terraform-k3s-k8s) — Option B (k3s, active default), pinned to `v0.3.1`
+- Layer 2 (platform addons): [`terraform-k8s-addons`](https://github.com/rromenskyi/terraform-k8s-addons) — pinned to `v0.1.0`
 
-`terraform init` downloads the selected module automatically. To upgrade, bump the `?ref=vX.Y.Z` in `main.tf` and re-run `terraform init -upgrade`.
+`terraform init` downloads the selected modules automatically. To upgrade, bump the `?ref=vX.Y.Z` in `main.tf` and re-run `terraform init -upgrade`.
 
-### Alternative cluster distribution: k3s
+### Alternative cluster distribution
 
-The cluster module is swappable. `main.tf` has an **Option A — minikube** (active) and **Option B — k3s** (commented out) block. Both modules export the same output signature (`cluster_host`, `client_certificate`, `client_key`, `cluster_ca_certificate`, `grafana_credentials`, `kubeconfig_path`, …), so everything below the cluster block (providers, MySQL, Cloudflare tunnel, project modules) is distribution-agnostic.
+The cluster module is swappable. `main.tf` has an **Option A — minikube** (commented out) and **Option B — k3s** (active default) block. Both modules export the same output signature (`cluster_host`, `client_certificate`, `client_key`, `cluster_ca_certificate`, `kubeconfig_path`, `cluster_name`, `cluster_distribution`), so layers 2 and 3 (addons, MySQL, Cloudflare tunnel, project modules) are distribution-agnostic.
 
 To switch to k3s (native install via SSH):
 
