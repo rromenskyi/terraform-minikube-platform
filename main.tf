@@ -46,10 +46,7 @@
 
 # --- Option B: k3s -----------------------------------------------------------
 module "k8s" {
-  # TEMPORARY: local source during the addons-extraction bring-up. Flip back to
-  # `source = "git::https://github.com/rromenskyi/terraform-k3s-k8s.git?ref=vX.Y.Z"`
-  # once a full bootstrap-k3s succeeds end-to-end on this machine.
-  source = "/home/roman220/minikube/terraform-k3s-k8s"
+  source = "git::https://github.com/rromenskyi/terraform-k3s-k8s.git?ref=v0.3.0"
 
   cluster_name = var.cluster_name
 
@@ -86,8 +83,7 @@ check "k3s_ssh_vars_set" {
 # Layer 2: Platform add-ons (Traefik, cert-manager, monitoring, namespaces).
 # -----------------------------------------------------------------------------
 module "addons" {
-  # TEMPORARY: local source during bring-up, see the Layer-1 note above.
-  source = "/home/roman220/minikube/terraform-k8s-addons"
+  source = "git::https://github.com/rromenskyi/terraform-k8s-addons.git?ref=v0.1.0"
 
   kubeconfig_path      = module.k8s.kubeconfig_path
   cluster_name         = module.k8s.cluster_name
