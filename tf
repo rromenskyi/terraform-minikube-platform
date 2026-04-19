@@ -399,32 +399,39 @@ remote tfstate in B2 if the remote backend was ever configured (local backend ov
       # Remove stale Flannel bridge interfaces left from a previous cluster run.
       # If cni0 still has an IP from before, Flannel refuses to start with:
       # "cni0 already has an IP address different from 10.244.0.1/24"
-      # Three interfaces need disarming before Flannel starts from scratch:
-      #   cni0         — Flannel's own bridge from a previous run. Deleted
-      #                  outright: if it still holds an IP from before,
-      #                  Flannel refuses to start with "cni0 already has an
-      #                  IP address different from 10.244.0.1/24".
-      #   flannel.1    — Flannel's VXLAN interface, same staleness concern,
-      #                  also deleted outright so Flannel recreates it
-      #                  cleanly.
-      #   cni-podman0  — the podman bridge, baked into kicbase (see the
-      #                  Disabling... block below). It is created by kubeadm
-      #                  at initial cluster boot — the podman conflist is
-      #                  the ONLY CNI config available during kubeadm's
-      #                  coredns install, before Flannel's DaemonSet has had
-      #                  a chance to drop its own conflist. Once the bridge
-      #                  exists with 10.244.0.1/16, it fights Flannel's
-      #                  cni0 (10.244.0.1/24) over the SAME address. ARP
-      #                  goes non-deterministic, then a few minutes in the
-      #                  bootstrap in-cluster Service NAT starts failing
-      #                  ("dial tcp 100.64.0.1:443: no route to host"
-      #                  from coredns / metrics-server). `ip link delete`
-      #                  on the bridge silently fails while it still has
-      #                  slave veths from the initial kubeadm pods, so
-      #                  instead of deleting, flush the IP and bring it
-      #                  DOWN — this disarms the bridge regardless of what
-      #                  happens to it during the rest of the boot.
-      echo "  Disarming stale cni0, flannel.1 (delete) and cni-podman0 (down + no IP) on ${MINIKUBE_PROFILE}..."
+      # Kicbase ships `/etc/cni/net.d/87-podman-bridge.conflist` with the
+      # same subnet Flannel wants (10.244.0.0/16). kubeadm's coredns install
+      # runs BEFORE Flannel's DaemonSet has dropped its own conflist, so
+      # kubelet + containerd pick up the podman conflist — bridge
+      # `cni-podman0` is created with `10.244.0.1/16`, which then fights
+      # Flannel's `cni0` `10.244.0.1/24` over the same address. ARP goes
+      # non-deterministic, then a few minutes into the bootstrap in-cluster
+      # Service NAT collapses ("dial tcp 100.64.0.1:443: no route to host"
+      # from coredns / metrics-server / kubernetes-dashboard).
+      #
+      # Cleanup order is load-bearing (see upstream kubernetes/minikube
+      # #11194, #8480):
+      #   1. `rm` the podman conflist outright — renaming to `.disabled`
+      #      left containerd's in-memory CNI plugin table referencing the
+      #      file, so the next pod sandbox brought the bridge back up.
+      #   2. Delete stale flannel interfaces so Flannel recreates them
+      #      clean. `cni0` with a stale IP makes Flannel refuse to start
+      #      ("cni0 already has an IP address different from 10.244.0.1/24").
+      #   3. Disarm any already-live `cni-podman0` (flush IP + link down).
+      #      `ip link delete` fails silently while slave veths from the
+      #      kubeadm-era pods are still attached, so we flush instead of
+      #      deleting.
+      #   4. `systemctl restart containerd` inside the node — the critical
+      #      step we missed before. containerd caches CNI plugin configs
+      #      at startup; without a restart it keeps using its in-memory
+      #      podman-bridge entry for every new pod sandbox and recreates
+      #      the bridge no matter how many times we knock it down.
+      #   5. Wait for Flannel ready + kick kube-system pods so they
+      #      re-attach to `cni0` with a clean CNI view.
+      echo "  Removing podman CNI conflist from ${MINIKUBE_PROFILE}..."
+      docker exec "${MINIKUBE_PROFILE}" rm -f /etc/cni/net.d/87-podman-bridge.conflist
+
+      echo "  Deleting stale cni0 / flannel.1; disarming cni-podman0 on ${MINIKUBE_PROFILE}..."
       docker exec "${MINIKUBE_PROFILE}" ip link delete cni0 2>/dev/null || true
       docker exec "${MINIKUBE_PROFILE}" ip link delete flannel.1 2>/dev/null || true
       docker exec "${MINIKUBE_PROFILE}" sh -c '
@@ -432,28 +439,22 @@ remote tfstate in B2 if the remote backend was ever configured (local backend ov
         ip link set cni-podman0 down  2>/dev/null
       ' || true
 
-      # The kicbase image ships 87-podman-bridge.conflist alongside 10-flannel.conflist.
-      # Both use 10.244.0.1 as gateway. Before Flannel is ready, pods created by kubelet
-      # pick up the podman bridge config (because the Flannel CNI plugin fails when
-      # /run/flannel/subnet.env does not yet exist). Those pods land on cni-podman0 where
-      # ARP for the gateway never resolves -> no in-cluster connectivity.
-      # Disabling the podman config here ensures all pods use Flannel exclusively.
-      echo "  Disabling podman bridge CNI config in ${MINIKUBE_PROFILE}..."
-      docker exec "${MINIKUBE_PROFILE}" \
-        mv /etc/cni/net.d/87-podman-bridge.conflist \
-           /etc/cni/net.d/87-podman-bridge.conflist.disabled 2>/dev/null || true
+      echo "  Restarting containerd to flush its CNI-plugin cache..."
+      docker exec "${MINIKUBE_PROFILE}" systemctl restart containerd
 
-      # Wait for Flannel to be Ready before proceeding — ensures /run/flannel/subnet.env
-      # exists so all pods created in Step 2 use the correct Flannel CNI from the start.
+      # Wait for Flannel to be Ready before proceeding — ensures
+      # /run/flannel/subnet.env exists so every pod created in Step 2
+      # uses the correct Flannel CNI from the start.
       echo "  Waiting for Flannel DaemonSet to be Ready..."
       kubectl wait --for=condition=ready pod \
         -n kube-flannel -l app=flannel \
         --timeout=120s 2>/dev/null || \
       kubectl rollout status daemonset/kube-flannel-ds -n kube-flannel --timeout=120s
 
-      # kube-system pods (coredns, metrics-server) are created by kubeadm during Step 1,
-      # before the podman bridge is disabled. They land on cni-podman0 and lose in-cluster
-      # connectivity. Restart them now so they re-attach to cni0 (Flannel).
+      # kube-system pods (coredns, metrics-server) were created by kubeadm
+      # attached to cni-podman0 and have lost in-cluster connectivity.
+      # Kick them so they re-attach to cni0 (Flannel) under the refreshed
+      # containerd CNI view.
       echo "  Restarting kube-system deployments to pick up Flannel CNI..."
       kubectl rollout restart deployment -n kube-system 2>/dev/null || true
       kubectl rollout status deployment -n kube-system --timeout=120s 2>/dev/null || true
