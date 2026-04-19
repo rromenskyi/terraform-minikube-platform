@@ -56,6 +56,41 @@ output "mysql" {
   sensitive = true
 }
 
+output "postgres" {
+  description = "Shared PostgreSQL connection info (host, port, namespace, service, superuser_password)."
+  value = {
+    host               = module.postgres.host
+    port               = module.postgres.port
+    namespace          = module.postgres.namespace
+    service            = module.postgres.service_name
+    superuser_password = module.postgres.superuser_password
+  }
+  sensitive = true
+}
+
+output "redis" {
+  description = "Shared Redis connection info (host, port, namespace, service, default_password). Per-tenant ACL users are provisioned inside each project — retrieve through `terraform output -json projects` or `kubectl get secret redis-credentials -n <ns>`."
+  value = {
+    host             = module.redis.host
+    port             = module.redis.port
+    namespace        = module.redis.namespace
+    service          = module.redis.service_name
+    default_password = module.redis.default_password
+  }
+  sensitive = true
+}
+
+output "ollama" {
+  description = "Shared Ollama connection info (URL, namespace, pre-pulled models). No credentials — the API is unauthenticated cluster-internal; public exposure should route through BasicAuth at Traefik."
+  value = {
+    url       = module.ollama.url
+    namespace = module.ollama.namespace
+    service   = module.ollama.service_name
+    port      = module.ollama.port
+    models    = module.ollama.models
+  }
+}
+
 output "namespaces" {
   description = "All project namespaces managed by this platform."
   value       = [for _, proj in module.project : proj.namespace]
@@ -76,6 +111,13 @@ output "cheatsheet" {
     MySQL root password:
       terraform output -json mysql | jq -r '.root_password'
 
+    PostgreSQL superuser password:
+      terraform output -json postgres | jq -r '.superuser_password'
+
+    Redis default-user password (platform-root; tenants use their own
+    ACL user, password in the per-namespace `redis-credentials` Secret):
+      terraform output -json redis | jq -r '.default_password'
+
     Traefik dashboard login (user: admin):
       terraform output -json basic_auth \
         | jq -r '[.[].traefik?.password] | map(select(.)) | .[0]'
@@ -87,6 +129,22 @@ output "cheatsheet" {
     Per-project DB credentials (created when a component has `db: true`):
       kubectl get secret db-credentials -n <namespace> -o json \
         | jq '.data | map_values(@base64d)'
+
+    Per-project PostgreSQL credentials (created when a component has `postgres: true`):
+      kubectl get secret postgres-credentials -n <namespace> -o json \
+        | jq '.data | map_values(@base64d)'
+
+    Per-project Redis credentials (created when a component has `redis: true`):
+      kubectl get secret redis-credentials -n <namespace> -o json \
+        | jq '.data | map_values(@base64d)'
+
+    Ollama URL (cluster-internal, injected as OLLAMA_HOST when a
+    component sets `ollama: true`):
+      terraform output -json ollama | jq -r '.url'
+
+    Quick test from the host:
+      kubectl run curlollama --image=curlimages/curl --rm -it --restart=Never \
+        -n platform -- curl -s http://ollama.platform.svc.cluster.local:11434/api/tags
 
     ── MySQL ──────────────────────────────────────────────────────
     Connect to MySQL (run inside the mysql pod):

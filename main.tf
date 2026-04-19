@@ -91,11 +91,17 @@ module "addons" {
 
   letsencrypt_email = var.letsencrypt_email
 
-  enable_traefik           = true
-  enable_traefik_dashboard = true
-  enable_cert_manager      = true
-  enable_monitoring        = true
-  create_ops_workload      = true
+  enable_traefik      = true
+  enable_cert_manager = true
+  enable_monitoring   = true
+  create_ops_workload = true
+
+  # Traefik's chart-side dashboard IngressRoute at `traefik.<base_domain>`
+  # stays off — this platform owns dashboard routing through the tenant
+  # YAML layer (see `config/components/traefik.yaml`), so leaving the
+  # chart-side one on would create two IRs serving the dashboard at
+  # different hostnames with different auth.
+  enable_traefik_dashboard = false
 }
 
 # =============================================================================
@@ -105,12 +111,24 @@ module "project" {
   for_each = local.projects
 
   source     = "./modules/project"
-  depends_on = [module.addons, module.mysql]
+  depends_on = [module.addons, kubernetes_namespace_v1.platform, module.mysql, module.postgres, module.redis, module.ollama]
 
   project_config   = each.value
   components       = local.components
   default_limits   = local.default_limits
-  mysql_namespace  = module.mysql.namespace
-  mysql_host       = module.mysql.host
   volume_base_path = var.host_volume_path
+
+  # Shared-service endpoints. Each module's outputs collapse to null
+  # when its own `enabled` flag is off, so the preconditions in
+  # modules/project can reject any component that asks for a disabled
+  # service with a clear error rather than a silent mis-deploy.
+  mysql_namespace           = module.mysql.namespace
+  mysql_host                = module.mysql.host
+  postgres_namespace        = module.postgres.namespace
+  postgres_host             = module.postgres.host
+  postgres_superuser_secret = module.postgres.superuser_secret_name
+  redis_namespace           = module.redis.namespace
+  redis_host                = module.redis.host
+  redis_default_secret      = module.redis.default_secret_name
+  ollama_url                = module.ollama.url
 }

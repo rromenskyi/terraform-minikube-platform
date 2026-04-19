@@ -72,6 +72,36 @@ variable "db_env_mapping" {
   default     = {}
 }
 
+variable "postgres_secret_name" {
+  description = "Name of the postgres-credentials Secret to expose as env_from. Null = no postgres. Injects PG_HOST/PG_PORT/PG_DATABASE/PG_USER/PG_PASSWORD/DATABASE_URL."
+  type        = string
+  default     = null
+}
+
+variable "redis_secret_name" {
+  description = "Name of the redis-credentials Secret to expose as env_from. Null = no redis. Injects REDIS_HOST/REDIS_PORT/REDIS_USER/REDIS_PASSWORD/REDIS_KEY_PREFIX."
+  type        = string
+  default     = null
+}
+
+variable "ollama_secret_name" {
+  description = "Name of the ollama-endpoint Secret to expose as env_from. Null = no ollama. Injects OLLAMA_HOST only (Ollama's API is unauthenticated — any client on the cluster can call it)."
+  type        = string
+  default     = null
+}
+
+variable "static_env" {
+  description = "Additional static env vars (name → literal value) mounted directly on the container. Use when a component needs a plain env knob that isn't a secret and doesn't come from a shared service."
+  type        = map(string)
+  default     = {}
+}
+
+variable "random_env_secret_name" {
+  description = "Name of the Secret holding terraform-generated random values for every env name listed in the component's `env_random:` array. Null when the component has no such entries."
+  type        = string
+  default     = null
+}
+
 variable "volume_base_path" {
   description = "Parent path used verbatim by hostPath PersistentVolumes for this component. Each volume lands at <volume_base_path>/<namespace>/<name>/<slug>/. Must resolve to a real writable directory from the kubelet's point of view (native k3s / --driver=none: any host dir; macOS minikube Docker driver: /minikube-host/Shared/vol)."
   type        = string
@@ -292,6 +322,57 @@ resource "kubernetes_deployment_v1" "this" {
             }
           }
 
+          # PostgreSQL credentials (PG_HOST/PORT/DATABASE/USER/PASSWORD/DATABASE_URL)
+          dynamic "env_from" {
+            for_each = var.postgres_secret_name != null ? [var.postgres_secret_name] : []
+            content {
+              secret_ref {
+                name = env_from.value
+              }
+            }
+          }
+
+          # Redis credentials (REDIS_HOST/PORT/USER/PASSWORD/KEY_PREFIX)
+          dynamic "env_from" {
+            for_each = var.redis_secret_name != null ? [var.redis_secret_name] : []
+            content {
+              secret_ref {
+                name = env_from.value
+              }
+            }
+          }
+
+          # Ollama endpoint (OLLAMA_HOST)
+          dynamic "env_from" {
+            for_each = var.ollama_secret_name != null ? [var.ollama_secret_name] : []
+            content {
+              secret_ref {
+                name = env_from.value
+              }
+            }
+          }
+
+          # Arbitrary static env vars supplied by the component's yaml.
+          dynamic "env" {
+            for_each = var.static_env
+            content {
+              name  = env.key
+              value = env.value
+            }
+          }
+
+          # Random-value env vars — one key per entry in the component's
+          # `env_random:` list (e.g. WEBUI_SECRET_KEY). Values persist
+          # in terraform state across applies.
+          dynamic "env_from" {
+            for_each = var.random_env_secret_name != null ? [var.random_env_secret_name] : []
+            content {
+              secret_ref {
+                name = env_from.value
+              }
+            }
+          }
+
           # Health probes — disabled when health_path is null (e.g. WordPress setup flow)
           dynamic "liveness_probe" {
             for_each = var.health_path != null ? [1] : []
@@ -302,6 +383,23 @@ resource "kubernetes_deployment_v1" "this" {
               }
               initial_delay_seconds = 10
               period_seconds        = 10
+            }
+          }
+
+          # Covers slow-boot containers (Open WebUI does SQLite migrations on
+          # first start, ~60–90s). Until startup_probe passes, kubelet
+          # skips readiness_probe and liveness_probe, so slow boots don't
+          # trigger a restart loop. 30 × 10s = 5 minutes budget.
+          dynamic "startup_probe" {
+            for_each = var.health_path != null ? [1] : []
+            content {
+              http_get {
+                path = var.health_path
+                port = var.port
+              }
+              period_seconds    = 10
+              failure_threshold = 30
+              timeout_seconds   = 5
             }
           }
 

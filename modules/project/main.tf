@@ -30,14 +30,64 @@ variable "default_limits" {
   type        = any
 }
 
+# Shared-service endpoints. All four are nullable: when the matching
+# `services.<name>` flag in `config/platform.yaml` is off at the
+# platform root, the corresponding module emits null, and any tenant
+# component that asks for that service is caught by the preconditions
+# below with a clear error message.
+
 variable "mysql_namespace" {
-  description = "Namespace where the shared MySQL lives"
+  description = "Namespace where the shared MySQL lives; null when `services.mysql = false`."
   type        = string
+  default     = null
 }
 
 variable "mysql_host" {
-  description = "In-cluster hostname of the shared MySQL"
+  description = "In-cluster hostname of the shared MySQL; null when disabled."
   type        = string
+  default     = null
+}
+
+variable "postgres_namespace" {
+  description = "Namespace where the shared PostgreSQL lives; null when `services.postgres = false`."
+  type        = string
+  default     = null
+}
+
+variable "postgres_host" {
+  description = "In-cluster hostname of the shared PostgreSQL; null when disabled."
+  type        = string
+  default     = null
+}
+
+variable "postgres_superuser_secret" {
+  description = "Name of the Secret (in `postgres_namespace`) holding the superuser password used by the tenant-provisioner Job; null when disabled."
+  type        = string
+  default     = null
+}
+
+variable "redis_namespace" {
+  description = "Namespace where the shared Redis lives; null when `services.redis = false`."
+  type        = string
+  default     = null
+}
+
+variable "redis_host" {
+  description = "In-cluster hostname of the shared Redis; null when disabled."
+  type        = string
+  default     = null
+}
+
+variable "redis_default_secret" {
+  description = "Name of the Secret (in `redis_namespace`) holding the default-user password used by the tenant-provisioner Job; null when disabled."
+  type        = string
+  default     = null
+}
+
+variable "ollama_url" {
+  description = "In-cluster URL of the shared Ollama (e.g. http://ollama.platform.svc.cluster.local:11434). Injected as `OLLAMA_HOST` into any component that sets `ollama: true`. Null when `services.ollama = false`."
+  type        = string
+  default     = null
 }
 
 variable "volume_base_path" {
@@ -48,9 +98,9 @@ variable "volume_base_path" {
 # ── Locals ────────────────────────────────────────────────────────────────────
 
 locals {
-  namespace = var.project_config.namespace # e.g. "phost-paseka-co-prod"
-  domain    = var.project_config.name      # e.g. "paseka.co"
-  env       = var.project_config.env       # e.g. "prod"
+  namespace = var.project_config.namespace       # e.g. "phost-paseka-co-prod"
+  domain    = var.project_config.name            # e.g. "paseka.co"
+  env       = var.project_config.env             # e.g. "prod"
   routes    = try(var.project_config.routes, {}) # { "": whoami, www: whoami, api: whoami2 }
 
   # Components to deploy = every distinct value referenced by the routes
@@ -89,7 +139,7 @@ locals {
     name => merge(
       { kind = "deployment" },
       local.component_defaults,
-      lookup(var.components, name, {}),
+      var.components[name],
     )
   }
 
@@ -171,12 +221,49 @@ locals {
     name => c if try(c.basic_auth, false)
   }
 
+  # Components that declare `env_random: [VAR_1, VAR_2, ...]` in their
+  # yaml. Every listed env name gets a random 32-char value terraform
+  # owns and persists in state, injected into the container via a
+  # dedicated per-component Secret. Cheap replacement for
+  # "bake a secret into the YAML" — the YAML stays public-safe.
+  env_random_pairs = merge([
+    for name, c in local.normalized_components : {
+      for env_name in try(c.env_random, []) :
+      "${name}/${env_name}" => { component = name, env_name = env_name }
+    }
+  ]...)
+
+  env_random_components = distinct([for _, p in local.env_random_pairs : p.component])
+
   needs_db = anytrue([
     for _, c in local.normalized_components : try(c.db, false)
   ])
 
+  needs_postgres = anytrue([
+    for _, c in local.normalized_components : try(c.postgres, false)
+  ])
+
+  needs_redis = anytrue([
+    for _, c in local.normalized_components : try(c.redis, false)
+  ])
+
+  needs_ollama = anytrue([
+    for _, c in local.normalized_components : try(c.ollama, false)
+  ])
+
   db_name = replace(local.namespace, "-", "_")
   db_user = replace(local.namespace, "-", "_")
+
+  # PostgreSQL naming rules match MySQL's here — same safe subset.
+  pg_database = replace(local.namespace, "-", "_")
+  pg_user     = replace(local.namespace, "-", "_")
+
+  # Redis ACL user names don't allow all characters. Namespace slugs
+  # already fit the safe subset (lowercase + dash). Key prefix namespaces
+  # every tenant's keyspace under `<namespace>:` so `GET whatever` in one
+  # tenant can never collide with another.
+  redis_user       = local.namespace
+  redis_key_prefix = "${local.namespace}:"
 }
 
 # Catch typos / missing component definitions at plan time.
@@ -186,6 +273,40 @@ check "routes_reference_known_components" {
       for name in local._component_names : contains(keys(var.components), name)
     ])
     error_message = "project '${local.namespace}' has a route to an unknown component. Referenced components: ${jsonencode(local._component_names)}. Available components: ${jsonencode(keys(var.components))}. Add the missing config/components/<name>.yaml or fix the route target."
+  }
+}
+
+# Shared-service preconditions: a component asks for MySQL/Redis/Ollama
+# only if the operator flipped the matching `services.<name>` toggle in
+# `config/platform.yaml` on. Check blocks warn at plan time; the
+# resources that actually consume these inputs (`kubernetes_job_v1`,
+# `kubernetes_secret_v1`) will then fail with a cleaner error if the
+# warning is ignored.
+check "mysql_enabled_when_needed" {
+  assert {
+    condition     = !local.needs_db || var.mysql_host != null
+    error_message = "project '${local.namespace}' has a component with `db: true` but `services.mysql` is disabled in config/platform.yaml. Either enable MySQL or drop `db: true` from the component spec."
+  }
+}
+
+check "postgres_enabled_when_needed" {
+  assert {
+    condition     = !local.needs_postgres || var.postgres_host != null
+    error_message = "project '${local.namespace}' has a component with `postgres: true` but `services.postgres` is disabled in config/platform.yaml. Either enable PostgreSQL or drop `postgres: true` from the component spec."
+  }
+}
+
+check "redis_enabled_when_needed" {
+  assert {
+    condition     = !local.needs_redis || var.redis_host != null
+    error_message = "project '${local.namespace}' has a component with `redis: true` but `services.redis` is disabled in config/platform.yaml. Either enable Redis or drop `redis: true` from the component spec."
+  }
+}
+
+check "ollama_enabled_when_needed" {
+  assert {
+    condition     = !local.needs_ollama || var.ollama_url != null
+    error_message = "project '${local.namespace}' has a component with `ollama: true` but `services.ollama` is disabled in config/platform.yaml. Either enable Ollama or drop `ollama: true` from the component spec."
   }
 }
 
@@ -312,6 +433,232 @@ resource "kubernetes_secret_v1" "db_credentials" {
   }
 }
 
+# ── PostgreSQL: per-namespace database + user (only when needed) ──────────────
+
+resource "random_password" "postgres" {
+  count   = local.needs_postgres ? 1 : 0
+  length  = 24
+  special = false
+}
+
+# Provisions the DB and user via a Kubernetes Job that runs psql
+# in-cluster. Database is NOT dropped on destroy — data preservation
+# matches the MySQL behaviour.
+resource "kubernetes_job_v1" "postgres_setup" {
+  count = local.needs_postgres ? 1 : 0
+
+  depends_on = [kubernetes_namespace_v1.this]
+
+  metadata {
+    name      = "postgres-setup-${local.namespace}"
+    namespace = var.postgres_namespace
+    labels = {
+      "app.kubernetes.io/managed-by" = "terraform"
+      "project-namespace"            = local.namespace
+    }
+  }
+
+  spec {
+    backoff_limit = 3
+
+    template {
+      metadata {
+        labels = {
+          job = "postgres-setup-${local.namespace}"
+        }
+      }
+
+      spec {
+        restart_policy = "Never"
+
+        container {
+          name  = "postgres-setup"
+          image = "postgres:16-alpine"
+
+          env_from {
+            secret_ref {
+              name = var.postgres_superuser_secret
+            }
+          }
+
+          # `PGPASSWORD` → picked up by psql automatically. `POSTGRES_PASSWORD`
+          # is the key emitted by the postgres-superuser Secret in the platform
+          # module; aliased here so both names resolve to the same value.
+          env {
+            name  = "PGPASSWORD"
+            value = "$(POSTGRES_PASSWORD)"
+          }
+
+          # `CREATE DATABASE` / `CREATE ROLE` are not idempotent in vanilla SQL.
+          # The DO-blocks below noop when the role or db already exists so
+          # re-applies are safe (tenant DB survives terraform destroy → re-apply).
+          command = [
+            "sh", "-c",
+            join(" && ", [
+              "psql -h ${var.postgres_host} -U postgres -tc \"SELECT 1 FROM pg_database WHERE datname = '${local.pg_database}'\" | grep -q 1 || psql -h ${var.postgres_host} -U postgres -c \"CREATE DATABASE \\\"${local.pg_database}\\\"\"",
+              "psql -h ${var.postgres_host} -U postgres -tc \"SELECT 1 FROM pg_roles WHERE rolname = '${local.pg_user}'\" | grep -q 1 || psql -h ${var.postgres_host} -U postgres -c \"CREATE ROLE \\\"${local.pg_user}\\\" WITH LOGIN PASSWORD '${random_password.postgres[0].result}'\"",
+              "psql -h ${var.postgres_host} -U postgres -c \"ALTER ROLE \\\"${local.pg_user}\\\" WITH PASSWORD '${random_password.postgres[0].result}'\"",
+              "psql -h ${var.postgres_host} -U postgres -c \"GRANT ALL PRIVILEGES ON DATABASE \\\"${local.pg_database}\\\" TO \\\"${local.pg_user}\\\"\"",
+              "psql -h ${var.postgres_host} -U postgres -d ${local.pg_database} -c \"GRANT ALL ON SCHEMA public TO \\\"${local.pg_user}\\\"\"",
+            ])
+          ]
+        }
+      }
+    }
+  }
+
+  wait_for_completion = true
+
+  timeouts {
+    create = "2m"
+  }
+}
+
+resource "kubernetes_secret_v1" "postgres_credentials" {
+  count = local.needs_postgres ? 1 : 0
+
+  depends_on = [kubernetes_job_v1.postgres_setup]
+
+  metadata {
+    name      = "postgres-credentials"
+    namespace = kubernetes_namespace_v1.this.metadata[0].name
+  }
+
+  data = {
+    PG_HOST     = var.postgres_host
+    PG_PORT     = "5432"
+    PG_DATABASE = local.pg_database
+    PG_USER     = local.pg_user
+    PG_PASSWORD = random_password.postgres[0].result
+    DATABASE_URL = "postgres://${local.pg_user}:${random_password.postgres[0].result}@${var.postgres_host}:5432/${local.pg_database}"
+  }
+}
+
+# ── Redis: per-namespace ACL user + key-prefix (only when needed) ─────────────
+
+resource "random_password" "redis" {
+  count   = local.needs_redis ? 1 : 0
+  length  = 24
+  special = false
+}
+
+# Creates an ACL user on the shared Redis limited to the tenant's key
+# prefix. `resetkeys ~<ns>:*` wipes any previous key permissions then
+# grants only `<ns>:*` — two tenants can't read or overwrite each
+# other's keys. `+@all -@dangerous` gives every command group except
+# destructive ones (FLUSHDB, FLUSHALL, CONFIG, SHUTDOWN, …).
+#
+# The user name is NOT deleted on terraform destroy — same policy as
+# MySQL, so data isn't lost if a project is removed and re-added.
+resource "kubernetes_job_v1" "redis_setup" {
+  count = local.needs_redis ? 1 : 0
+
+  depends_on = [kubernetes_namespace_v1.this]
+
+  metadata {
+    name      = "redis-setup-${local.namespace}"
+    namespace = var.redis_namespace
+    labels = {
+      "app.kubernetes.io/managed-by" = "terraform"
+      "project-namespace"            = local.namespace
+    }
+  }
+
+  spec {
+    backoff_limit = 3
+
+    template {
+      metadata {
+        labels = {
+          job = "redis-setup-${local.namespace}"
+        }
+      }
+
+      spec {
+        restart_policy = "Never"
+
+        container {
+          name  = "redis-setup"
+          image = "redis:7-alpine"
+
+          env_from {
+            secret_ref {
+              name = var.redis_default_secret
+            }
+          }
+
+          command = [
+            "sh", "-c",
+            join(" ", [
+              "redis-cli -h ${var.redis_host} -a \"$REDIS_PASSWORD\"",
+              "ACL SETUSER ${local.redis_user}",
+              "on",
+              ">${random_password.redis[0].result}",
+              "resetkeys",
+              "~${local.redis_key_prefix}*",
+              "+@all",
+              "-@dangerous",
+            ])
+          ]
+        }
+      }
+    }
+  }
+
+  wait_for_completion = true
+
+  timeouts {
+    create = "2m"
+  }
+}
+
+resource "kubernetes_secret_v1" "redis_credentials" {
+  count = local.needs_redis ? 1 : 0
+
+  depends_on = [kubernetes_job_v1.redis_setup]
+
+  metadata {
+    name      = "redis-credentials"
+    namespace = kubernetes_namespace_v1.this.metadata[0].name
+  }
+
+  data = {
+    REDIS_HOST       = var.redis_host
+    REDIS_PORT       = "6379"
+    REDIS_USER       = local.redis_user
+    REDIS_PASSWORD   = random_password.redis[0].result
+    REDIS_KEY_PREFIX = local.redis_key_prefix
+  }
+}
+
+# ── Ollama: no per-tenant credentials, just the shared endpoint URL ───────────
+#
+# Ollama has no native auth — every component on the platform shares the
+# same instance and addresses it by plain URL. There's nothing tenant-
+# specific to provision, so there's no setup Job; this Secret is a
+# namespace-scoped convenience so `env_from.secret_ref` in
+# modules/component works the same way as for `db_secret_name`.
+
+resource "kubernetes_secret_v1" "ollama_endpoint" {
+  count = local.needs_ollama ? 1 : 0
+
+  metadata {
+    name      = "ollama-endpoint"
+    namespace = kubernetes_namespace_v1.this.metadata[0].name
+  }
+
+  # Different Ollama clients read different env names: the official
+  # `ollama` CLI and the Python SDK want `OLLAMA_HOST`, Open WebUI
+  # insists on `OLLAMA_BASE_URL`, some LangChain integrations use
+  # `OLLAMA_API_BASE`. Emit them all pointing at the same URL so any
+  # component can `ollama: true` without caring which client it uses.
+  data = {
+    OLLAMA_HOST     = var.ollama_url
+    OLLAMA_BASE_URL = var.ollama_url
+    OLLAMA_API_BASE = var.ollama_url
+  }
+}
+
 # ── Components ────────────────────────────────────────────────────────────────
 
 module "component" {
@@ -333,6 +680,24 @@ module "component" {
   db_env_mapping = try(each.value.env, {})
   db_secret_name = try(each.value.db, false) && local.needs_db ? (
     kubernetes_secret_v1.db_credentials[0].metadata[0].name
+  ) : null
+
+  postgres_secret_name = try(each.value.postgres, false) && local.needs_postgres ? (
+    kubernetes_secret_v1.postgres_credentials[0].metadata[0].name
+  ) : null
+
+  redis_secret_name = try(each.value.redis, false) && local.needs_redis ? (
+    kubernetes_secret_v1.redis_credentials[0].metadata[0].name
+  ) : null
+
+  ollama_secret_name = try(each.value.ollama, false) && local.needs_ollama ? (
+    kubernetes_secret_v1.ollama_endpoint[0].metadata[0].name
+  ) : null
+
+  static_env = try(each.value.env_static, {})
+
+  random_env_secret_name = contains(local.env_random_components, each.key) ? (
+    kubernetes_secret_v1.env_random[each.key].metadata[0].name
   ) : null
 
   config_files = try(each.value.config_files, {})
@@ -397,6 +762,42 @@ resource "kubectl_manifest" "basic_auth_middleware" {
       }
     }
   })
+}
+
+# ── env_random: per-component Secret with random values ──────────────────────
+#
+# For every `env_random: [VAR1, VAR2]` declaration in a component's yaml,
+# generate one random_password per VAR and expose them all together in a
+# namespace-scoped Secret named `<component>-random-env`. The component's
+# container gets the Secret via `env_from` so every listed VAR appears as
+# a plain env var, owning a value terraform persists across applies.
+
+resource "random_password" "env_random" {
+  for_each = local.env_random_pairs
+
+  length  = 32
+  special = false
+
+  keepers = {
+    namespace = local.namespace
+    component = each.value.component
+    env_name  = each.value.env_name
+  }
+}
+
+resource "kubernetes_secret_v1" "env_random" {
+  for_each = toset(local.env_random_components)
+
+  metadata {
+    name      = "${each.key}-random-env"
+    namespace = kubernetes_namespace_v1.this.metadata[0].name
+  }
+
+  data = {
+    for pair_key, p in local.env_random_pairs :
+    p.env_name => random_password.env_random[pair_key].result
+    if p.component == each.key
+  }
 }
 
 # ── IngressRoutes ─────────────────────────────────────────────────────────────
