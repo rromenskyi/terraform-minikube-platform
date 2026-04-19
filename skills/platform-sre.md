@@ -1,33 +1,38 @@
-# Platform SRE + GitOps Obsessed Skill
+# Platform and SRE rules (additional)
 
-You are a former SRE from Kubernetes SIG combined with a Platform Engineer from Netflix/HashiCorp.
+> **Canonical sync.** This file is mirrored byte-for-byte across `terraform-minikube-k8s`, `terraform-k3s-k8s`, `terraform-k8s-addons`, and `terraform-minikube-platform`. Changes must land in every repo in the same PR — the CI sync check (todo) will fail otherwise.
 
-### Core Principles (always active):
-- **Observability First** — if it has no metrics, logs, and traces, it doesn't exist
-- **GitOps is the only way** — even in local Minikube, think like you have ArgoCD + Flux in production
-- Prefer **Configuration as Data** over Configuration as Code when it makes sense
-- Everything must be **declarative and fully reproducible**
+Companion rules to `AGENT.md` specific to Kubernetes platform operations.
 
-### Kubernetes Hardening Checklist (apply automatically):
-- Pod Security Standards (restricted profile)
-- NetworkPolicy on everything
-- Resource requests and limits are mandatory
-- No privileged containers
-- readOnlyRootFilesystem wherever possible
-- Proper probes (startupProbe, readinessProbe, livenessProbe)
+## Core principles
 
-### Traefik + cert-manager Best Practices:
-- Well-structured Middleware chains
-- Proper TLSOptions and TLSStore usage
-- ClusterIssuer with Let's Encrypt (both staging and production)
-- Handle certificate rotation gracefully
+- Observability first. A workload without metrics, logs, and readiness signals is not production.
+- Configuration as data. YAML / DB rows grow; the Terraform code stays stable.
+- Declarative and fully reproducible. Every persistent change is represented in the repo or in a Secret referenced by the repo.
 
-### Monitoring Stack Excellence:
-- Follow kube-prometheus-stack best practices
-- Prefer ServiceMonitor/PodMonitor CRDs over annotations
-- Grafana dashboards should be version-controlled (or at minimum use ConfigMaps for provisioning)
-- Meaningful alerting rules
+## Kubernetes hardening checklist
 
-You hate "it works on my machine." Everything must survive `terraform destroy && terraform apply` cleanly.
+- Pod Security Standards applied at the namespace level (`baseline` or `restricted`).
+- NetworkPolicy where network-level isolation is a real requirement. Where it is not applied, state that explicitly in the consumer's docs instead of implying tighter isolation than the cluster enforces.
+- Resource `requests` and `limits` are mandatory on every container. Setup jobs and sidecars included.
+- No privileged containers unless the workload provably requires it (node-exporter, some CNI daemons). Document why.
+- `readOnlyRootFilesystem: true` wherever the workload tolerates it.
+- `startupProbe`, `readinessProbe`, `livenessProbe` tuned to the workload, not copy-pasted.
 
-You are in this mode at all times.
+## Ingress, TLS, and routing
+
+- Traefik ingress configuration belongs with the module that owns the hostname. Cross-namespace IngressRoute references are allowed only where the trust model documents it.
+- cert-manager ClusterIssuers target specific entrypoints (`websecure`, Gateway API). Do not create issuers whose HTTP-01 solver has no ingress class to use.
+- TLS termination position (edge vs Traefik vs pod) is a deliberate choice. Document it in the repo's README; do not leave operators guessing which hop holds the cert.
+
+## Monitoring and alerting
+
+- kube-prometheus-stack as the reference stack. Prefer `ServiceMonitor` / `PodMonitor` CRDs over annotations.
+- Grafana dashboards are version-controlled (JSON in the repo, or provisioned via ConfigMap). No dashboards stored only in the running instance.
+- Alert rules state the condition, the impact, and the runbook link. "High CPU" without impact is noise.
+
+## Operational sanity
+
+- Every workload must survive `terraform destroy && terraform apply` on a new cluster. If it does not, the reason (persistent state, external DNS, manual step) is explicit in the README.
+- `./tf bootstrap-*` or equivalent wrapper scripts do not silently wipe persistent host volumes. Destructive steps require an explicit operator confirmation.
+- "Works on my machine" is not a fix state. Reproduce on a clean environment before closing an issue.
