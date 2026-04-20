@@ -16,6 +16,17 @@ variable "kubernetes_version" {
   default     = "v1.34.4"
 }
 
+variable "distribution" {
+  description = "Cluster distribution to bootstrap. `k3s` installs over SSH to `var.ssh_host` (production default). `minikube` runs locally via the docker-driver minikube (dev/experiment)."
+  type        = string
+  default     = "k3s"
+
+  validation {
+    condition     = contains(["minikube", "k3s"], var.distribution)
+    error_message = "distribution must be \"minikube\" or \"k3s\"."
+  }
+}
+
 variable "pod_cidr" {
   # NOTE: minikube's Flannel addon hardcodes "Network": "10.244.0.0/16" in its
   # kube-flannel-cfg ConfigMap and ignores kubeadm.pod-network-cidr. Anything
