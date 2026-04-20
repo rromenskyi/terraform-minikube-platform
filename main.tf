@@ -29,55 +29,45 @@
 # -----------------------------------------------------------------------------
 
 # --- Option A: minikube ------------------------------------------------------
-# module "k8s" {
-#   source = "git::https://github.com/rromenskyi/terraform-minikube-k8s.git?ref=v3.0.0"
-#
-#   cluster_name       = var.cluster_name
-#   kubernetes_version = var.kubernetes_version
-#   memory             = var.memory
-#
-#   # Keep Pod and Service ranges in separate CGNAT slices so neither collides
-#   # with the host LAN nor with each other.
-#   pod_cidr     = var.pod_cidr
-#   service_cidr = "100.64.0.0/12"
-#   dns_ip       = "100.64.0.10"
-#   cni          = "flannel"
-# }
+module "k8s" {
+  # Local path, NOT a git ref — we are testing unreleased module changes.
+  # Switch back to `git::https://github.com/rromenskyi/terraform-minikube-k8s.git?ref=vX.Y.Z`
+  # before pushing the platform repo.
+  source = "/home/roman220/minikube/terraform-minikube-k8s"
+
+  cluster_name       = var.cluster_name
+  kubernetes_version = var.kubernetes_version
+  memory             = var.memory
+}
 
 # --- Option B: k3s -----------------------------------------------------------
-module "k8s" {
-  source = "git::https://github.com/rromenskyi/terraform-k3s-k8s.git?ref=v0.3.1"
-
-  cluster_name = var.cluster_name
-
-  # Leave kubernetes_version unset to pull the default k3s channel ("stable"),
-  # or pin a specific build like "v1.31.4+k3s1". The minikube-style "stable"
-  # string is not a valid k3s version.
-  # kubernetes_version = "v1.31.4+k3s1"
-
-  ssh_host             = var.ssh_host
-  ssh_port             = var.ssh_port
-  ssh_user             = var.ssh_user
-  ssh_private_key_path = var.ssh_private_key_path
-}
-
-# Fail fast at plan time if the operator forgot to set ssh_user /
-# ssh_private_key_path when the k3s distribution is active. Module blocks do
-# not accept `lifecycle { precondition }` in current Terraform, so a `check`
-# block is used. When the minikube distribution is active instead, the k3s
-# SSH vars are unused — the check still runs but is harmless informational
-# noise.
-check "k3s_ssh_vars_set" {
-  assert {
-    condition     = var.ssh_user != "" && var.ssh_private_key_path != ""
-    error_message = "ssh_user and ssh_private_key_path are required when the k3s distribution is active (set TF_VAR_ssh_user and TF_VAR_ssh_private_key_path, see .env.example)."
-  }
-
-  assert {
-    condition     = var.ssh_private_key_path == "" || fileexists(var.ssh_private_key_path)
-    error_message = "ssh_private_key_path does not point to a readable file: ${var.ssh_private_key_path}"
-  }
-}
+# module "k8s" {
+#   source = "git::https://github.com/rromenskyi/terraform-k3s-k8s.git?ref=v0.3.1"
+#
+#   cluster_name = var.cluster_name
+#
+#   # Leave kubernetes_version unset to pull the default k3s channel ("stable"),
+#   # or pin a specific build like "v1.31.4+k3s1". The minikube-style "stable"
+#   # string is not a valid k3s version.
+#   # kubernetes_version = "v1.31.4+k3s1"
+#
+#   ssh_host             = var.ssh_host
+#   ssh_port             = var.ssh_port
+#   ssh_user             = var.ssh_user
+#   ssh_private_key_path = var.ssh_private_key_path
+# }
+#
+# check "k3s_ssh_vars_set" {
+#   assert {
+#     condition     = var.ssh_user != "" && var.ssh_private_key_path != ""
+#     error_message = "ssh_user and ssh_private_key_path are required when the k3s distribution is active (set TF_VAR_ssh_user and TF_VAR_ssh_private_key_path, see .env.example)."
+#   }
+#
+#   assert {
+#     condition     = var.ssh_private_key_path == "" || fileexists(var.ssh_private_key_path)
+#     error_message = "ssh_private_key_path does not point to a readable file: ${var.ssh_private_key_path}"
+#   }
+# }
 
 # -----------------------------------------------------------------------------
 # Layer 2: Platform add-ons (Traefik, cert-manager, monitoring, namespaces).
