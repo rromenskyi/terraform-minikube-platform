@@ -7,23 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-- `var.distribution` — enum toggle (`"k3s"` default, `"minikube"`) selects which cluster-bootstrap module runs. Replaces the manual "comment out Option A, uncomment Option B" dance in `main.tf`. `for_each = toset(... ? ["enabled"] : [])` on both sibling modules instantiates exactly one; three flat locals (`local.k8s_kubeconfig_path`, `local.k8s_cluster_name`, `local.k8s_cluster_distribution`) collapse the outputs so downstream code stays distribution-agnostic
-
 ### Changed
-- **BREAKING** — `module "k8s"` split into `module "k8s_minikube"` and `module "k8s_k3s"`, each guarded by `for_each` keyed by `"enabled"`. State addresses change: `module.k8s.*` → `module.k8s_k3s["enabled"].*` (k3s, default) or `module.k8s_minikube["enabled"].*` (minikube). Run ONE of the migration loops below in the root directory BEFORE `terraform apply` or the whole cluster gets destroyed and recreated:
-  ```bash
-  # k3s (default)
-  terraform state list | grep '^module\.k8s\.' | while read a; do
-    terraform state mv "$a" "${a//module.k8s./module.k8s_k3s[\"enabled\"].}"
-  done
+- Cloudflare Tunnel secret is now Terraform-generated via `random_password.cloudflare_tunnel_secret` (48 chars, no special) and fed into `cloudflare_zero_trust_tunnel_cloudflared.main.secret` via `base64encode`. One fewer knob in `.env`. **Migration impact on a running platform:** first `terraform apply` after merge sees the new `random_password` value and plans destroy-and-recreate of the tunnel → brief cloudflared reconnect (10-30 s Cloudflare-side blip while the new JWT propagates to the in-cluster `cloudflared` Deployment). DNS `CNAME` records update in place (target changes to the new tunnel UUID without record recreation)
 
-  # minikube
-  terraform state list | grep '^module\.k8s\.' | while read a; do
-    terraform state mv "$a" "${a//module.k8s./module.k8s_minikube[\"enabled\"].}"
-  done
-  ```
-- `terraform-minikube-k8s` bumped to `v4.0.0` (BREAKING upstream: `var.cni` removed, Flannel manifest owned by the module with `pod_cidr` rendered into `kube-flannel-cfg`, CGNAT defaults `pod_cidr=100.72.0.0/16` / `service_cidr=100.64.0.0/20`). No input changes on this repo's side because the new defaults are fine as-is; override via `TF_VAR_pod_cidr` is no-op here (pod_cidr is not forwarded to the child module — tracked in `BUGS.md #2`)
+### Removed
+- `variable "cloudflare_zone_id"` — declared at the root but never read anywhere in `.tf` code. The tunnel resource is account-scoped; per-hostname `CNAME` records pull their zone ID from each domain's `config/domains/*.yaml` (`project_config.cloudflare_zone_id`). Operators running with `CLOUDFLARE_ZONE_ID` / `TF_VAR_cloudflare_zone_id` in `.env` can safely drop the line. Anyone passing it via `-var` or `*.tfvars` must remove the row or Terraform errors with "value for undeclared variable"
+- `variable "cloudflare_tunnel_secret"` — superseded by the Terraform-owned random_password above. Drop `CLOUDFLARE_TUNNEL_SECRET` from `.env` after the first successful apply on the new code
+
+### Docs
+- New `## First-time Cloudflare setup` section in README — step-by-step for a zero-state Cloudflare account: create account, add site, point nameservers, locate Account ID + per-domain Zone IDs, scope a custom API Token with the three exact permissions the stack needs (`Cloudflare Tunnel: Edit`, `DNS: Edit`, `Zone: Read`), verify tunnel health after bootstrap
+- Quick Start step 1 refreshed around the new `.env` layout — `CLOUDFLARE_ZONE_ID` and `CLOUDFLARE_TUNNEL_SECRET` both gone; SSH block uses the correct `TF_VAR_ssh_*` prefix (was missing — the bare `SSH_HOST`-style names the old example showed never reached Terraform)
+- `.env.example`: dropped `CLOUDFLARE_ZONE_ID` and `CLOUDFLARE_TUNNEL_SECRET`; added a comment pointing at `config/domains/*.yaml` for per-domain Zone IDs
+- Variables reference table in README: dropped the two removed variables
 
 ## [0.2.0] - 2026-04-19
 
