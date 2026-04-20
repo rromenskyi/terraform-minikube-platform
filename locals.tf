@@ -32,7 +32,7 @@ locals {
       mysql    = merge(local._platform_defaults.services.mysql, try(local._platform_services.mysql, {}))
       postgres = merge(local._platform_defaults.services.postgres, try(local._platform_services.postgres, {}))
       redis    = merge(local._platform_defaults.services.redis, try(local._platform_services.redis, {}))
-      ollama = merge(local._platform_defaults.services.ollama, try(local._platform_services.ollama, {}))
+      ollama   = merge(local._platform_defaults.services.ollama, try(local._platform_services.ollama, {}))
     }
   }
 

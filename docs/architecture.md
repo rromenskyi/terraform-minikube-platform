@@ -202,8 +202,9 @@ For non-root images (WordPress = UID 33, Redis = UID 999, Open WebUI = UID 1000)
 
 ## Networking
 
-- **CNI**: Flannel (both distributions; `pod_cidr` hardcoded on minikube, configurable on k3s)
-- **Service CIDR**: `100.64.0.0/12` (CGNAT range, avoids LAN collisions)
+- **CNI**: Flannel on both distributions. The cluster module owns the manifest and renders `net-conf.json` from its own `var.pod_cidr` — platform-level override is intentionally not exposed (see CHANGELOG, `var.pod_cidr` removal).
+- **Pod CIDR**: `100.72.0.0/16` on minikube (CGNAT, avoids kicbase podman-bridge collision on `10.244.0.1`), `10.42.0.0/16` on k3s (k3s default).
+- **Service CIDR**: `100.64.0.0/20` on minikube (CGNAT slice), `10.43.0.0/16` on k3s (k3s default).
 - **Traefik**: Helm chart in `ingress-controller` namespace, LoadBalancer Service
 - **Cloudflare Tunnel**: replaces any LoadBalancer IP for external access; the host never needs open ports
 

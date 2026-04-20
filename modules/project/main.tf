@@ -556,11 +556,11 @@ resource "kubernetes_secret_v1" "postgres_credentials" {
   }
 
   data = {
-    PG_HOST     = var.postgres_host
-    PG_PORT     = "5432"
-    PG_DATABASE = local.pg_database
-    PG_USER     = local.pg_user
-    PG_PASSWORD = random_password.postgres[0].result
+    PG_HOST      = var.postgres_host
+    PG_PORT      = "5432"
+    PG_DATABASE  = local.pg_database
+    PG_USER      = local.pg_user
+    PG_PASSWORD  = random_password.postgres[0].result
     DATABASE_URL = "postgres://${local.pg_user}:${random_password.postgres[0].result}@${var.postgres_host}:5432/${local.pg_database}"
   }
 }
