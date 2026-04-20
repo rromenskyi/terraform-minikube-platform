@@ -25,49 +25,66 @@
 #   module.addons.
 
 # -----------------------------------------------------------------------------
-# Layer 1: Cluster distribution — pick ONE (the other stays commented out).
+# Layer 1: Cluster distribution — selected by var.distribution.
+#
+# Both sibling modules export the same output shape (cluster_host,
+# *_certificate, cluster_ca_certificate, kubeconfig_path, cluster_name,
+# cluster_distribution). The `for_each`-on-empty-set pattern (per AGENT.md
+# §Terraform rules) instantiates exactly one of the two; the `locals` block
+# collapses the pair into flat, distribution-agnostic references downstream
+# code reads via `local.k8s_*`.
 # -----------------------------------------------------------------------------
 
-# --- Option A: minikube ------------------------------------------------------
-module "k8s" {
-  # Local path, NOT a git ref — we are testing unreleased module changes.
-  # Switch back to `git::https://github.com/rromenskyi/terraform-minikube-k8s.git?ref=vX.Y.Z`
-  # before pushing the platform repo.
-  source = "/home/roman220/minikube/terraform-minikube-k8s"
+locals {
+  use_minikube = toset(var.distribution == "minikube" ? ["enabled"] : [])
+  use_k3s      = toset(var.distribution == "k3s" ? ["enabled"] : [])
+}
+
+module "k8s_minikube" {
+  for_each = local.use_minikube
+  source   = "git::https://github.com/rromenskyi/terraform-minikube-k8s.git?ref=v4.0.0"
 
   cluster_name       = var.cluster_name
   kubernetes_version = var.kubernetes_version
   memory             = var.memory
 }
 
-# --- Option B: k3s -----------------------------------------------------------
-# module "k8s" {
-#   source = "git::https://github.com/rromenskyi/terraform-k3s-k8s.git?ref=v0.3.1"
-#
-#   cluster_name = var.cluster_name
-#
-#   # Leave kubernetes_version unset to pull the default k3s channel ("stable"),
-#   # or pin a specific build like "v1.31.4+k3s1". The minikube-style "stable"
-#   # string is not a valid k3s version.
-#   # kubernetes_version = "v1.31.4+k3s1"
-#
-#   ssh_host             = var.ssh_host
-#   ssh_port             = var.ssh_port
-#   ssh_user             = var.ssh_user
-#   ssh_private_key_path = var.ssh_private_key_path
-# }
-#
-# check "k3s_ssh_vars_set" {
-#   assert {
-#     condition     = var.ssh_user != "" && var.ssh_private_key_path != ""
-#     error_message = "ssh_user and ssh_private_key_path are required when the k3s distribution is active (set TF_VAR_ssh_user and TF_VAR_ssh_private_key_path, see .env.example)."
-#   }
-#
-#   assert {
-#     condition     = var.ssh_private_key_path == "" || fileexists(var.ssh_private_key_path)
-#     error_message = "ssh_private_key_path does not point to a readable file: ${var.ssh_private_key_path}"
-#   }
-# }
+module "k8s_k3s" {
+  for_each = local.use_k3s
+  source   = "git::https://github.com/rromenskyi/terraform-k3s-k8s.git?ref=v0.3.1"
+
+  cluster_name = var.cluster_name
+
+  # Leave kubernetes_version unset to pull the default k3s channel ("stable"),
+  # or pin a specific build like "v1.31.4+k3s1". The minikube-style "stable"
+  # string is not a valid k3s version.
+  # kubernetes_version = "v1.31.4+k3s1"
+
+  ssh_host             = var.ssh_host
+  ssh_port             = var.ssh_port
+  ssh_user             = var.ssh_user
+  ssh_private_key_path = var.ssh_private_key_path
+}
+
+locals {
+  k8s_kubeconfig_path      = one(concat([for m in module.k8s_minikube : m.kubeconfig_path], [for m in module.k8s_k3s : m.kubeconfig_path]))
+  k8s_cluster_name         = one(concat([for m in module.k8s_minikube : m.cluster_name], [for m in module.k8s_k3s : m.cluster_name]))
+  k8s_cluster_distribution = one(concat([for m in module.k8s_minikube : m.cluster_distribution], [for m in module.k8s_k3s : m.cluster_distribution]))
+}
+
+# k3s-specific SSH prerequisites. The asserts are vacuously true when
+# distribution != "k3s", so this block is silent in minikube mode.
+check "k3s_ssh_vars_set" {
+  assert {
+    condition     = var.distribution != "k3s" || (var.ssh_user != "" && var.ssh_private_key_path != "")
+    error_message = "distribution = \"k3s\" requires ssh_user and ssh_private_key_path (set TF_VAR_ssh_user / TF_VAR_ssh_private_key_path, see .env.example)."
+  }
+
+  assert {
+    condition     = var.distribution != "k3s" || var.ssh_private_key_path == "" || fileexists(var.ssh_private_key_path)
+    error_message = "ssh_private_key_path does not point to a readable file: ${var.ssh_private_key_path}"
+  }
+}
 
 # -----------------------------------------------------------------------------
 # Layer 2: Platform add-ons (Traefik, cert-manager, monitoring, namespaces).
@@ -75,9 +92,9 @@ module "k8s" {
 module "addons" {
   source = "git::https://github.com/rromenskyi/terraform-k8s-addons.git?ref=v1.1.0"
 
-  kubeconfig_path      = module.k8s.kubeconfig_path
-  cluster_name         = module.k8s.cluster_name
-  cluster_distribution = module.k8s.cluster_distribution
+  kubeconfig_path      = local.k8s_kubeconfig_path
+  cluster_name         = local.k8s_cluster_name
+  cluster_distribution = local.k8s_cluster_distribution
 
   letsencrypt_email = var.letsencrypt_email
 

@@ -63,13 +63,13 @@ hardcodes `10.244.0.0/16` in its kube-flannel-cfg ConfigMap and ignores
 kubeadm.pod-network-cidr". Neither the default nor the comment reflects
 the active cluster any more:
 
-- **Not wired.** `main.tf:32-41` (Option A, the active minikube block)
-  does not pass `pod_cidr = var.pod_cidr` to `module "k8s"`, and no
+- **Not wired.** Neither `module "k8s_minikube"` nor `module "k8s_k3s"`
+  in `main.tf` passes `pod_cidr = var.pod_cidr` through, and no
   `resource` / `local` / `output` reads it either. `grep -n var.pod_cidr
   *.tf` returns only the declaration line. Whatever the operator sets
   (via `TF_VAR_pod_cidr`, tfvars, or default) never reaches the cluster.
-- **Stale comment.** The cluster module (`terraform-minikube-k8s`
-  v3.1.0+) disables the built-in Flannel addon (`cni = "false"`) and
+- **Stale comment.** The minikube cluster module (`terraform-minikube-k8s`
+  v4.0.0+) disables the built-in Flannel addon (`cni = "false"`) and
   applies its own manifest with `replace(..., "10.244.0.0/16",
   var.pod_cidr)`. The "addon hardcodes 10.244" story is historical.
 - **Actual cluster CIDR.** Comes from the child module's
@@ -83,9 +83,10 @@ the active cluster any more:
   the dead surface is cleaner than maintaining an illusion of control.
 - **B.** Wire it through: change default to `100.72.0.0/16`, rewrite the
   comment to cite the podman-bridge collision (not addon hardcoding),
-  add `pod_cidr = var.pod_cidr` to the `module "k8s"` block in
-  `main.tf`. Preserves an operator-facing override knob.
+  add `pod_cidr = var.pod_cidr` to both `module "k8s_minikube"` and
+  `module "k8s_k3s"` blocks in `main.tf`. Preserves an operator-facing
+  override knob.
 
 Either way, `docs/architecture.md:205-206` also needs a pass — it
 still claims `pod_cidr` is "hardcoded on minikube" and service CIDR is
-`100.64.0.0/12`, both wrong post-v3.1.0.
+`100.64.0.0/12`, both wrong post-v4.0.0.
