@@ -54,3 +54,38 @@ provisioner "local-exec" {
 
 Verify by running `terraform destroy` with `TF_LOG=INFO` — should see the
 curl's exit status streaming through instead of being suppressed.
+
+## 2. `variable "pod_cidr"` is declared but never read
+
+`variables.tf:19-28` declares `variable "pod_cidr"` with default
+`10.244.0.0/16` and a comment claiming "minikube's Flannel addon
+hardcodes `10.244.0.0/16` in its kube-flannel-cfg ConfigMap and ignores
+kubeadm.pod-network-cidr". Neither the default nor the comment reflects
+the active cluster any more:
+
+- **Not wired.** `main.tf:32-41` (Option A, the active minikube block)
+  does not pass `pod_cidr = var.pod_cidr` to `module "k8s"`, and no
+  `resource` / `local` / `output` reads it either. `grep -n var.pod_cidr
+  *.tf` returns only the declaration line. Whatever the operator sets
+  (via `TF_VAR_pod_cidr`, tfvars, or default) never reaches the cluster.
+- **Stale comment.** The cluster module (`terraform-minikube-k8s`
+  v3.1.0+) disables the built-in Flannel addon (`cni = "false"`) and
+  applies its own manifest with `replace(..., "10.244.0.0/16",
+  var.pod_cidr)`. The "addon hardcodes 10.244" story is historical.
+- **Actual cluster CIDR.** Comes from the child module's
+  `var.pod_cidr` default — currently `100.72.0.0/16` — paired with
+  `service_cidr` default `100.64.0.0/20`. Disjoint, CGNAT, avoids the
+  kicbase podman-bridge collision on `10.244.0.1`.
+
+**Proposed fix — pick one:**
+
+- **A.** Delete the variable. Nothing in this repo consumes it; removing
+  the dead surface is cleaner than maintaining an illusion of control.
+- **B.** Wire it through: change default to `100.72.0.0/16`, rewrite the
+  comment to cite the podman-bridge collision (not addon hardcoding),
+  add `pod_cidr = var.pod_cidr` to the `module "k8s"` block in
+  `main.tf`. Preserves an operator-facing override knob.
+
+Either way, `docs/architecture.md:205-206` also needs a pass — it
+still claims `pod_cidr` is "hardcoded on minikube" and service CIDR is
+`100.64.0.0/12`, both wrong post-v3.1.0.
