@@ -48,7 +48,7 @@ config/components/*.yaml      → local.components
 config/limits/*.yaml          → local.namespace_limits (keyed by namespace name)
 
 main.tf
-  → module.k8s_k3s["enabled"] OR module.k8s_minikube["enabled"]  (cluster; picked by var.distribution)
+  → module.k8s                (cluster — Option A minikube or Option B k3s)
   → module.addons             (Traefik + cert-manager + monitoring + namespaces)
   → module.project (for_each) (per tenant)
 
@@ -142,7 +142,7 @@ All three live in the root-owned `platform` namespace (ResourceQuota from `confi
 - Model-pull Job runs `ollama pull <model>` for every entry in `services.ollama.models` after the server is ready. Idempotent — re-applies are free for already-cached models. Name hashes the model list, so a list change rotates the Job.
 - No auth. Tenants address it via `OLLAMA_HOST` / `OLLAMA_BASE_URL` / `OLLAMA_API_BASE` env vars injected through the per-tenant `ollama-endpoint` Secret.
 
-## Bootstrap Flow (k3s — `var.distribution="k3s"`, the default)
+## Bootstrap Flow (k3s, Option B default)
 
 ```
 ./tf bootstrap-k3s
@@ -153,7 +153,7 @@ All three live in the root-owned `platform` namespace (ResourceQuota from `confi
   Step 1:    terraform apply -auto-approve (single phase — providers open kubeconfig_path lazily)
 ```
 
-`./tf bootstrap-minikube` is the same flow against a minikube profile — set `TF_VAR_distribution=minikube` before running.
+`./tf bootstrap-minikube` is the same flow against a minikube profile (Option A).
 
 ## Why IngressRoute Uses kubectl_manifest
 

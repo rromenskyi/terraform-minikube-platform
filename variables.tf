@@ -16,17 +16,6 @@ variable "kubernetes_version" {
   default     = "v1.34.4"
 }
 
-variable "distribution" {
-  description = "Cluster distribution to bootstrap. `k3s` installs over SSH to `var.ssh_host` (production default). `minikube` runs locally via the docker-driver minikube (dev/experiment)."
-  type        = string
-  default     = "k3s"
-
-  validation {
-    condition     = contains(["minikube", "k3s"], var.distribution)
-    error_message = "distribution must be \"minikube\" or \"k3s\"."
-  }
-}
-
 variable "pod_cidr" {
   # NOTE: minikube's Flannel addon hardcodes "Network": "10.244.0.0/16" in its
   # kube-flannel-cfg ConfigMap and ignores kubeadm.pod-network-cidr. Anything
@@ -81,17 +70,6 @@ variable "cloudflare_api_token" {
 
 variable "cloudflare_account_id" {
   description = "Cloudflare Account ID"
-  type        = string
-}
-
-variable "cloudflare_tunnel_secret" {
-  description = "Arbitrary secret used when creating the Cloudflare Tunnel (base64-encoded by Terraform). Not the same as the JWT token cloudflared uses to connect."
-  type        = string
-  sensitive   = true
-}
-
-variable "cloudflare_zone_id" {
-  description = "Primary Cloudflare Zone ID used for tunnel DNS records"
   type        = string
 }
 
