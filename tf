@@ -16,19 +16,23 @@
 #
 #   ./tf bootstrap-minikube [-y|--yes]
 #     Full-reset flow for the minikube distribution (Option A in main.tf):
-#     resets the local minikube profile, wipes Terraform state, purges the
-#     Cloudflare tunnel, and runs a phased apply (cluster first, then MySQL,
-#     then the rest) with Flannel/CNI cleanup between phases. Host volume
-#     data is NOT deleted — it survives.
+#     resets the local minikube profile, wipes local Terraform state, runs a
+#     phased apply (cluster first, then MySQL, then the rest) with
+#     Flannel/CNI cleanup between phases. Host volume data is NOT deleted —
+#     it survives. Cloudflare tunnel / DNS are NOT touched by this command —
+#     if an existing tunnel with the same name is found in the operator's
+#     account, bootstrap aborts with a pointer to `./tf cloudflare-purge`
+#     (nuke) or `terraform import` (adopt).
 #
 #   ./tf bootstrap-k3s [-y|--yes]
 #     Full-reset flow for the k3s distribution (Option B in main.tf):
 #     `terraform destroy` (tears down the tunnel + tries SSH uninstall of k3s),
 #     force-uninstalls k3s over SSH in case the destroy-time provisioner was
-#     skipped, wipes Terraform state, purges the Cloudflare tunnel, then runs
-#     a single-phase `terraform apply` (k3s single-phase works with lazy
-#     `config_path` providers). Host volume data under `$HOST_VOLUME_PATH` is
-#     NOT deleted.
+#     skipped, wipes local Terraform state, then runs a single-phase
+#     `terraform apply` (k3s single-phase works with lazy `config_path`
+#     providers). Host volume data under `$HOST_VOLUME_PATH` is NOT deleted.
+#     Cloudflare-side behaviour same as bootstrap-minikube: preflight fails
+#     if a named tunnel already exists; operator decides purge vs import.
 #
 # Both `bootstrap-*` subcommands stop on an interactive confirmation prompt
 # BEFORE running anything destructive. The prompt lists exactly what will be
@@ -36,6 +40,13 @@
 # radius before the first `rm -rf`. Skip the prompt in CI / scripted flows
 # with `BOOTSTRAP_YES=1` in the environment or `-y` / `--yes` on the
 # command line.
+#
+# CF tunnel purge is a DELIBERATELY separate subcommand (`./tf cloudflare-purge`)
+# — it was invoked automatically by bootstrap historically, but a single
+# shared Cloudflare account between a prod cluster and a test clone with the
+# same tunnel name means one accidental bootstrap can delete prod's tunnel +
+# every DNS CNAME routed through it. Making purge explicit stops that class
+# of incident.
 
 set -euo pipefail
 
@@ -232,6 +243,57 @@ purge_dns_records_for_tunnel() {
   done <<< "${zone_ids}"
 }
 
+preflight_no_existing_cf_tunnel() {
+  # Abort bootstrap if a Cloudflare tunnel with the same name already
+  # exists in the operator's account. Historical behaviour was to auto-purge
+  # it as part of bootstrap — that is how a single accidental
+  # `./tf bootstrap-*` run against a misconfigured clone can wipe a live
+  # production tunnel + every DNS CNAME routed through it, which happened
+  # in this session. Now bootstrap refuses to proceed; operator chooses
+  # explicitly between destroying the tunnel (`./tf cloudflare-purge`) or
+  # adopting it into state (`terraform import`).
+  local tunnel_name="$1"
+  local api_token="${TF_VAR_cloudflare_api_token:-}"
+  local account_id="${TF_VAR_cloudflare_account_id:-}"
+
+  if [[ -z "${api_token}" || -z "${account_id}" ]]; then
+    echo "  Skipping CF tunnel preflight — credentials not loaded."
+    return
+  fi
+
+  local response ids
+  response="$(curl -fsS \
+    -H "Authorization: Bearer ${api_token}" \
+    "https://api.cloudflare.com/client/v4/accounts/${account_id}/cfd_tunnel?name=${tunnel_name}")"
+  ids="$(printf '%s' "${response}" | jq -r '.result[]? | select(.deleted_at == null) | .id')"
+
+  if [[ -n "${ids}" ]]; then
+    cat >&2 <<EOF
+Error: a Cloudflare tunnel named "${tunnel_name}" already exists in this
+account (ID(s): ${ids}).
+
+Bootstrap no longer wipes it automatically — a single accidental run used
+to kill the prod tunnel when a test clone shared the same tunnel name in
+the same account. Pick one path, then re-run bootstrap:
+
+  1. Destroy the existing tunnel + its DNS CNAMEs (if the existing tunnel
+     is an orphan / stale / the wrong one):
+
+        ./tf cloudflare-purge
+
+  2. Adopt the existing tunnel into Terraform state (if it is healthy and
+     you want to keep routing through it):
+
+        terraform import cloudflare_zero_trust_tunnel_cloudflared.main \\
+          ${account_id}/<tunnel_id>
+        # repeat for every cloudflare_record.tunnel[...] CNAME you want
+        # adopted — see docs/cf-adopt.md for the full incantation.
+
+EOF
+    exit 1
+  fi
+}
+
 preflight_config_files() {
   # Abort bootstrap before any destructive action if the per-operator
   # config files are missing. Both `config/platform.yaml` and every
@@ -375,21 +437,20 @@ case "${SUBCOMMAND}" in
     preflight_config_files
     MINIKUBE_PROFILE="$(resolve_cluster_name)"
     CLOUDFLARE_TUNNEL_NAME="$(resolve_cloudflare_tunnel_name)"
+    preflight_no_existing_cf_tunnel "${CLOUDFLARE_TUNNEL_NAME}"
 
     confirm_bootstrap_destructive \
       "Bootstrap: minikube (Option A) — cluster \"${MINIKUBE_PROFILE}\"" \
       "minikube profile \"${MINIKUBE_PROFILE}\" — the docker-driver VM container plus ${HOME}/.minikube/profiles/${MINIKUBE_PROFILE} and ${HOME}/.minikube/machines/${MINIKUBE_PROFILE}
-local Terraform state — ${SCRIPT_DIR}/terraform.tfstate, ${SCRIPT_DIR}/terraform.tfstate.backup, ${SCRIPT_DIR}/.terraform.tfstate.lock.info
-Cloudflare tunnel \"${CLOUDFLARE_TUNNEL_NAME}\" and every DNS CNAME pointing at its <tunnel_id>.cfargotunnel.com (other tunnels in the account are scoped out by UUID and kept)" \
+local Terraform state — ${SCRIPT_DIR}/terraform.tfstate, ${SCRIPT_DIR}/terraform.tfstate.backup, ${SCRIPT_DIR}/.terraform.tfstate.lock.info" \
       "host volume data at ${TF_VAR_host_volume_path:-${HOST_VOLUME_PATH:-/data/vol}} — tenant PVCs on disk survive
-Cloudflare API token, zones, and tunnels OTHER than \"${CLOUDFLARE_TUNNEL_NAME}\"
+Cloudflare tunnel \"${CLOUDFLARE_TUNNEL_NAME}\" and its DNS CNAMEs — bootstrap does NOT touch Cloudflare. If you want to destroy them, run './tf cloudflare-purge' as a deliberate separate step
 remote tfstate in B2 if the remote backend was ever configured (local backend override wins while active)" \
       "$@"
 
     echo "=== Phased Bootstrap Mode (minikube / Option A) ==="
     reset_minikube_profile "${MINIKUBE_PROFILE}"
     reset_terraform_state
-    purge_cloudflare_tunnel "${CLOUDFLARE_TUNNEL_NAME}"
 
     echo "Step 1: Creating Minikube cluster first..."
     terraform apply -target=module.k8s.minikube_cluster.this -auto-approve
@@ -430,14 +491,60 @@ remote tfstate in B2 if the remote backend was ever configured (local backend ov
       # not use either, so the trade is free. Every `minikube delete` +
       # `bootstrap` starts a fresh kicbase container where we run this
       # again — the disable persists only for the lifetime of the node.
-      echo "  Removing podman binary + socket + network database from ${MINIKUBE_PROFILE}..."
+      echo "  Removing podman stack (socket, timers, one-shot services, binaries, CNI configs) from ${MINIKUBE_PROFILE}..."
       docker exec "${MINIKUBE_PROFILE}" bash -c '
-        systemctl disable --now podman.socket 2>/dev/null
-        rm -f /usr/bin/podman
+        # Every podman-flavoured systemd unit, not just .socket. Kicbase ships:
+        #   podman.socket                — socket activation (wakes podman.service)
+        #   podman.service               — the actual daemon
+        #   podman-restart.service       — one-shot at boot, calls `podman container start --all`
+        #                                  which initialises the default network and creates
+        #                                  cni-podman0 as a side effect BEFORE our Step 1.5
+        #                                  has had a chance to run
+        #   podman-auto-update.timer     — periodic, pings podman
+        #   podman-auto-update.service   — the work the timer fires
+        #   podman-clean-transient.service — cleanup, also invokes podman
+        # `mask` instead of `disable --now` so nothing can re-enable them implicitly
+        # (tmpfiles, package post-install, cattle-style automation).
+        for unit in podman.socket podman.service \
+                    podman-restart.service \
+                    podman-auto-update.timer podman-auto-update.service \
+                    podman-clean-transient.service; do
+          systemctl stop "$unit"    2>/dev/null
+          systemctl disable "$unit" 2>/dev/null
+          systemctl mask "$unit"    2>/dev/null
+        done
+
+        # Remove every binary / wrapper that could reconstitute the network.
+        # `netavark` is the podman 4.x network backend (replaces the CNI
+        # conflist path entirely); `aardvark-dns` is its DNS companion.
+        # Killing netavark is load-bearing — without it, even a stray podman
+        # invocation would fail before touching netlink.
+        rm -f /usr/bin/podman \
+              /usr/libexec/podman/rootlessport \
+              /usr/libexec/podman/catatonit \
+              /usr/libexec/podman/netavark \
+              /usr/libexec/podman/aardvark-dns \
+              /usr/lib/podman/* \
+              2>/dev/null || true
+
+        # Wipe every on-disk network database podman / netavark / CNI might
+        # read back from on restart.
         rm -rf /etc/containers/networks \
                /var/lib/containers/storage/networks \
-               /var/lib/cni/networks/podman 2>/dev/null
+               /var/lib/cni/networks/podman \
+               /var/lib/cni/results/podman \
+               /run/netns/podman* 2>/dev/null || true
+
+        # Remove the podman CNI conflist outright (not rename). Renaming
+        # leaves the file findable by anything doing `ls /etc/cni/net.d/*`
+        # without a pattern filter.
         rm -f /etc/cni/net.d/87-podman-bridge.conflist
+
+        # Tear down any cni-podman0 bridge that the pre-Step-1.5 boot run
+        # of podman-restart.service already created. `ip link delete` fails
+        # silently while slave veths from coredns / kube-proxy / etc. are
+        # still attached, so fall back to flush-IP + link-down as the
+        # always-works disarm.
         ip link delete cni-podman0 2>/dev/null || {
           ip addr flush dev cni-podman0 2>/dev/null
           ip link set cni-podman0 down 2>/dev/null
@@ -493,15 +600,15 @@ remote tfstate in B2 if the remote backend was ever configured (local backend ov
     shift
     preflight_config_files
     CLOUDFLARE_TUNNEL_NAME="$(resolve_cloudflare_tunnel_name)"
+    preflight_no_existing_cf_tunnel "${CLOUDFLARE_TUNNEL_NAME}"
 
     confirm_bootstrap_destructive \
       "Bootstrap: k3s (Option B) — ssh target \"${TF_VAR_ssh_user:-?}@${TF_VAR_ssh_host:-?}\"" \
       "the k3s cluster on ${TF_VAR_ssh_user:-?}@${TF_VAR_ssh_host:-?}:${TF_VAR_ssh_port:-22} — \`terraform destroy\` then \`/usr/local/bin/k3s-uninstall.sh\` over SSH. All pods, Services, PVCs, in-cluster data disappear with k3s
-local Terraform state — ${SCRIPT_DIR}/terraform.tfstate, ${SCRIPT_DIR}/terraform.tfstate.backup, ${SCRIPT_DIR}/.terraform.tfstate.lock.info
-Cloudflare tunnel \"${CLOUDFLARE_TUNNEL_NAME}\" and every DNS CNAME pointing at its <tunnel_id>.cfargotunnel.com (other tunnels in the account are scoped out by UUID and kept)" \
+local Terraform state — ${SCRIPT_DIR}/terraform.tfstate, ${SCRIPT_DIR}/terraform.tfstate.backup, ${SCRIPT_DIR}/.terraform.tfstate.lock.info" \
       "host volume data at ${TF_VAR_host_volume_path:-${HOST_VOLUME_PATH:-/data/vol}} on ${TF_VAR_ssh_host:-?} — k3s hostPath PVs survive because only the k3s control plane / kubelet are uninstalled, not the directory tree
 the SSH host itself — OS, user accounts, other services running on ${TF_VAR_ssh_host:-?} are untouched
-Cloudflare API token, zones, and tunnels OTHER than \"${CLOUDFLARE_TUNNEL_NAME}\"" \
+Cloudflare tunnel \"${CLOUDFLARE_TUNNEL_NAME}\" and its DNS CNAMEs — bootstrap does NOT touch Cloudflare. If you want to destroy them, run './tf cloudflare-purge' as a deliberate separate step" \
       "$@"
 
     echo "=== Single-phase Bootstrap Mode (k3s / Option B) ==="
@@ -510,7 +617,6 @@ Cloudflare API token, zones, and tunnels OTHER than \"${CLOUDFLARE_TUNNEL_NAME}\
 
     uninstall_k3s_over_ssh
     reset_terraform_state
-    purge_cloudflare_tunnel "${CLOUDFLARE_TUNNEL_NAME}"
 
     echo "Step 1: Applying platform (single phase — k3s providers are config_path-lazy)..."
     terraform apply -auto-approve
