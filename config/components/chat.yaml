@@ -20,6 +20,12 @@ resources:
 # never persisted in YAML.
 env_random:
   - WEBUI_SECRET_KEY
+  # Bearer token shared between Open WebUI's main container (embedded
+  # into TERMINAL_SERVER_CONNECTIONS below via `$(VAR)` expansion) and
+  # the open-terminal sidecar (passed as OPEN_TERMINAL_API_KEY so its
+  # /api/config endpoint rejects unauthenticated callers). Same value,
+  # terraform-owned, rotated only when the tenant is recreated.
+  - OPEN_TERMINAL_API_KEY
 
 # Route RAG embeddings to the shared Ollama instead of pulling
 # sentence-transformers locally. `RAG_OLLAMA_BASE_URL` is set to the
@@ -37,6 +43,111 @@ env_static:
   DEFAULT_MODELS:      qwen2.5:7b
   ENABLE_MODEL_FILTER: "True"
   MODEL_FILTER_LIST:   qwen2.5:7b,qwen2.5:14b,qwen2.5-coder:7b
+
+  # Pre-register the co-located mcp-weather sidecar as a native MCP tool
+  # server so the chat model can call `get_current_weather`, `get_forecast`
+  # and `geocode_city` out of the box. Open WebUI ≥ 0.6.31 reads this JSON
+  # array on boot and seeds the `tool_server.connections` config row.
+  # `auth_type: none` because the upstream server is reachable only over
+  # loopback inside this Pod — the Pod boundary is the trust boundary, so
+  # the bearer-token middleware in mcp-weather-simple stays unattached
+  # (MCP_AUTH_TOKEN deliberately unset on the sidecar).
+  #
+  # Discovery of the tool specs still requires one manual "Verify + Save"
+  # click in Admin → Settings → External Tools on the first fresh data
+  # volume (upstream bug open-webui/open-webui#18140). A kubernetes Job
+  # that calls the admin API is a planned follow-up if the click becomes
+  # annoying; deferred for now.
+  TOOL_SERVER_CONNECTIONS: |
+    [
+      {
+        "type": "mcp",
+        "url": "http://127.0.0.1:8000/mcp",
+        "auth_type": "none",
+        "key": "",
+        "info": {
+          "id": "mcp-weather",
+          "name": "Weather",
+          "description": "Open-Meteo backed weather/forecast/geocoding tools"
+        },
+        "config": { "enable": true },
+        "access_control": null
+      }
+    ]
+
+  # Register the co-located open-terminal sidecar as an "Open Terminal"
+  # integration so the chat model can execute commands and manage files
+  # inside its own terminal container. `$(OPEN_TERMINAL_API_KEY)` resolves
+  # at Pod start — Kubernetes substitutes the value from the explicit
+  # `env` entry emitted for every `env_random:` key (`envFrom` bindings
+  # are not eligible for expansion). Same Verify+Save one-click caveat as
+  # TOOL_SERVER_CONNECTIONS above (upstream #18140).
+  TERMINAL_SERVER_CONNECTIONS: |
+    [
+      {
+        "id": "open-terminal",
+        "name": "Terminal",
+        "url": "http://127.0.0.1:8001",
+        "auth_type": "bearer",
+        "key": "$(OPEN_TERMINAL_API_KEY)",
+        "enabled": true,
+        "access_control": null
+      }
+    ]
+
+# Sidecars co-located with Open WebUI.
+#
+# mcp-weather-simple — loopback MCP tool server at 127.0.0.1:8000. The Pod
+# boundary is the trust boundary, which is why `MCP_AUTH_TOKEN` is left
+# unset (the bearer-token middleware in mcp-weather-simple skips itself
+# when the env is missing; see upstream README §3).
+#
+# open-terminal — loopback OpenAPI terminal at 127.0.0.1:8001. The Alpine
+# variant is the smallest image (~230 MB) and has the same feature set
+# as the slim build; we just can't install extra apt/pip/npm packages at
+# startup there. We deliberately skip the image's hardened entrypoint
+# (tini + entrypoint-slim.sh) by overriding `command:` — that entrypoint
+# needs to start as root to set up an iptables egress firewall we don't
+# need (Kubernetes NetworkPolicy is our egress boundary). Bypassing it
+# lets the sidecar run cleanly as UID 1000 under the Pod's restricted
+# securityContext without `su-exec` privilege gymnastics. `/home/user` is
+# declared writable so shell history, session state and uploaded files
+# can land somewhere despite `readOnlyRootFilesystem: true`; emptyDir
+# means they don't outlive the Pod, which is acceptable for a terminal
+# scratchpad that belongs to the chat session.
+sidecars:
+  mcp-weather:
+    image: ghcr.io/rromenskyi/mcp-weather-simple:0.1.0
+    port:  8000
+    env_static:
+      MCP_TRANSPORT: streamable-http
+      MCP_HOST:      127.0.0.1
+      MCP_PORT:      "8000"
+    resources:
+      requests: { cpu: "20m",  memory: "64Mi" }
+      limits:   { cpu: "500m", memory: "256Mi" }
+    security:
+      run_as_user:               1000
+      read_only_root_filesystem: true
+
+  open-terminal:
+    image:   ghcr.io/open-webui/open-terminal:alpine
+    port:    8001
+    command: ["open-terminal"]
+    args:    ["run", "--host", "127.0.0.1", "--port", "8001"]
+    env_static:
+      HOME: /home/user
+    env_random:
+      - OPEN_TERMINAL_API_KEY
+    writable_paths:
+      - /tmp
+      - /home/user
+    resources:
+      requests: { cpu: "50m",  memory: "128Mi" }
+      limits:   { cpu: "500m", memory: "256Mi" }
+    security:
+      run_as_user:               1000
+      read_only_root_filesystem: true
 
 # The image's landing page returns 200 only after the backend SQLite
 # is seeded — first container boot can take 30–60s. `health_path` left

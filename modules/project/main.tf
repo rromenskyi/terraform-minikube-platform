@@ -754,9 +754,11 @@ module "component" {
   random_env_secret_name = contains(local.env_random_components, each.key) ? (
     kubernetes_secret_v1.env_random[each.key].metadata[0].name
   ) : null
+  env_random_keys = try(each.value.env_random, [])
 
   config_files = try(each.value.config_files, {})
   security     = try(each.value.security, {})
+  sidecars     = try(each.value.sidecars, {})
 }
 
 # ── BasicAuth (per-component) ─────────────────────────────────────────────────

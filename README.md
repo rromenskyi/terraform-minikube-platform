@@ -328,6 +328,31 @@ resources:
 # HTTP BasicAuth at the Traefik IngressRoute level — random password per
 # project exposed via `terraform output basic_auth`.
 basic_auth: true
+
+# Helper containers co-located in the same Pod. Use for loopback-only
+# tool servers the main container talks to on 127.0.0.1 (MCP, terminal,
+# code interpreter) where a CNI boundary + Service + token would be pure
+# ceremony. See `config/components/chat.yaml` for a live example wiring
+# mcp-weather-simple + open-terminal next to Open WebUI.
+sidecars:
+  my-helper:
+    image:   ghcr.io/example/helper:1.0.0
+    port:    8001              # informational only — no Service port opened
+    command: ["helper"]        # optional; overrides image ENTRYPOINT
+    args:    ["run", "--bind", "127.0.0.1:8001"]
+    env_static:
+      HELPER_MODE: prod
+    env_random:                # keys pulled from the component-level random-env Secret
+      - HELPER_API_KEY         # via valueFrom — lets $(HELPER_API_KEY) resolve in env_static above
+    writable_paths:            # per-sidecar emptyDir volumes; default ["/tmp"]
+      - /tmp
+      - /var/state
+    resources:
+      requests: { cpu: "20m",  memory: "64Mi" }
+      limits:   { cpu: "500m", memory: "256Mi" }
+    security:
+      run_as_user:               1000   # 0 = root (auto-flips run_as_non_root off)
+      read_only_root_filesystem: true
 ```
 
 **`kind: external`** — a Service already exists elsewhere in the cluster; the component emits only an IngressRoute:
@@ -521,6 +546,13 @@ routes:
 ```
 
 The `chat` component is `kind: deployment` (Open WebUI) with `ollama: true` — its env gets `OLLAMA_HOST` + `OLLAMA_BASE_URL` pointing at the shared Ollama Service, and `env_static` pins the embedding model to `all-minilm:latest`. No embedding model runs inside the chat pod.
+
+Out of the box, the chat Pod also ships two helper sidecars on loopback:
+
+- `mcp-weather-simple` on `127.0.0.1:8000` — pre-registered in Open WebUI via `TOOL_SERVER_CONNECTIONS` so the model can call weather/forecast/geocoding tools backed by Open-Meteo. `MCP_AUTH_TOKEN` is intentionally unset — the Pod boundary is the trust boundary.
+- `open-terminal` (alpine build, ~230 MB) on `127.0.0.1:8001` — pre-registered via `TERMINAL_SERVER_CONNECTIONS`, so the model can execute shell commands, manage files, and run code through Open WebUI's native Terminal integration. The bearer token is terraform-generated (`env_random: [OPEN_TERMINAL_API_KEY]`) and reaches both Open WebUI and the sidecar through the same per-component Secret; Kubernetes `$(VAR_NAME)` substitution embeds it in the JSON connection blob.
+
+Both integrations need **one manual "Verify + Save" click** per tenant on first boot (Admin → Settings → External Tools for MCP, Admin → Settings → Integrations → Open Terminal for the terminal) until upstream [open-webui/open-webui#18140](https://github.com/open-webui/open-webui/issues/18140) fixes automatic tool-spec discovery from the env-seeded config row. If that click becomes painful a `kubernetes_job_v1` that calls the admin API directly is a small follow-up.
 
 ### View credentials
 
