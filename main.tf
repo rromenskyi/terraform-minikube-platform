@@ -83,7 +83,7 @@ check "k3s_ssh_vars_set" {
 # Layer 2: Platform add-ons (Traefik, cert-manager, monitoring, namespaces).
 # -----------------------------------------------------------------------------
 module "addons" {
-  source = "git::https://github.com/rromenskyi/terraform-k8s-addons.git?ref=v1.1.0"
+  source = "git::https://github.com/rromenskyi/terraform-k8s-addons.git?ref=v1.1.2"
 
   kubeconfig_path      = module.k8s.kubeconfig_path
   cluster_name         = module.k8s.cluster_name
