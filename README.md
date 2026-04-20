@@ -108,11 +108,57 @@ To switch to k3s (native install via SSH):
 - **Terraform** >= 1.5.0
 - **kubectl**
 - **jq**
-- **Cloudflare account** with at least one domain
+- **Cloudflare account** with at least one domain (see **First-time Cloudflare setup** below)
+
+## First-time Cloudflare setup
+
+If you have never used Cloudflare before, the three values the stack needs — `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`, and a per-domain `cloudflare_zone_id` in each `config/domains/*.yaml` — are all produced by the steps below. Skip this section if your Cloudflare account is already set up and you know where to find IDs and tokens.
+
+### 1. Create an account and add your domain
+
+1. Sign up at <https://dash.cloudflare.com/sign-up> — the **Free** plan is enough for everything this repo uses (tunnels, DNS, proxying, TLS termination).
+2. In the dashboard: **Add a Site** → enter your apex domain (e.g. `example.com`) → pick **Free** → `Continue`.
+3. Cloudflare scans existing DNS records and offers to import them. Review and keep what you need. Bootstrap will add the per-hostname `CNAME`s the tunnel needs; pre-existing records are left alone.
+4. Cloudflare shows two nameservers (usually `<name>.ns.cloudflare.com`). At your **domain registrar** (where you bought the domain — Namecheap, GoDaddy, Porkbun, etc.), replace the current nameservers with those two.
+5. Wait for propagation — the Overview page turns green (`Active`) anywhere from a few minutes to 24 h after the NS change.
+
+### 2. Locate `CLOUDFLARE_ACCOUNT_ID` and each domain's Zone ID
+
+Open the domain's **Overview** page (`Websites` → click your domain). Scroll to the **right sidebar** → **API** block:
+
+- **Account ID** — shared across every domain in your Cloudflare account. Copy it into `CLOUDFLARE_ACCOUNT_ID` in `.env`.
+- **Zone ID** — unique to *this* domain. Copy it into `cloudflare_zone_id` inside the domain's YAML under `config/domains/` (NOT into `.env` — the stack reads zone IDs per-domain, not globally).
+
+If you host multiple domains, each gets its own `cloudflare_zone_id` in its own YAML; they all share the single `CLOUDFLARE_ACCOUNT_ID`.
+
+### 3. Create `CLOUDFLARE_API_TOKEN`
+
+The stack needs a custom API token — **not** the Global API Key.
+
+1. Click your avatar → **My Profile** → **API Tokens** → **Create Token**.
+2. Pick **Create Custom Token** → `Get started`.
+3. Name: anything memorable — `platform-terraform` works.
+4. **Permissions** — add three rows:
+   - `Account` → `Cloudflare Tunnel` → `Edit` — creates/deletes the tunnel and its cloudflared config.
+   - `Zone` → `DNS` → `Edit` — creates the per-hostname `CNAME` records.
+   - `Zone` → `Zone` → `Read` — lets the provider enumerate zones on plan.
+5. **Account Resources** → `Include` → your specific account.
+6. **Zone Resources** → `Include` → add **every** zone referenced in `config/domains/*.yaml`. (If only one domain: just that one.)
+7. Leave **Client IP Address Filtering** and **TTL** empty unless you know you need them.
+8. `Continue to summary` → `Create Token`.
+9. **Copy the token immediately** — Cloudflare shows it exactly once. Put it in `CLOUDFLARE_API_TOKEN` in `.env`. Losing it means creating a new token and retiring the old one.
+
+### 4. Do NOT pre-create the tunnel
+
+Terraform creates the tunnel itself (name `platform`, see `cloudflare.tf`). The tunnel secret is Terraform-generated too — one less thing you have to produce. If you already created a tunnel with that name by hand — from an earlier experiment, another clone of this repo, or a sibling project — `./tf bootstrap-*` aborts at preflight and tells you to either run `./tf cloudflare-purge` (wipe it) or `terraform import` (adopt it).
+
+After bootstrap finishes, verify the tunnel is live: **Zero Trust** → **Networks** → **Tunnels**. You should see `platform` with status `Healthy` once the `cloudflared` Deployment inside the cluster has rolled out.
 
 ## Quick start
 
 ### 1. Configure secrets
+
+If Cloudflare is new to you, walk through **First-time Cloudflare setup** above first — all of `CLOUDFLARE_*` comes out of those steps.
 
 ```bash
 cp .env.example .env
@@ -121,18 +167,17 @@ cp .env.example .env
 Edit `.env` and fill in:
 
 ```bash
-CLOUDFLARE_API_TOKEN=your-token           # API token (not Global API key)
+# Cloudflare (account-scoped; per-domain Zone IDs live in config/domains/*.yaml)
+CLOUDFLARE_API_TOKEN=your-custom-token            # NOT the Global API Key
 CLOUDFLARE_ACCOUNT_ID=your-account-id
-CLOUDFLARE_ZONE_ID=your-primary-zone-id   # Zone ID of the "infra" domain
-CLOUDFLARE_TUNNEL_SECRET=any-random-32-char-string
-LETSENCRYPT_EMAIL=your-email@example.com
-HOST_VOLUME_PATH=/data/vol                # See Persistent storage below
-CLUSTER_NAME=platform
 
-# Only for k3s distribution:
-SSH_HOST=127.0.0.1
-SSH_USER=your-linux-user
-SSH_PRIVATE_KEY_PATH=/home/you/.ssh/id_ed25519
+LETSENCRYPT_EMAIL=your-email@example.com
+HOST_VOLUME_PATH=/data/vol                        # See "Persistent storage" below
+
+# Only for k3s distribution (TF_VAR_ prefix is required):
+TF_VAR_ssh_host=127.0.0.1
+TF_VAR_ssh_user=your-linux-user
+TF_VAR_ssh_private_key_path=/home/you/.ssh/id_ed25519
 ```
 
 ### 2. Decide which shared services to run
@@ -514,8 +559,6 @@ Deletes the cluster, resets Terraform state, purges Cloudflare tunnel + DNS reco
 | `letsencrypt_email` | *(required)* | Email for Let's Encrypt certificates |
 | `cloudflare_api_token` | *(required)* | Cloudflare API token |
 | `cloudflare_account_id` | *(required)* | Cloudflare Account ID |
-| `cloudflare_tunnel_secret` | *(required)* | Random 32+ char secret for tunnel creation |
-| `cloudflare_zone_id` | *(required)* | Primary zone used by the tunnel |
 | `ssh_host` / `ssh_user` / `ssh_port` / `ssh_private_key_path` | *(required for k3s)* | SSH target for the k3s installer |
 
 ## Known limitations
