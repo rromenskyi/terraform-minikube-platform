@@ -16,17 +16,6 @@ variable "kubernetes_version" {
   default     = "v1.34.4"
 }
 
-variable "pod_cidr" {
-  # NOTE: minikube's Flannel addon hardcodes "Network": "10.244.0.0/16" in its
-  # kube-flannel-cfg ConfigMap and ignores kubeadm.pod-network-cidr. Anything
-  # outside 10.244.0.0/16 causes Flannel to crash ("subnet does not contain
-  # node PodCIDR") and leaves all pods stuck in ContainerCreating. The k3s
-  # sibling does not have this limitation.
-  description = "CIDR range to use for Pod IPs inside the Minikube cluster"
-  type        = string
-  default     = "10.244.0.0/16"
-}
-
 # ---------------------------------------------------------------------------
 # SSH connection to the k3s target host (only used when the k3s distribution
 # block is active in main.tf). Defaults cover the local loopback install;
