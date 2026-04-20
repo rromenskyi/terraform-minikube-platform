@@ -14,11 +14,24 @@ locals {
 
 # ── Cloudflare Zero Trust Tunnel ─────────────────────────────────────────────
 
+# Terraform-owned tunnel secret. Cloudflare uses this shared key to sign the
+# JWT (`tunnel_token`) that cloudflared pods present to the control plane —
+# cloudflared itself never sees this secret, only the derived token. Generated
+# here instead of taking a `.env` input because `./tf bootstrap-*` is a
+# destroy-and-recreate flow by design, so there is no state-loss recovery
+# story that needs a human-memorised secret. `random_password` (not
+# `random_id`) so the value is already a string that `base64encode` accepts
+# without hex→bytes rewiring.
+resource "random_password" "cloudflare_tunnel_secret" {
+  length  = 48
+  special = false
+}
+
 resource "cloudflare_zero_trust_tunnel_cloudflared" "main" {
   account_id = var.cloudflare_account_id
   name       = "platform"
   config_src = "cloudflare"
-  secret     = base64encode(var.cloudflare_tunnel_secret)
+  secret     = base64encode(random_password.cloudflare_tunnel_secret.result)
 }
 
 # Pre-destroy force-delete for the tunnel above.
