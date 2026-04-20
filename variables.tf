@@ -73,17 +73,6 @@ variable "cloudflare_account_id" {
   type        = string
 }
 
-variable "cloudflare_tunnel_secret" {
-  description = "Arbitrary secret used when creating the Cloudflare Tunnel (base64-encoded by Terraform). Not the same as the JWT token cloudflared uses to connect."
-  type        = string
-  sensitive   = true
-}
-
-variable "cloudflare_zone_id" {
-  description = "Primary Cloudflare Zone ID used for tunnel DNS records"
-  type        = string
-}
-
 variable "namespace_prefix" {
   description = "Prefix prepended to every tenant-project namespace created from `config/domains/*.yaml` (e.g. `phost-` → `phost-example-com-prod`). Groups all project-tenant namespaces together under a common prefix in `kubectl get ns`, separate from the infra namespaces (`cert-manager`, `ingress-controller`, `monitoring`, `ops`, `platform`) that have their own fixed names. Set to `\"\"` to disable prefixing."
   type        = string
