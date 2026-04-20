@@ -85,24 +85,22 @@ terraform-minikube-platform/
 
 Three sibling modules are fetched directly from GitHub at pinned releases — no sibling checkout required:
 
-- Layer 1 (cluster bootstrap, `var.distribution` picks ONE):
-  - [`terraform-minikube-k8s`](https://github.com/rromenskyi/terraform-minikube-k8s) — `distribution = "minikube"`, pinned to `v4.0.0`
-  - [`terraform-k3s-k8s`](https://github.com/rromenskyi/terraform-k3s-k8s) — `distribution = "k3s"` (active default), pinned to `v0.3.1`
+- Layer 1 (cluster bootstrap, pick ONE):
+  - [`terraform-minikube-k8s`](https://github.com/rromenskyi/terraform-minikube-k8s) — Option A (minikube), pinned to `v3.0.0`
+  - [`terraform-k3s-k8s`](https://github.com/rromenskyi/terraform-k3s-k8s) — Option B (k3s, active default), pinned to `v0.3.1`
 - Layer 2 (platform addons): [`terraform-k8s-addons`](https://github.com/rromenskyi/terraform-k8s-addons) — pinned in `main.tf`
 
 `terraform init` downloads the selected modules automatically. To upgrade, bump the `?ref=vX.Y.Z` in `main.tf` and re-run `terraform init -upgrade`.
 
 ### Alternative cluster distribution
 
-The cluster module is swappable via **`var.distribution`** (`"k3s"` default, `"minikube"` alternative). `main.tf` wires both sibling modules with `for_each = toset(… ? ["enabled"] : [])` so exactly one instantiates at any time; three flat `local.k8s_*` references collapse the outputs so downstream code stays distribution-agnostic.
+The cluster module is swappable. `main.tf` has an **Option A — minikube** (commented out) and **Option B — k3s** (active default) block. Both modules export the same output signature (`cluster_host`, `client_certificate`, `client_key`, `cluster_ca_certificate`, `kubeconfig_path`, `cluster_name`, `cluster_distribution`), so layers 2 and 3 are distribution-agnostic.
 
-To switch to minikube (local docker-driver bootstrap):
-1. In `.env` (or exported env), set `TF_VAR_distribution=minikube`.
-2. Optionally set `TF_VAR_memory` and `TF_VAR_kubernetes_version`; SSH vars are unused in minikube mode.
+To switch to k3s (native install via SSH):
+1. In `main.tf`, comment out the Option A block and uncomment Option B.
+2. In `.env`, set `TF_VAR_ssh_user`, `TF_VAR_ssh_host`, `TF_VAR_ssh_private_key_path`.
 3. `terraform init -upgrade`.
-4. `./tf bootstrap-minikube` — the root `kubernetes` / `helm` providers lazily open `local.k8s_kubeconfig_path`, so a single apply is enough.
-
-> **Migrating an existing state between distributions (or from pre-v0.3.0 platform revs that used `module "k8s"`)** — the module addresses changed from `module.k8s.*` to `module.k8s_k3s["enabled"].*` / `module.k8s_minikube["enabled"].*`. Run the `terraform state mv` loop in `CHANGELOG.md` → `[Unreleased]` → **BREAKING** note BEFORE `terraform apply`, or the whole cluster gets destroyed and recreated.
+4. `./tf bootstrap-k3s` — the root `kubernetes` / `helm` providers lazily open `module.k8s.kubeconfig_path`, so a single apply is enough.
 
 ## Prerequisites
 
@@ -155,9 +153,9 @@ cp config/domains/example.com.yaml.example config/domains/mydomain.com.yaml
 ### 4. Bootstrap
 
 ```bash
-./tf bootstrap-k3s         # native k3s over SSH (var.distribution = "k3s", default)
+./tf bootstrap-k3s         # native k3s over SSH (Option B, default)
 # or
-./tf bootstrap-minikube    # minikube (var.distribution = "minikube"; export TF_VAR_distribution=minikube first)
+./tf bootstrap-minikube    # minikube (Option A)
 ```
 
 This destroys any existing state, reinstalls the cluster from zero, purges stale Cloudflare tunnel + DNS, and runs a single `terraform apply` to converge everything.
