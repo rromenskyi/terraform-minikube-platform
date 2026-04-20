@@ -13,12 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 - `variable "cloudflare_zone_id"` — declared at the root but never read anywhere in `.tf` code. The tunnel resource is account-scoped; per-hostname `CNAME` records pull their zone ID from each domain's `config/domains/*.yaml` (`project_config.cloudflare_zone_id`). Operators running with `CLOUDFLARE_ZONE_ID` / `TF_VAR_cloudflare_zone_id` in `.env` can safely drop the line. Anyone passing it via `-var` or `*.tfvars` must remove the row or Terraform errors with "value for undeclared variable"
 - `variable "cloudflare_tunnel_secret"` — superseded by the Terraform-owned random_password above. Drop `CLOUDFLARE_TUNNEL_SECRET` from `.env` after the first successful apply on the new code
+- `variable "pod_cidr"` — declared at the root with default `10.244.0.0/16` but never read anywhere in `.tf` code and never passed down to `module "k8s"`. The actual Pod CIDR is whatever the active cluster module's own default is (`100.72.0.0/16` on `terraform-minikube-k8s` v4.0.0, `10.42.0.0/16` on k3s). Operators setting `TF_VAR_pod_cidr` in `.env` can drop it — the value never reached the cluster anyway. `-var` / `*.tfvars` users must remove the row. `BUGS.md #2` (which tracked this as known dead code) is also dropped in the same commit
 
 ### Docs
 - New `## First-time Cloudflare setup` section in README — step-by-step for a zero-state Cloudflare account: create account, add site, point nameservers, locate Account ID + per-domain Zone IDs, scope a custom API Token with the three exact permissions the stack needs (`Cloudflare Tunnel: Edit`, `DNS: Edit`, `Zone: Read`), verify tunnel health after bootstrap
 - Quick Start step 1 refreshed around the new `.env` layout — `CLOUDFLARE_ZONE_ID` and `CLOUDFLARE_TUNNEL_SECRET` both gone; SSH block uses the correct `TF_VAR_ssh_*` prefix (was missing — the bare `SSH_HOST`-style names the old example showed never reached Terraform)
 - `.env.example`: dropped `CLOUDFLARE_ZONE_ID` and `CLOUDFLARE_TUNNEL_SECRET`; added a comment pointing at `config/domains/*.yaml` for per-domain Zone IDs
 - Variables reference table in README: dropped the two removed variables
+- `docs/architecture.md` Networking section: rewrote the Pod / Service CIDR claims to reflect actual module defaults on both distributions (`100.72.0.0/16` + `100.64.0.0/20` on minikube, `10.42.0.0/16` + `10.43.0.0/16` on k3s). Old "`pod_cidr` hardcoded on minikube" and "Service CIDR: `100.64.0.0/12`" were both wrong post-`terraform-minikube-k8s` v4.0.0
 
 ## [0.2.0] - 2026-04-19
 
