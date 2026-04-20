@@ -394,51 +394,66 @@ remote tfstate in B2 if the remote backend was ever configured (local backend ov
     echo "Step 1: Creating Minikube cluster first..."
     terraform apply -target=module.k8s.minikube_cluster.this -auto-approve
 
-    echo "Step 1.5: Cleaning stale CNI interfaces and disabling conflicting podman bridge CNI..."
+    echo "Step 1.5: Neutralising kicbase's bundled podman stack (fights Flannel for 10.244.0.1)..."
     if docker ps --format '{{.Names}}' | grep -q "^${MINIKUBE_PROFILE}$"; then
-      # Remove stale Flannel bridge interfaces left from a previous cluster run.
-      # If cni0 still has an IP from before, Flannel refuses to start with:
-      # "cni0 already has an IP address different from 10.244.0.1/24"
-      # Kicbase ships `/etc/cni/net.d/87-podman-bridge.conflist` with the
-      # same subnet Flannel wants (10.244.0.0/16). kubeadm's coredns install
-      # runs BEFORE Flannel's DaemonSet has dropped its own conflist, so
-      # kubelet + containerd pick up the podman conflist — bridge
-      # `cni-podman0` is created with `10.244.0.1/16`, which then fights
-      # Flannel's `cni0` `10.244.0.1/24` over the same address. ARP goes
-      # non-deterministic, then a few minutes into the bootstrap in-cluster
-      # Service NAT collapses ("dial tcp 100.64.0.1:443: no route to host"
-      # from coredns / metrics-server / kubernetes-dashboard).
+      # Kicbase bundles the full podman runtime — `deploy/kicbase/Dockerfile`
+      # in kubernetes/minikube does `clean-install podman catatonit crun` and
+      # `systemctl enable podman.socket`. It is there for the `--driver=podman`
+      # code path and for operators who `minikube ssh` in to run `podman` by
+      # hand. On our `--driver=docker` stack it is dead weight — and
+      # actively harmful.
       #
-      # Cleanup order is load-bearing (see upstream kubernetes/minikube
-      # #11194, #8480):
-      #   1. `rm` the podman conflist outright — renaming to `.disabled`
-      #      left containerd's in-memory CNI plugin table referencing the
-      #      file, so the next pod sandbox brought the bridge back up.
-      #   2. Delete stale flannel interfaces so Flannel recreates them
-      #      clean. `cni0` with a stale IP makes Flannel refuse to start
-      #      ("cni0 already has an IP address different from 10.244.0.1/24").
-      #   3. Disarm any already-live `cni-podman0` (flush IP + link down).
-      #      `ip link delete` fails silently while slave veths from the
-      #      kubeadm-era pods are still attached, so we flush instead of
-      #      deleting.
-      #   4. `systemctl restart containerd` inside the node — the critical
-      #      step we missed before. containerd caches CNI plugin configs
-      #      at startup; without a restart it keeps using its in-memory
-      #      podman-bridge entry for every new pod sandbox and recreates
-      #      the bridge no matter how many times we knock it down.
-      #   5. Wait for Flannel ready + kick kube-system pods so they
-      #      re-attach to `cni0` with a clean CNI view.
-      echo "  Removing podman CNI conflist from ${MINIKUBE_PROFILE}..."
-      docker exec "${MINIKUBE_PROFILE}" rm -f /etc/cni/net.d/87-podman-bridge.conflist
+      # The harm chain: podman.socket is a systemd socket-activation unit
+      # listening on /run/podman/podman.sock. Anything that pings that
+      # socket (containerd CNI-reload loops, crictl probes, kubelet probing
+      # its known runtime sockets) wakes podman.service. podman.service on
+      # first start creates its default network named `podman` — a bridge
+      # called cni-podman0 with `10.244.0.1/16`. That is the SAME address
+      # Flannel wants on `cni0` (`10.244.0.1/24`). ARP goes
+      # non-deterministic, then a few minutes into the bootstrap
+      # in-cluster Service NAT collapses: coredns, metrics-server and
+      # kubernetes-dashboard start looping on
+      # `dial tcp 100.64.0.1:443: no route to host`.
+      #
+      # We learned this step-wise. First: disable the CNI conflist by
+      # renaming to `.disabled` — bridge came back. Second: `rm` the
+      # conflist + `systemctl restart containerd` (per upstream issues
+      # #11194 / #8480) — bridge STILL came back a few minutes later,
+      # reproduced identically on a fresh Mac cluster. Third (this): nuke
+      # the podman stack whole. No socket → nothing wakes the service;
+      # no binary → no code path creates the network; no network database
+      # → if something manages to start podman-in-a-chroot, it cannot
+      # reconstitute the network. The bridge goes away for good.
+      #
+      # The trade-off is narrow: inside THIS kicbase container `minikube
+      # ssh -- podman run …` and `--driver=podman` no longer work. We do
+      # not use either, so the trade is free. Every `minikube delete` +
+      # `bootstrap` starts a fresh kicbase container where we run this
+      # again — the disable persists only for the lifetime of the node.
+      echo "  Removing podman binary + socket + network database from ${MINIKUBE_PROFILE}..."
+      docker exec "${MINIKUBE_PROFILE}" bash -c '
+        systemctl disable --now podman.socket 2>/dev/null
+        rm -f /usr/bin/podman
+        rm -rf /etc/containers/networks \
+               /var/lib/containers/storage/networks \
+               /var/lib/cni/networks/podman 2>/dev/null
+        rm -f /etc/cni/net.d/87-podman-bridge.conflist
+        ip link delete cni-podman0 2>/dev/null || {
+          ip addr flush dev cni-podman0 2>/dev/null
+          ip link set cni-podman0 down 2>/dev/null
+        }
+      '
 
-      echo "  Deleting stale cni0 / flannel.1; disarming cni-podman0 on ${MINIKUBE_PROFILE}..."
+      # Stale Flannel interfaces from a previous cluster run block a fresh
+      # Flannel start ("cni0 already has an IP address different from
+      # 10.244.0.1/24"). Delete outright so Flannel recreates clean.
+      echo "  Deleting stale cni0 / flannel.1 on ${MINIKUBE_PROFILE}..."
       docker exec "${MINIKUBE_PROFILE}" ip link delete cni0 2>/dev/null || true
       docker exec "${MINIKUBE_PROFILE}" ip link delete flannel.1 2>/dev/null || true
-      docker exec "${MINIKUBE_PROFILE}" sh -c '
-        ip addr flush dev cni-podman0 2>/dev/null
-        ip link set cni-podman0 down  2>/dev/null
-      ' || true
 
+      # containerd caches CNI plugin configs at startup. Force a rescan so
+      # it picks up that /etc/cni/net.d/ now has only `10-flannel.conflist`
+      # and drops any in-memory reference to the podman-bridge plugin.
       echo "  Restarting containerd to flush its CNI-plugin cache..."
       docker exec "${MINIKUBE_PROFILE}" systemctl restart containerd
 
