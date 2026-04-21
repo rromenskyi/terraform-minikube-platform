@@ -123,6 +123,68 @@ variable "security" {
   default = {}
 }
 
+variable "sidecars" {
+  description = <<-EOT
+    Additional containers that run in every Pod of this Deployment,
+    keyed by container name. Use for small helper servers the main
+    container reaches over loopback (MCP tool servers, local caches,
+    token-refresh daemons). Each entry is independent — no Service
+    port, no external probes; the main container's probes are enough
+    to cover Pod liveness because a sidecar crash restarts the whole
+    Pod.
+
+    Per-field notes:
+      - `command` / `args`: override the image ENTRYPOINT / CMD. Use
+        when the default entrypoint expects capabilities the sidecar
+        doesn't need (e.g. open-terminal's wrapper runs iptables setup
+        as root; skipping it lets the sidecar run as UID 1000 cleanly).
+      - `writable_paths`: every path in this list becomes a per-sidecar
+        emptyDir volume mounted at that path. Required when the image
+        writes to filesystem paths other than the default `/tmp` (home
+        directories, stateful cache dirs) and `readOnlyRootFilesystem`
+        is on. Default `["/tmp"]` covers the common case.
+      - `env_random`: list of env var names to pull — by `valueFrom.secretKeyRef` —
+        from the component-level random-env Secret. The main container
+        and any sidecar can list a subset of the component's
+        `env_random:` keys; Terraform generates one random value per key
+        and injects it wherever it's referenced.
+      - `security.run_as_user = 0`: supported for images whose
+        entrypoint requires root (rare). The module flips
+        `run_as_non_root` to false automatically in that case.
+  EOT
+  type = map(object({
+    image          = string
+    port           = optional(number) # informational only; no Service port is opened
+    command        = optional(list(string))
+    args           = optional(list(string))
+    env_static     = optional(map(string), {})
+    env_random     = optional(list(string), [])
+    writable_paths = optional(list(string), ["/tmp"])
+    resources = object({
+      requests = object({ cpu = string, memory = string })
+      limits   = object({ cpu = string, memory = string })
+    })
+    security = optional(object({
+      run_as_user               = optional(number, 1000)
+      read_only_root_filesystem = optional(bool, true)
+    }), {})
+  }))
+  default = {}
+}
+
+variable "env_random_keys" {
+  description = <<-EOT
+    Keys present in the Secret referenced by `random_env_secret_name`.
+    Used to emit one explicit `env` entry per key (with
+    `valueFrom.secretKeyRef`) so subsequent `env_static` values can
+    refer to them via Kubernetes `$(VAR_NAME)` substitution — which
+    does not work with `envFrom`. Safe to leave empty when the
+    component has no `env_random:` declaration.
+  EOT
+  type        = list(string)
+  default     = []
+}
+
 # ── Locals ────────────────────────────────────────────────────────────────────
 
 locals {
@@ -131,6 +193,21 @@ locals {
     for v in var.storage :
     replace(trimprefix(v.mount, "/"), "/", "-") => v
   }
+
+  # Flatten every (sidecar, writable_path) pair into a single map keyed by
+  # a stable volume/mount name. One emptyDir per pair so two sidecars (or
+  # two paths within one sidecar) cannot clobber each other's scratch
+  # state. The slug is cleaned so characters illegal in a Kubernetes
+  # volume name (`/`) become dashes.
+  sidecar_writable_volumes = merge([
+    for sc_name, sc in var.sidecars : {
+      for path in sc.writable_paths :
+      "sidecar-${sc_name}-${replace(trimprefix(path, "/"), "/", "-")}" => {
+        sidecar    = sc_name
+        mount_path = path
+      }
+    }
+  ]...)
 }
 
 # ── Persistent Volumes ────────────────────────────────────────────────────────
@@ -352,24 +429,34 @@ resource "kubernetes_deployment_v1" "this" {
             }
           }
 
+          # Random-value env vars — one key per entry in the component's
+          # `env_random:` list (e.g. WEBUI_SECRET_KEY). Values persist in
+          # terraform state across applies. Emitted as explicit `env`
+          # entries with `valueFrom.secretKeyRef` (not `env_from`) so
+          # later `env_static` values can reference them via the
+          # Kubernetes `$(VAR_NAME)` expansion — which only works between
+          # explicit `env` list entries, not for `envFrom`-sourced vars.
+          dynamic "env" {
+            for_each = var.random_env_secret_name != null ? toset(var.env_random_keys) : toset([])
+            content {
+              name = env.value
+              value_from {
+                secret_key_ref {
+                  name = var.random_env_secret_name
+                  key  = env.value
+                }
+              }
+            }
+          }
+
           # Arbitrary static env vars supplied by the component's yaml.
+          # Appears *after* the random_env block above so values can
+          # reference random keys via `$(VAR_NAME)`.
           dynamic "env" {
             for_each = var.static_env
             content {
               name  = env.key
               value = env.value
-            }
-          }
-
-          # Random-value env vars — one key per entry in the component's
-          # `env_random:` list (e.g. WEBUI_SECRET_KEY). Values persist
-          # in terraform state across applies.
-          dynamic "env_from" {
-            for_each = var.random_env_secret_name != null ? [var.random_env_secret_name] : []
-            content {
-              secret_ref {
-                name = env_from.value
-              }
             }
           }
 
@@ -434,6 +521,79 @@ resource "kubernetes_deployment_v1" "this" {
           }
         }
 
+        # Helper containers co-located with the main one. Declared in the
+        # component yaml via `sidecars:`; see the variable's description.
+        # Intentionally minimal: no probes (main container's probes cover
+        # Pod liveness) and no Service port.
+        dynamic "container" {
+          for_each = var.sidecars
+          content {
+            name    = container.key
+            image   = container.value.image
+            command = container.value.command
+            args    = container.value.args
+
+            resources {
+              requests = container.value.resources.requests
+              limits   = container.value.resources.limits
+            }
+
+            # Random-value env vars shared with the main container — each
+            # listed key pulls `valueFrom.secretKeyRef` from the
+            # component's random-env Secret (same one the main container
+            # reads). Emitted before `env_static` so `$(VAR_NAME)`
+            # substitution in static values resolves.
+            dynamic "env" {
+              for_each = var.random_env_secret_name != null ? toset(container.value.env_random) : toset([])
+              content {
+                name = env.value
+                value_from {
+                  secret_key_ref {
+                    name = var.random_env_secret_name
+                    key  = env.value
+                  }
+                }
+              }
+            }
+
+            dynamic "env" {
+              for_each = container.value.env_static
+              content {
+                name  = env.key
+                value = env.value
+              }
+            }
+
+            security_context {
+              allow_privilege_escalation = false
+              read_only_root_filesystem  = try(container.value.security.read_only_root_filesystem, true)
+              # Running as root is rare but legitimate for images whose
+              # entrypoint needs it (iptables setup, chown bind mounts).
+              # `run_as_non_root` then has to be false to stay consistent
+              # with `run_as_user = 0` — the kubelet refuses the mismatch.
+              run_as_non_root = try(container.value.security.run_as_user, 1000) != 0
+              run_as_user     = try(container.value.security.run_as_user, 1000)
+              capabilities {
+                drop = ["ALL"]
+              }
+            }
+
+            # Every path in the sidecar's `writable_paths` list gets its
+            # own emptyDir. Default is just /tmp, but images that write
+            # to e.g. /home/user (open-terminal) list the extra paths.
+            dynamic "volume_mount" {
+              for_each = {
+                for k, v in local.sidecar_writable_volumes :
+                k => v if v.sidecar == container.key
+              }
+              content {
+                name       = volume_mount.key
+                mount_path = volume_mount.value.mount_path
+              }
+            }
+          }
+        }
+
         dynamic "volume" {
           for_each = local.volumes
           content {
@@ -451,6 +611,19 @@ resource "kubernetes_deployment_v1" "this" {
             config_map {
               name = kubernetes_config_map_v1.files[0].metadata[0].name
             }
+          }
+        }
+
+        # One emptyDir per (sidecar, writable_path) pair — see
+        # `local.sidecar_writable_volumes`. Two sidecars can't clobber
+        # each other's scratch state, and a readOnlyRootFilesystem
+        # sidecar always has somewhere to write for the paths it
+        # explicitly declared.
+        dynamic "volume" {
+          for_each = local.sidecar_writable_volumes
+          content {
+            name = volume.key
+            empty_dir {}
           }
         }
       }
