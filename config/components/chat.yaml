@@ -42,7 +42,7 @@ env_static:
   # models stay visible so the user can A/B them side-by-side.
   DEFAULT_MODELS:      qwen2.5:7b
   ENABLE_MODEL_FILTER: "True"
-  MODEL_FILTER_LIST:   qwen2.5:7b,qwen2.5:14b,qwen2.5-coder:7b
+  MODEL_FILTER_LIST:   qwen2.5:7b,qwen2.5:14b,qwen2.5-coder:7b,gemma4:e2b,gemma4:e4b
 
   # Pre-register the co-located mcp-weather sidecar as a native MCP tool
   # server so the chat model can call `get_current_weather`, `get_forecast`
