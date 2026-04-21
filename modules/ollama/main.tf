@@ -314,10 +314,13 @@ resource "kubernetes_job_v1" "pull_models" {
   wait_for_completion = true
 
   timeouts {
-    # Model downloads over residential ISP can be slow — `deepseek-r1:1.5b`
-    # is ~1.1Gi, bigger models push this higher. 15 min covers most
-    # first-time pulls; increase if you preload many models.
-    create = "15m"
+    # Model downloads over residential ISP can be slow. A 9–10 GiB model
+    # like `gemma4:e4b` or `qwen2.5:14b` is ~8–10 min alone on a
+    # ~20 MB/s link; a 4–6 model list pushes the total into the tens of
+    # minutes even with layer sharing. The Job itself is idempotent
+    # (`ollama pull` is a no-op on already-cached models), so an ample
+    # terraform-side timeout is cheap — reruns are fast.
+    create = "60m"
   }
 }
 
