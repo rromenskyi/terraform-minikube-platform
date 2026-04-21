@@ -22,6 +22,26 @@ variable "image" {
   type        = string
 }
 
+variable "image_pull_policy" {
+  description = <<-EOT
+    Kubernetes `imagePullPolicy` for the main container. One of
+    `Always` | `IfNotPresent` | `Never`, or `null` to auto-derive from
+    the image tag (the default). Auto-derivation mirrors Kubernetes'
+    own behavior: a moving tag (`:latest`, or an empty/implicit tag)
+    gets `Always` so the kubelet actually refreshes on Pod start; a
+    pinned tag (`:1.2.3`, `:main`, etc.) or digest (`@sha256:...`) gets
+    `IfNotPresent` to save a registry HEAD per Pod start. Set an
+    explicit value to override the heuristic — useful when a
+    pinned-looking tag is in fact mutable upstream.
+  EOT
+  type        = string
+  default     = null
+  validation {
+    condition     = var.image_pull_policy == null || contains(["Always", "IfNotPresent", "Never"], var.image_pull_policy)
+    error_message = "image_pull_policy must be null (auto-derive) or one of Always, IfNotPresent, Never."
+  }
+}
+
 variable "port" {
   description = "Container port exposed by the application"
   type        = number
@@ -151,15 +171,21 @@ variable "sidecars" {
       - `security.run_as_user = 0`: supported for images whose
         entrypoint requires root (rare). The module flips
         `run_as_non_root` to false automatically in that case.
+      - `image_pull_policy`: `Always` | `IfNotPresent` | `Never`, or
+        leave unset for auto-derivation from the image tag (moving
+        tags like `:latest` / implicit → `Always`, anything pinned or
+        digest-sealed → `IfNotPresent`). Same rule as the main
+        container's top-level `image_pull_policy` knob.
   EOT
   type = map(object({
-    image          = string
-    port           = optional(number) # informational only; no Service port is opened
-    command        = optional(list(string))
-    args           = optional(list(string))
-    env_static     = optional(map(string), {})
-    env_random     = optional(list(string), [])
-    writable_paths = optional(list(string), ["/tmp"])
+    image             = string
+    port              = optional(number) # informational only; no Service port is opened
+    command           = optional(list(string))
+    args              = optional(list(string))
+    env_static        = optional(map(string), {})
+    env_random        = optional(list(string), [])
+    writable_paths    = optional(list(string), ["/tmp"])
+    image_pull_policy = optional(string, null)
     resources = object({
       requests = object({ cpu = string, memory = string })
       limits   = object({ cpu = string, memory = string })
@@ -208,6 +234,51 @@ locals {
       }
     }
   ]...)
+
+  # Main container imagePullPolicy, resolved from the explicit var when
+  # the caller set one, otherwise derived from the image reference:
+  #   * `foo:latest`, `foo` (no tag = implicit :latest)     → Always
+  #   * `foo@sha256:...` (digest pin) or any other tag      → IfNotPresent
+  # The regex captures the tag after the LAST `:` as long as it's not
+  # followed by `/` (registry hostname port like `ghcr.io:443/...` won't
+  # accidentally match) and not inside an `@`-separated digest.
+  effective_image_pull_policy = (
+    var.image_pull_policy != null
+    ? var.image_pull_policy
+    : local._derived_pull_policy_for_image
+  )
+  _derived_pull_policy_for_image = local._tag_of_main_image == "" || local._tag_of_main_image == "latest" ? "Always" : "IfNotPresent"
+  _tag_of_main_image = (
+    strcontains(var.image, "@")
+    ? "pinned-digest"
+    : try(regex(":([^/@]+)$", var.image)[0], "")
+  )
+
+  # Same derivation for every sidecar, keyed by sidecar name.
+  sidecar_effective_pull_policy = {
+    for name, sc in var.sidecars :
+    name => (
+      sc.image_pull_policy != null
+      ? sc.image_pull_policy
+      : (
+        strcontains(sc.image, "@")
+        ? "IfNotPresent"
+        : (
+          local.sidecar_tags[name] == "" || local.sidecar_tags[name] == "latest"
+          ? "Always"
+          : "IfNotPresent"
+        )
+      )
+    )
+  }
+  sidecar_tags = {
+    for name, sc in var.sidecars :
+    name => (
+      strcontains(sc.image, "@")
+      ? "pinned-digest"
+      : try(regex(":([^/@]+)$", sc.image)[0], "")
+    )
+  }
 }
 
 # ── Persistent Volumes ────────────────────────────────────────────────────────
@@ -363,8 +434,9 @@ resource "kubernetes_deployment_v1" "this" {
         }
 
         container {
-          name  = var.name
-          image = var.image
+          name              = var.name
+          image             = var.image
+          image_pull_policy = local.effective_image_pull_policy
 
           port {
             container_port = var.port
@@ -528,10 +600,11 @@ resource "kubernetes_deployment_v1" "this" {
         dynamic "container" {
           for_each = var.sidecars
           content {
-            name    = container.key
-            image   = container.value.image
-            command = container.value.command
-            args    = container.value.args
+            name              = container.key
+            image             = container.value.image
+            image_pull_policy = local.sidecar_effective_pull_policy[container.key]
+            command           = container.value.command
+            args              = container.value.args
 
             resources {
               requests = container.value.resources.requests
