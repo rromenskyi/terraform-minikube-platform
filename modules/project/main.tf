@@ -721,12 +721,13 @@ module "component" {
 
   source = "../component"
 
-  name      = each.key
-  namespace = kubernetes_namespace_v1.this.metadata[0].name
-  image     = each.value.image
-  port      = each.value.port
-  replicas  = each.value.replicas
-  resources = each.value.resources
+  name              = each.key
+  namespace         = kubernetes_namespace_v1.this.metadata[0].name
+  image             = each.value.image
+  image_pull_policy = try(each.value.image_pull_policy, null)
+  port              = each.value.port
+  replicas          = each.value.replicas
+  resources         = each.value.resources
 
   health_path      = try(each.value.health_path, "/")
   storage          = try(each.value.storage, [])
