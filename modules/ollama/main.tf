@@ -61,6 +61,25 @@ variable "models" {
   default     = ["deepseek-r1:1.5b"]
 }
 
+variable "context_length" {
+  description = <<-EOT
+    Default context window Ollama uses when loading any model.
+    Ollama's built-in default is 4096 tokens, which silently
+    truncates prompts that exceed it — observed 2026-04-21 when
+    the mcp-weather-simple tool catalog (~4500 tokens: 22 tools
+    × ~150 desc + schemas + instructions preamble) was chopped
+    from the tail, making later tool schemas invisible to the
+    model and chat completions returning `tool_calls: []` with
+    200 OK and no error anywhere. 8192 covers the current
+    catalog with headroom; qwen2.5 supports 128K natively so
+    there's lots of room to bump further if new tools push us
+    past ~6K. One-line tell in Ollama logs when truncation
+    fires: `truncating input prompt limit=4096 prompt=<N> ...`.
+  EOT
+  type        = number
+  default     = 8192
+}
+
 locals {
   instances = var.enabled ? toset(["enabled"]) : toset([])
   # Model-pull Job is separately gated — skipped when the module is off
@@ -154,6 +173,14 @@ resource "kubernetes_stateful_set_v1" "ollama" {
           env {
             name  = "OLLAMA_HOST"
             value = "0.0.0.0"
+          }
+
+          # Default context for model loads. See `var.context_length`
+          # docstring for the silent-truncation rationale — short
+          # version: 4096 chops our tool catalog, 8192 fits it.
+          env {
+            name  = "OLLAMA_CONTEXT_LENGTH"
+            value = tostring(var.context_length)
           }
 
           resources {
