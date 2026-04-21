@@ -554,6 +554,17 @@ Out of the box, the chat Pod also ships two helper sidecars on loopback:
 
 Both integrations need **one manual "Verify + Save" click** per tenant on first boot (Admin → Settings → External Tools for MCP, Admin → Settings → Integrations → Open Terminal for the terminal) until upstream [open-webui/open-webui#18140](https://github.com/open-webui/open-webui/issues/18140) fixes automatic tool-spec discovery from the env-seeded config row. If that click becomes painful a `kubernetes_job_v1` that calls the admin API directly is a small follow-up.
 
+Also, on a tenant whose `/app/backend/data` volume already exists (not a fresh boot), `TOOL_SERVER_CONNECTIONS` / `TERMINAL_SERVER_CONNECTIONS` env seeding is ignored — Open WebUI's persistent-config table wins. You have to register the two entries by hand in the admin UI on the existing volume. MCP uses the server URL verbatim and no auth; the Terminal integration needs the bearer token retrieved from the per-tenant random-env Secret:
+
+```bash
+# MCP (no token): URL http://127.0.0.1:8000/mcp, auth type "none"
+# Terminal (bearer): URL http://127.0.0.1:8001, auth type "bearer", key =
+kubectl -n <tenant-ns> get secret chat-random-env \
+  -o jsonpath='{.data.OPEN_TERMINAL_API_KEY}' | base64 -d
+```
+
+After registering each, open a chat → click the **Integrations** button (the 2×2 grid / `Component` icon at the right of the message composer, next to web-search / image / attach) → **Tools** sub-tab → toggle the entry on. A hard reload (`Ctrl+Shift+R`) may be needed to refresh the cached `$tools` store on the first appearance.
+
 ### View credentials
 
 ```bash
