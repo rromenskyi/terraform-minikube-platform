@@ -61,6 +61,46 @@ variable "models" {
   default     = ["deepseek-r1:1.5b"]
 }
 
+variable "context_length" {
+  description = <<-EOT
+    Default context window Ollama uses when loading any model.
+    Ollama's built-in default is 4096 tokens, which silently
+    truncates prompts that exceed it — observed 2026-04-21 when
+    the mcp-weather-simple tool catalog (~4500 tokens: 22 tools
+    × ~150 desc + schemas + instructions preamble) was chopped
+    from the tail, making later tool schemas invisible to the
+    model and chat completions returning `tool_calls: []` with
+    200 OK and no error anywhere. 8192 covers the current
+    catalog with headroom; qwen2.5 supports 128K natively so
+    there's lots of room to bump further if new tools push us
+    past ~6K. One-line tell in Ollama logs when truncation
+    fires: `truncating input prompt limit=4096 prompt=<N> ...`.
+  EOT
+  type        = number
+  default     = 8192
+}
+
+variable "keep_alive" {
+  description = <<-EOT
+    How long Ollama keeps a model resident in RAM after its last
+    request. Accepts Go duration strings (`5m`, `24h`) or special
+    values: `-1` = never unload, `0` = unload immediately.
+    Ollama's built-in default is `5m` — a model unloads after 5
+    minutes idle, so the next request pays both the model-load
+    cost (~3-5 s for qwen3.5:9b) AND a cold prefill of the entire
+    system prompt + tool catalog (~1.3K tokens in the sibling
+    mcp-weather-simple's `fat_tools_lean` = ~8-13 s on i7 CPU).
+    Keeping the model resident lets Ollama's automatic prefix-cache
+    stay warm across sessions: the first message of any new
+    conversation skips the catalog prefill. 24h is the sweet spot
+    for single-operator workloads — hot through the whole day,
+    quietly drops the model overnight so the kernel can reclaim
+    the ~6.6 GB that qwen3.5:9b Q4_K_M pins.
+  EOT
+  type        = string
+  default     = "24h"
+}
+
 locals {
   instances = var.enabled ? toset(["enabled"]) : toset([])
   # Model-pull Job is separately gated — skipped when the module is off
@@ -154,6 +194,23 @@ resource "kubernetes_stateful_set_v1" "ollama" {
           env {
             name  = "OLLAMA_HOST"
             value = "0.0.0.0"
+          }
+
+          # Default context for model loads. See `var.context_length`
+          # docstring for the silent-truncation rationale — short
+          # version: 4096 chops our tool catalog, 8192 fits it.
+          env {
+            name  = "OLLAMA_CONTEXT_LENGTH"
+            value = tostring(var.context_length)
+          }
+
+          # Keep loaded models resident so the prefix cache (tool
+          # catalog + system prompt) stays warm across chat sessions.
+          # Default 24h in `var.keep_alive` — see its docstring for
+          # the TTFT math that motivates this.
+          env {
+            name  = "OLLAMA_KEEP_ALIVE"
+            value = var.keep_alive
           }
 
           resources {
