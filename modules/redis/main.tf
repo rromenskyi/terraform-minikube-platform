@@ -167,6 +167,48 @@ resource "kubernetes_stateful_set_v1" "redis" {
           }
         }
 
+        # Seed /data/users.acl on first boot with the built-in `default`
+        # user. We swap `--requirepass` for `--aclfile` below so ACL
+        # entries created by tenant setup Jobs (via `ACL SAVE`) survive
+        # pod restarts — without a file, ACLs live only in memory and
+        # every bounce wipes every tenant's Redis login, which is the
+        # exact regression we're fixing here. `-s` means "only seed if
+        # the file is missing or empty", so a restart with an already-
+        # populated users.acl never touches it.
+        init_container {
+          name  = "seed-users-acl"
+          image = "redis:7-alpine"
+
+          # Root because chown-data re-owns /data to 999 *after* this
+          # container would run if order were swapped; running as root
+          # sidesteps any fs_group race on the first boot.
+          security_context {
+            run_as_user = 0
+          }
+
+          resources {
+            requests = { cpu = "10m", memory = "16Mi" }
+            limits   = { cpu = "50m", memory = "32Mi" }
+          }
+
+          env_from {
+            secret_ref {
+              name = kubernetes_secret_v1.default["enabled"].metadata[0].name
+            }
+          }
+
+          # `>password` is ACL-syntax (add this plaintext password,
+          # Redis hashes it on load). `~*` = all keys, `&*` = all pub/sub
+          # channels, `+@all` = all commands — the full "superuser"
+          # profile `default` had under `--requirepass`.
+          command = ["sh", "-c", "test -s /data/users.acl || printf 'user default on >%s ~* &* +@all\\n' \"$REDIS_PASSWORD\" > /data/users.acl && chown 999:999 /data/users.acl"]
+
+          volume_mount {
+            name       = "data"
+            mount_path = "/data"
+          }
+        }
+
         security_context {
           run_as_user = 999
           fs_group    = 999
@@ -186,12 +228,17 @@ resource "kubernetes_stateful_set_v1" "redis" {
             }
           }
 
-          # `redis-server` reads its password from $REDIS_PASSWORD via the
-          # `--requirepass` arg. `appendonly yes` turns on AOF persistence
-          # so writes survive pod restarts; `appendfsync everysec` is the
-          # usual good-enough durability/throughput compromise.
+          # `--aclfile` lets Redis persist every `ACL SETUSER ... ; ACL
+          # SAVE` pair to disk, so tenant users survive pod restarts.
+          # `requirepass` and `aclfile` are mutually exclusive (Redis
+          # refuses to start with both set) — the `default` user's
+          # password instead comes from users.acl, which the
+          # seed-users-acl initContainer populates on first boot from
+          # the same $REDIS_PASSWORD env. `appendonly yes` is orthogonal
+          # (AOF persists keyspace writes); `appendfsync everysec` is
+          # the usual good-enough durability/throughput compromise.
           args = [
-            "--requirepass", "$(REDIS_PASSWORD)",
+            "--aclfile", "/data/users.acl",
             "--appendonly", "yes",
             "--appendfsync", "everysec",
             "--dir", "/data",
