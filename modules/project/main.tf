@@ -634,9 +634,16 @@ resource "kubernetes_job_v1" "redis_setup" {
           # password to the user"), *not* shell redirection — escape it so
           # `sh -c` does not strip the password into a stray output file
           # and leave the ACL user without any credentials.
+          #
+          # The trailing `ACL SAVE` persists the new user to Redis's
+          # aclfile (/data/users.acl on the shared PV). Without it the
+          # user lives only in-memory and vanishes on the next redis-0
+          # restart — the exact regression this fix addresses. `SETUSER`
+          # and `SAVE` run as two separate redis-cli invocations so the
+          # shell `&&` short-circuits SAVE if SETUSER fails.
           command = [
             "sh", "-c",
-            join(" ", [
+            "${join(" ", [
               "redis-cli -h ${var.redis_host} -a \"$REDIS_PASSWORD\"",
               "ACL SETUSER ${local.redis_user}",
               "on",
@@ -653,7 +660,7 @@ resource "kubernetes_job_v1" "redis_setup" {
               # removing the whole `-@dangerous` ceiling.
               "+INFO",
               "+FLUSHDB",
-            ])
+            ])} && redis-cli -h ${var.redis_host} -a \"$REDIS_PASSWORD\" ACL SAVE"
           ]
         }
       }
