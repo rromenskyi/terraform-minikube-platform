@@ -1,4 +1,4 @@
-image: ghcr.io/open-webui/open-webui:main
+image: ghcr.io/open-webui/open-webui:v0.9.2
 port: 8080
 replicas: 1
 
@@ -38,11 +38,13 @@ env_static:
 
   # `all-minilm` is embeddings-only; picking it in the chat UI returns
   # "model does not support chat". Hide it from the UI — the RAG backend
-  # still uses it directly via RAG_EMBEDDING_MODEL above. The three chat
-  # models stay visible so the user can A/B them side-by-side.
-  DEFAULT_MODELS:      qwen2.5:7b
+  # still uses it directly via RAG_EMBEDDING_MODEL above. The chat models
+  # stay visible so the user can A/B them side-by-side. Tiny qwen3.5
+  # variants (0.8b + 2b) ride along for snappy single-shot prompts where
+  # the bigger 4b/9b/14b round-trip latency feels heavy.
+  DEFAULT_MODELS:      qwen3.5:9b
   ENABLE_MODEL_FILTER: "True"
-  MODEL_FILTER_LIST:   qwen2.5:7b,qwen2.5:14b,qwen2.5-coder:7b,gemma4:e2b,gemma4:e4b
+  MODEL_FILTER_LIST:   qwen3.5:0.8b,qwen3.5:2b,qwen3.5:4b,qwen3.5:9b,qwen3:14b,gemma4:e2b,gemma4:e4b
 
   # Pre-register the co-located mcp-weather sidecar as a native MCP tool
   # server so the chat model can call `get_current_weather`, `get_forecast`
@@ -117,11 +119,14 @@ env_static:
 # scratchpad that belongs to the chat session.
 sidecars:
   mcp-weather:
-    # Pinned to `:latest` until the upstream repo publishes a semver tag
-    # (https://github.com/rromenskyi/mcp-weather-simple). The CI there is
-    # configured to build on `v*` tags — once `v0.1.0` lands we can flip
-    # this to `:0.1.0` and get stable deploys.
-    image: ghcr.io/rromenskyi/mcp-weather-simple:latest
+    # Pinned to v1.1.0 — first release where MCP_ROUTER_MODE defaults
+    # to `fat_tools_lean` (PR #59 upstream), shrinking the catalog by
+    # ~79% with no hit-rate regression. We don't override
+    # MCP_ROUTER_MODE in env so the upstream default is what runs.
+    # Bump this tag deliberately (not :latest) — operator visibility on
+    # what version is in front of every tenant chat matters more than
+    # auto-refresh.
+    image: ghcr.io/rromenskyi/mcp-weather-simple:v1.1.0
     port:  8000
     env_static:
       MCP_TRANSPORT: streamable-http

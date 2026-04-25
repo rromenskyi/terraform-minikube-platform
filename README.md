@@ -229,7 +229,9 @@ services:
   ollama:
     enabled: true
     models:
-      - qwen2.5:7b          # chat LLM
+      - qwen3.5:0.8b        # tiny — instant single-shot prompts
+      - qwen3.5:2b          # small playground sibling
+      - qwen3.5:9b          # chat LLM default
       - all-minilm:latest   # embeddings — used by chat component RAG
     memory_request: 4Gi
     memory_limit:   16Gi
