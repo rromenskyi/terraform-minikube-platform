@@ -111,20 +111,37 @@ variable "gpu" {
     privileged with the supplied supplemental groups, and injects the
     operator-supplied env vars verbatim. The module bakes in nothing
     vendor- or hardware-specific; everything that varies between
-    Intel/AMD/NVIDIA or between PCI device IDs is supplied here:
+    Intel/AMD/NVIDIA or between PCI device IDs is supplied here.
 
+    `device_type` controls the kubelet hostPath volume type — defaults
+    to `Directory`, which projects the entire host directory into the
+    container (right for `/dev/dri` on AMD/Intel, `/dev/nvidia` for
+    multi-card NVIDIA setups). Set to `CharDevice` to project a single
+    device file (e.g. `/dev/dri/renderD129`) — useful when the host
+    has multiple GPUs and you want the container to see only one.
+
+    Worked examples:
+
+      # Project all of /dev/dri (Intel/AMD multi-GPU or single-GPU host):
       gpu = {
         image               = "docker.io/ollama/ollama:0.21.1"
         device_path         = "/dev/dri"
+        device_type         = "Directory"
         supplemental_groups = [44, 990]
         env = {
-          OLLAMA_VULKAN           = "1"
-          OLLAMA_NUM_GPU          = "999"
-          OLLAMA_FLASH_ATTENTION  = "0"
-          GGML_VK_VISIBLE_DEVICES = "1"
-          MESA_VK_DEVICE_SELECT   = "8086:e212"
-          OLLAMA_DEBUG            = "1"
+          OLLAMA_VULKAN = "1"
+          OLLAMA_NUM_GPU = "999"
+          ...
         }
+      }
+
+      # Project only renderD129 (Arc B50) and hide the iGPU entirely:
+      gpu = {
+        image               = "docker.io/ollama/ollama:0.21.1"
+        device_path         = "/dev/dri/renderD129"
+        device_type         = "CharDevice"
+        supplemental_groups = [44, 990]
+        env = { OLLAMA_VULKAN = "1", OLLAMA_NUM_GPU = "999", ... }
       }
 
     Tenant components are unaffected — they keep their own restricted
@@ -133,11 +150,31 @@ variable "gpu" {
   type = object({
     image               = string
     device_path         = string
+    device_type         = optional(string, "Directory")
+    privileged          = optional(bool, true)
     supplemental_groups = list(number)
     env                 = map(string)
   })
   default = null
+  validation {
+    # HCL `||` evaluates both operands eagerly; wrap the attribute
+    # access in `try()` so the validator passes through when var.gpu
+    # is null instead of erroring on the missing attribute.
+    condition     = try(contains(["Directory", "CharDevice", "BlockDevice", "File"], var.gpu.device_type), true)
+    error_message = "ollama gpu.device_type must be one of: Directory, CharDevice, BlockDevice, File. Mirrors kubelet hostPath types."
+  }
 }
+
+# `privileged` defaults to true to preserve the prior shape; this is
+# a sledgehammer that grants every device cgroup, every capability
+# and bypasses AppArmor. With a CharDevice volume on a modern
+# k3s/containerd + cgroup v2 host, kubelet adds the per-device
+# cgroup allow rule by itself, so unprivileged Vulkan inference is
+# usually possible. Operators can opt out via `privileged: false`
+# to lock the platform-namespace Ollama down (and as a side effect
+# make `runc` stop mknod-ing every host device into the pod's
+# tmpfs /dev — Mesa Anv then enumerates ONLY the projected device
+# instead of probing every renderD* node it finds).
 
 locals {
   instances = var.enabled ? toset(["enabled"]) : toset([])
@@ -245,14 +282,17 @@ resource "kubernetes_stateful_set_v1" "ollama" {
           command = var.gpu == null ? null : ["ollama", "serve"]
 
           # Container-level privileged context only emitted when GPU
-          # offload is configured — needed for ioctl access to the
-          # device file under `var.gpu.device_path`. Without GPU the
-          # pod keeps the upstream restricted defaults.
+          # offload is configured. `privileged` is operator-supplied
+          # (default true). `run_as_non_root = false` always — the
+          # upstream Ollama image runs as root regardless of privileged
+          # status, and `read_only_root_filesystem = false` lets it
+          # write its scratch files. Without GPU the pod keeps the
+          # upstream restricted defaults.
           dynamic "security_context" {
             for_each = local.gpu_iter
             content {
-              privileged                 = true
-              allow_privilege_escalation = true
+              privileged                 = security_context.value.privileged
+              allow_privilege_escalation = security_context.value.privileged
               read_only_root_filesystem  = false
               run_as_non_root            = false
             }
@@ -363,18 +403,20 @@ resource "kubernetes_stateful_set_v1" "ollama" {
           }
         }
 
-        # Host GPU device path (e.g. /dev/dri for Intel/AMD,
-        # /dev/nvidia* for NVIDIA) projected into the pod. Matching
-        # `volume_mount` is on the container above. The pod-level
-        # `supplemental_groups` grant access to whatever GIDs own the
-        # device files at this path on the host.
+        # Host GPU device path projected into the pod. `device_type`
+        # picks the kubelet hostPath type — `Directory` for the whole
+        # /dev/dri (or /dev/nvidia) tree, `CharDevice` to expose only
+        # a single device file (e.g. /dev/dri/renderD129) and hide the
+        # rest. Matching `volume_mount` is on the container above. The
+        # pod-level `supplemental_groups` grant access to whatever GIDs
+        # own the device files on the host.
         dynamic "volume" {
           for_each = local.gpu_iter
           content {
             name = "gpu-device"
             host_path {
               path = volume.value.device_path
-              type = "Directory"
+              type = volume.value.device_type
             }
           }
         }
