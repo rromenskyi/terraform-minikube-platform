@@ -151,15 +151,30 @@ variable "gpu" {
     image               = string
     device_path         = string
     device_type         = optional(string, "Directory")
+    privileged          = optional(bool, true)
     supplemental_groups = list(number)
     env                 = map(string)
   })
   default = null
   validation {
-    condition     = var.gpu == null || contains(["Directory", "CharDevice", "BlockDevice", "File"], var.gpu.device_type)
+    # HCL `||` evaluates both operands eagerly; wrap the attribute
+    # access in `try()` so the validator passes through when var.gpu
+    # is null instead of erroring on the missing attribute.
+    condition     = try(contains(["Directory", "CharDevice", "BlockDevice", "File"], var.gpu.device_type), true)
     error_message = "ollama gpu.device_type must be one of: Directory, CharDevice, BlockDevice, File. Mirrors kubelet hostPath types."
   }
 }
+
+# `privileged` defaults to true to preserve the prior shape; this is
+# a sledgehammer that grants every device cgroup, every capability
+# and bypasses AppArmor. With a CharDevice volume on a modern
+# k3s/containerd + cgroup v2 host, kubelet adds the per-device
+# cgroup allow rule by itself, so unprivileged Vulkan inference is
+# usually possible. Operators can opt out via `privileged: false`
+# to lock the platform-namespace Ollama down (and as a side effect
+# make `runc` stop mknod-ing every host device into the pod's
+# tmpfs /dev — Mesa Anv then enumerates ONLY the projected device
+# instead of probing every renderD* node it finds).
 
 locals {
   instances = var.enabled ? toset(["enabled"]) : toset([])
@@ -267,14 +282,17 @@ resource "kubernetes_stateful_set_v1" "ollama" {
           command = var.gpu == null ? null : ["ollama", "serve"]
 
           # Container-level privileged context only emitted when GPU
-          # offload is configured — needed for ioctl access to the
-          # device file under `var.gpu.device_path`. Without GPU the
-          # pod keeps the upstream restricted defaults.
+          # offload is configured. `privileged` is operator-supplied
+          # (default true). `run_as_non_root = false` always — the
+          # upstream Ollama image runs as root regardless of privileged
+          # status, and `read_only_root_filesystem = false` lets it
+          # write its scratch files. Without GPU the pod keeps the
+          # upstream restricted defaults.
           dynamic "security_context" {
             for_each = local.gpu_iter
             content {
-              privileged                 = true
-              allow_privilege_escalation = true
+              privileged                 = security_context.value.privileged
+              allow_privilege_escalation = security_context.value.privileged
               read_only_root_filesystem  = false
               run_as_non_root            = false
             }
