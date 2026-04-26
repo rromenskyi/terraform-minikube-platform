@@ -180,9 +180,32 @@ resource "kubernetes_stateful_set_v1" "ollama" {
       }
 
       spec {
+        # Pod-level securityContext required for the Vulkan + /dev/dri path:
+        # the Ollama image runs as root, and `run_as_non_root = false` lets
+        # that through PSS-restricted namespaces. `supplemental_groups`
+        # maps to host `video` (44) and `render` (990) so /dev/dri/renderD*
+        # nodes — which inherit those groups on the host — are accessible
+        # from inside the pod.
+        security_context {
+          run_as_non_root     = false
+          supplemental_groups = [44, 990]
+        }
+
         container {
-          name  = "ollama"
-          image = "ollama/ollama:latest"
+          name    = "ollama"
+          image   = "docker.io/ollama/ollama:0.21.1"
+          command = ["ollama", "serve"]
+
+          # Privileged for /dev/dri device access (Vulkan needs ioctl on
+          # the DRM render node). The container is the only thing in the
+          # `platform` namespace that needs this; tenant components stay
+          # locked down by their own securityContext blocks.
+          security_context {
+            privileged                 = true
+            allow_privilege_escalation = true
+            read_only_root_filesystem  = false
+            run_as_non_root            = false
+          }
 
           port {
             container_port = 11434
@@ -213,6 +236,52 @@ resource "kubernetes_stateful_set_v1" "ollama" {
             value = var.keep_alive
           }
 
+          # ── Vulkan / Intel Arc B50 GPU offload ──────────────────────────
+          # Upstream Ollama 0.21+ ships a Vulkan backend; enabling it
+          # routes inference through the host's Mesa drivers + /dev/dri
+          # render node instead of CPU. See platform docs / Arc B50 saga
+          # for performance ceiling notes.
+
+          env {
+            name  = "OLLAMA_VULKAN"
+            value = "1"
+          }
+
+          # Force every layer onto the GPU (999 = "as many as fit").
+          env {
+            name  = "OLLAMA_NUM_GPU"
+            value = "999"
+          }
+
+          # Flash-attention path is disabled — current Vulkan backend
+          # mis-handles it for several model architectures we run.
+          env {
+            name  = "OLLAMA_FLASH_ATTENTION"
+            value = "0"
+          }
+
+          # Restrict ggml-vulkan to GPU index 1 (the discrete Arc B50;
+          # index 0 is the integrated UHD).
+          env {
+            name  = "GGML_VK_VISIBLE_DEVICES"
+            value = "1"
+          }
+
+          # Mesa picks the right Vulkan device by PCI vendor:device.
+          # 8086:e212 is the Arc B50 on this box.
+          env {
+            name  = "MESA_VK_DEVICE_SELECT"
+            value = "8086:e212"
+          }
+
+          # Verbose logs — cheap and indispensable for triage when GPU
+          # init silently falls back to CPU. Drop to "0" once the stack
+          # is stable enough that you stop reading these logs daily.
+          env {
+            name  = "OLLAMA_DEBUG"
+            value = "1"
+          }
+
           resources {
             requests = {
               cpu    = var.cpu_request
@@ -227,6 +296,14 @@ resource "kubernetes_stateful_set_v1" "ollama" {
           volume_mount {
             name       = "data"
             mount_path = "/root/.ollama"
+          }
+
+          # Host /dev/dri exposed to the container — the actual GPU
+          # device interface. Without this mount Ollama silently falls
+          # back to CPU regardless of OLLAMA_VULKAN.
+          volume_mount {
+            name       = "dri"
+            mount_path = "/dev/dri"
           }
 
           startup_probe {
@@ -264,6 +341,19 @@ resource "kubernetes_stateful_set_v1" "ollama" {
           name = "data"
           persistent_volume_claim {
             claim_name = kubernetes_persistent_volume_claim_v1.ollama["enabled"].metadata[0].name
+          }
+        }
+
+        # Host /dev/dri (DRM render nodes) projected into the pod for the
+        # Vulkan backend's GPU access. The matching `volume_mount` lives
+        # in the container above; the supplemental_groups in the pod
+        # security_context grant access to render-group-owned device
+        # files inside the projection.
+        volume {
+          name = "dri"
+          host_path {
+            path = "/dev/dri"
+            type = "Directory"
           }
         }
       }
