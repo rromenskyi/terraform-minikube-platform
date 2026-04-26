@@ -78,7 +78,7 @@ locals {
           # `web.yaml` = `nginx:alpine`+port+replicas) be reused across
           # projects with per-tenant tweaks (storage block, replica count,
           # resource caps, …) without spawning a per-project component yaml.
-          components         = try(env_spec.components, {})
+          components = try(env_spec.components, {})
         }
       ]
     ]) :
