@@ -101,8 +101,51 @@ variable "keep_alive" {
   default     = "24h"
 }
 
+variable "gpu" {
+  description = <<-EOT
+    Optional GPU offload config. `null` (the default) keeps the
+    StatefulSet on its CPU-only image and unprivileged pod spec.
+
+    When set, the StatefulSet swaps in the operator-supplied image,
+    mounts the operator-supplied host device path, runs the container
+    privileged with the supplied supplemental groups, and injects the
+    operator-supplied env vars verbatim. The module bakes in nothing
+    vendor- or hardware-specific; everything that varies between
+    Intel/AMD/NVIDIA or between PCI device IDs is supplied here:
+
+      gpu = {
+        image               = "docker.io/ollama/ollama:0.21.1"
+        device_path         = "/dev/dri"
+        supplemental_groups = [44, 990]
+        env = {
+          OLLAMA_VULKAN           = "1"
+          OLLAMA_NUM_GPU          = "999"
+          OLLAMA_FLASH_ATTENTION  = "0"
+          GGML_VK_VISIBLE_DEVICES = "1"
+          MESA_VK_DEVICE_SELECT   = "8086:e212"
+          OLLAMA_DEBUG            = "1"
+        }
+      }
+
+    Tenant components are unaffected — they keep their own restricted
+    securityContexts.
+  EOT
+  type = object({
+    image               = string
+    device_path         = string
+    supplemental_groups = list(number)
+    env                 = map(string)
+  })
+  default = null
+}
+
 locals {
   instances = var.enabled ? toset(["enabled"]) : toset([])
+  # Reused as the iteration list for every GPU-only `dynamic` block —
+  # one entry when GPU offload is configured, zero otherwise. Keeps the
+  # `for_each` lines below short and identical so the gating intent is
+  # obvious at a glance.
+  gpu_iter = var.gpu == null ? [] : [var.gpu]
   # Model-pull Job is separately gated — skipped when the module is off
   # OR when the operator explicitly supplies an empty models list.
   pull_instances = var.enabled && length(var.models) > 0 ? toset(["enabled"]) : toset([])
@@ -180,9 +223,40 @@ resource "kubernetes_stateful_set_v1" "ollama" {
       }
 
       spec {
+        # Pod-level securityContext only emitted when GPU offload is
+        # configured. `run_as_non_root = false` lets the root-running
+        # Ollama image through PSS-restricted namespaces;
+        # `supplemental_groups` is operator-supplied (typically host
+        # `video` + `render` GIDs so the device files projected from
+        # `var.gpu.device_path` are accessible from inside the pod).
+        dynamic "security_context" {
+          for_each = local.gpu_iter
+          content {
+            run_as_non_root     = false
+            supplemental_groups = security_context.value.supplemental_groups
+          }
+        }
+
         container {
-          name  = "ollama"
-          image = "ollama/ollama:latest"
+          name = "ollama"
+          # GPU-capable image from `var.gpu.image` when configured;
+          # CPU-only `ollama/ollama:latest` otherwise.
+          image   = var.gpu == null ? "ollama/ollama:latest" : var.gpu.image
+          command = var.gpu == null ? null : ["ollama", "serve"]
+
+          # Container-level privileged context only emitted when GPU
+          # offload is configured — needed for ioctl access to the
+          # device file under `var.gpu.device_path`. Without GPU the
+          # pod keeps the upstream restricted defaults.
+          dynamic "security_context" {
+            for_each = local.gpu_iter
+            content {
+              privileged                 = true
+              allow_privilege_escalation = true
+              read_only_root_filesystem  = false
+              run_as_non_root            = false
+            }
+          }
 
           port {
             container_port = 11434
@@ -213,6 +287,17 @@ resource "kubernetes_stateful_set_v1" "ollama" {
             value = var.keep_alive
           }
 
+          # GPU-specific env vars (Vulkan/CUDA/HIP toggles, Mesa device
+          # selection, debug verbosity, …) injected verbatim from
+          # `var.gpu.env`. Empty when GPU is unset.
+          dynamic "env" {
+            for_each = var.gpu == null ? {} : var.gpu.env
+            content {
+              name  = env.key
+              value = env.value
+            }
+          }
+
           resources {
             requests = {
               cpu    = var.cpu_request
@@ -227,6 +312,17 @@ resource "kubernetes_stateful_set_v1" "ollama" {
           volume_mount {
             name       = "data"
             mount_path = "/root/.ollama"
+          }
+
+          # Host GPU device path projected into the container at the
+          # same path. Without this mount the GPU env vars are inert
+          # and Ollama silently falls back to CPU.
+          dynamic "volume_mount" {
+            for_each = local.gpu_iter
+            content {
+              name       = "gpu-device"
+              mount_path = volume_mount.value.device_path
+            }
           }
 
           startup_probe {
@@ -264,6 +360,22 @@ resource "kubernetes_stateful_set_v1" "ollama" {
           name = "data"
           persistent_volume_claim {
             claim_name = kubernetes_persistent_volume_claim_v1.ollama["enabled"].metadata[0].name
+          }
+        }
+
+        # Host GPU device path (e.g. /dev/dri for Intel/AMD,
+        # /dev/nvidia* for NVIDIA) projected into the pod. Matching
+        # `volume_mount` is on the container above. The pod-level
+        # `supplemental_groups` grant access to whatever GIDs own the
+        # device files at this path on the host.
+        dynamic "volume" {
+          for_each = local.gpu_iter
+          content {
+            name = "gpu-device"
+            host_path {
+              path = volume.value.device_path
+              type = "Directory"
+            }
           }
         }
       }

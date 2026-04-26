@@ -23,4 +23,12 @@ module "ollama" {
   memory_limit   = local.platform.services.ollama.memory_limit
   cpu_request    = local.platform.services.ollama.cpu_request
   cpu_limit      = local.platform.services.ollama.cpu_limit
+
+  # Optional GPU offload. Whole `gpu:` block in platform.yaml is passed
+  # through verbatim. Null (the default) keeps the StatefulSet on its
+  # CPU-only image and unprivileged pod spec. See `var.gpu` in
+  # `modules/ollama/main.tf` for the expected object shape and the
+  # operator-supplied keys (image, device_path, supplemental_groups,
+  # env). Module bakes in nothing vendor- or hardware-specific.
+  gpu = local.platform.services.ollama.gpu
 }
