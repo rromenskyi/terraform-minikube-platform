@@ -21,6 +21,12 @@ locals {
         memory_limit   = "16Gi"
         cpu_request    = "200m"
         cpu_limit      = "10"
+        # Optional GPU offload. Default null = CPU-only StatefulSet.
+        # Override in config/platform.yaml with the full object shape
+        # (image, device_path, supplemental_groups, env) — see
+        # platform.yaml.example for the expected keys and a worked
+        # Intel Arc + Vulkan example.
+        gpu = null
       }
     }
   }
