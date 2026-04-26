@@ -134,12 +134,22 @@ locals {
   #     Deployment is created; the IngressRoute cross-references the existing
   #     Service by `name`+`namespace`+`port` (or `kind: TraefikService` for
   #     Traefik-internal references like `api@internal`).
+  # Four-step shallow merge:
+  #   1. built-in default `kind`
+  #   2. project-module fallbacks (`local.component_defaults`)
+  #   3. the component yaml itself (`var.components[name]`)
+  #   4. per-project overrides from the domain yaml
+  #      (`project_config.components[name]`) — top-level keys here win
+  #      over the same keys in the component yaml. Lists/nested maps
+  #      are REPLACED wholesale (Terraform merge() is shallow), which
+  #      keeps the override semantics predictable.
   normalized_components = {
     for name in local._component_names :
     name => merge(
       { kind = "deployment" },
       local.component_defaults,
       var.components[name],
+      try(var.project_config.components[name], {}),
     )
   }
 

@@ -70,6 +70,15 @@ locals {
           cloudflare_zone_id = try(cfg.cloudflare_zone_id, null)
           routes             = try(env_spec.routes, {})
           limits             = try(env_spec.limits, cfg.limits, null)
+          # Optional per-project component overrides. Top-level keys here
+          # win over the matching keys in `config/components/<name>.yaml`
+          # via shallow merge — provide a full replacement value for any
+          # nested structure (lists like `storage:` are replaced wholesale,
+          # not deep-merged). Lets a generic component template (e.g.
+          # `web.yaml` = `nginx:alpine`+port+replicas) be reused across
+          # projects with per-tenant tweaks (storage block, replica count,
+          # resource caps, …) without spawning a per-project component yaml.
+          components = try(env_spec.components, {})
         }
       ]
     ]) :
