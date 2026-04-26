@@ -265,6 +265,13 @@ envs:                                         # Map of env → per-env routing
     routes:
       whoami.dev: whoami                      # whoami.dev.example.com → whoami (env in key, explicit)
 
+    components:                               # (Optional) per-project component overrides
+      web:                                    #   re-use the generic `web` template…
+        replicas: 1                           #   …but with one replica in dev
+        storage:                              #   …and a hostPath PV for static content
+          - mount: /usr/share/nginx/html
+            size: 100Mi
+
 limits:                                       # (Optional) override default resource quota per project
   cpu: "4"
   memory: "8Gi"
@@ -273,6 +280,8 @@ limits:                                       # (Optional) override default reso
 **Hostname generation:** the host prefix from the route map key is used literally. Empty string = apex. No env is injected into the hostname — if two envs of the same domain need distinct URLs, spell out the subdomain in the key (`api.dev: whoami` → `api.dev.example.com`).
 
 **Decoupled routes + components:** a component is deployed iff at least one route targets it. The same component can back multiple hosts (bare + `www`); different hosts can back different components (api → `whoami2`, bare → `whoami`).
+
+**Per-project component overrides (`envs.<env>.components`):** lets a generic component template be reused across projects with per-tenant tweaks — no per-project component yaml needed. Override keys win over the matching keys in `config/components/<name>.yaml` via shallow merge. Lists and nested maps are REPLACED wholesale (terraform `merge()` is shallow); to change one entry of a list you provide the full list.
 
 ### Component configuration (`config/components/*.yaml`)
 
