@@ -119,14 +119,17 @@ env_static:
 # scratchpad that belongs to the chat session.
 sidecars:
   mcp-weather:
-    # Pinned to v1.1.0 — first release where MCP_ROUTER_MODE defaults
-    # to `fat_tools_lean` (PR #59 upstream), shrinking the catalog by
-    # ~79% with no hit-rate regression. We don't override
+    # Pinned to v1.2.0 — adds the `web` domain (search / news /
+    # hackernews / trends, gated by MCP_ENABLED_DOMAINS), bundles
+    # sunrise / sunset / feels_like / UV / precip_prob into every
+    # weather call, and surfaces NWS active alerts on US locations.
+    # Carries the `fat_tools_lean` router default from v1.1.0 (-79%
+    # catalog with no hit-rate regression) — we don't override
     # MCP_ROUTER_MODE in env so the upstream default is what runs.
-    # Bump this tag deliberately (not :latest) — operator visibility on
-    # what version is in front of every tenant chat matters more than
-    # auto-refresh.
-    image: ghcr.io/rromenskyi/mcp-weather-simple:v1.1.0
+    # Bump this tag deliberately (not :latest) — operator visibility
+    # on what version is in front of every tenant chat matters more
+    # than auto-refresh.
+    image: ghcr.io/rromenskyi/mcp-weather-simple:1.2.0
     port:  8000
     env_static:
       MCP_TRANSPORT: streamable-http
