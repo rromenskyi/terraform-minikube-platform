@@ -33,3 +33,29 @@ services:
     memory_limit:   16Gi
     cpu_request:    200m
     cpu_limit:      "10"
+
+    # Optional GPU offload. Omit (or leave commented) for CPU-only.
+    # When set, Ollama runs on the operator-supplied image, mounts the
+    # operator-supplied host device path, runs privileged with the
+    # operator-supplied supplemental groups, and gets the env vars
+    # injected verbatim. The module bakes in nothing vendor- or
+    # hardware-specific — every value below must match the actual host.
+    #
+    # Worked example: Intel Arc B50 + Vulkan via the upstream Ollama
+    # image. Replace MESA_VK_DEVICE_SELECT with the PCI vendor:device
+    # of YOUR discrete GPU (`lspci -nn | grep -i vga`). For NVIDIA,
+    # device_path = "/dev/nvidia0", supplemental_groups follows the
+    # host nvidia driver's group, and env_*'s shape changes (CUDA-style
+    # variables) — the schema below stays the same.
+    #
+    # gpu:
+    #   image: docker.io/ollama/ollama:0.21.1
+    #   device_path: /dev/dri
+    #   supplemental_groups: [44, 990]   # host video (44) + render (990) GIDs
+    #   env:
+    #     OLLAMA_VULKAN: "1"             # upstream backend selector
+    #     OLLAMA_NUM_GPU: "999"          # offload as many layers as fit
+    #     OLLAMA_FLASH_ATTENTION: "0"    # disabled — current Vulkan path mis-handles it
+    #     GGML_VK_VISIBLE_DEVICES: "1"   # ggml-vulkan device index (skip iGPU at 0)
+    #     MESA_VK_DEVICE_SELECT: "8086:e212"  # Mesa device picker — Arc B50 PCI ID here
+    #     OLLAMA_DEBUG: "1"              # verbose logs while the GPU stack stabilises
