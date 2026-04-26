@@ -111,20 +111,37 @@ variable "gpu" {
     privileged with the supplied supplemental groups, and injects the
     operator-supplied env vars verbatim. The module bakes in nothing
     vendor- or hardware-specific; everything that varies between
-    Intel/AMD/NVIDIA or between PCI device IDs is supplied here:
+    Intel/AMD/NVIDIA or between PCI device IDs is supplied here.
 
+    `device_type` controls the kubelet hostPath volume type — defaults
+    to `Directory`, which projects the entire host directory into the
+    container (right for `/dev/dri` on AMD/Intel, `/dev/nvidia` for
+    multi-card NVIDIA setups). Set to `CharDevice` to project a single
+    device file (e.g. `/dev/dri/renderD129`) — useful when the host
+    has multiple GPUs and you want the container to see only one.
+
+    Worked examples:
+
+      # Project all of /dev/dri (Intel/AMD multi-GPU or single-GPU host):
       gpu = {
         image               = "docker.io/ollama/ollama:0.21.1"
         device_path         = "/dev/dri"
+        device_type         = "Directory"
         supplemental_groups = [44, 990]
         env = {
-          OLLAMA_VULKAN           = "1"
-          OLLAMA_NUM_GPU          = "999"
-          OLLAMA_FLASH_ATTENTION  = "0"
-          GGML_VK_VISIBLE_DEVICES = "1"
-          MESA_VK_DEVICE_SELECT   = "8086:e212"
-          OLLAMA_DEBUG            = "1"
+          OLLAMA_VULKAN = "1"
+          OLLAMA_NUM_GPU = "999"
+          ...
         }
+      }
+
+      # Project only renderD129 (Arc B50) and hide the iGPU entirely:
+      gpu = {
+        image               = "docker.io/ollama/ollama:0.21.1"
+        device_path         = "/dev/dri/renderD129"
+        device_type         = "CharDevice"
+        supplemental_groups = [44, 990]
+        env = { OLLAMA_VULKAN = "1", OLLAMA_NUM_GPU = "999", ... }
       }
 
     Tenant components are unaffected — they keep their own restricted
@@ -133,10 +150,15 @@ variable "gpu" {
   type = object({
     image               = string
     device_path         = string
+    device_type         = optional(string, "Directory")
     supplemental_groups = list(number)
     env                 = map(string)
   })
   default = null
+  validation {
+    condition     = var.gpu == null || contains(["Directory", "CharDevice", "BlockDevice", "File"], var.gpu.device_type)
+    error_message = "ollama gpu.device_type must be one of: Directory, CharDevice, BlockDevice, File. Mirrors kubelet hostPath types."
+  }
 }
 
 locals {
@@ -363,18 +385,20 @@ resource "kubernetes_stateful_set_v1" "ollama" {
           }
         }
 
-        # Host GPU device path (e.g. /dev/dri for Intel/AMD,
-        # /dev/nvidia* for NVIDIA) projected into the pod. Matching
-        # `volume_mount` is on the container above. The pod-level
-        # `supplemental_groups` grant access to whatever GIDs own the
-        # device files at this path on the host.
+        # Host GPU device path projected into the pod. `device_type`
+        # picks the kubelet hostPath type — `Directory` for the whole
+        # /dev/dri (or /dev/nvidia) tree, `CharDevice` to expose only
+        # a single device file (e.g. /dev/dri/renderD129) and hide the
+        # rest. Matching `volume_mount` is on the container above. The
+        # pod-level `supplemental_groups` grant access to whatever GIDs
+        # own the device files on the host.
         dynamic "volume" {
           for_each = local.gpu_iter
           content {
             name = "gpu-device"
             host_path {
               path = volume.value.device_path
-              type = "Directory"
+              type = volume.value.device_type
             }
           }
         }
