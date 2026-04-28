@@ -28,6 +28,12 @@ locals {
         # Intel Arc + Vulkan example.
         gpu = null
       }
+      zitadel = {
+        enabled              = false
+        external_domain      = ""
+        first_admin_email    = ""
+        first_admin_username = "zitadel-admin"
+      }
     }
   }
   _platform_file     = "${path.module}/config/platform.yaml"
@@ -39,6 +45,7 @@ locals {
       postgres = merge(local._platform_defaults.services.postgres, try(local._platform_services.postgres, {}))
       redis    = merge(local._platform_defaults.services.redis, try(local._platform_services.redis, {}))
       ollama   = merge(local._platform_defaults.services.ollama, try(local._platform_services.ollama, {}))
+      zitadel  = merge(local._platform_defaults.services.zitadel, try(local._platform_services.zitadel, {}))
     }
   }
 

@@ -91,6 +91,19 @@ output "ollama" {
   }
 }
 
+output "zitadel" {
+  description = "Shared Zitadel IdP — public hostname, in-cluster Service, and the bootstrap admin credentials emitted on first apply. Change the admin password in the UI on first login; the value here only stays current for as long as the random_password resource isn't replaced."
+  value = {
+    external_domain = module.zitadel.external_domain
+    namespace       = module.zitadel.namespace
+    service         = module.zitadel.service_name
+    port            = module.zitadel.port
+    admin_username  = module.zitadel.admin_username
+    admin_password  = module.zitadel.admin_password
+  }
+  sensitive = true
+}
+
 output "namespaces" {
   description = "All project namespaces managed by this platform."
   value       = [for _, proj in module.project : proj.namespace]
