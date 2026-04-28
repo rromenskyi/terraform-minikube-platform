@@ -41,15 +41,23 @@
 # `(known after apply)` value, which Terraform refuses to validate at
 # plan time.
 data "kubernetes_resources" "zitadel_tf_pat" {
-  api_version    = "v1"
-  kind           = "Secret"
-  namespace      = kubernetes_namespace_v1.platform.metadata[0].name
-  field_selector = "metadata.name=zitadel-tf-pat"
+  api_version = "v1"
+  kind        = "Secret"
+  namespace   = kubernetes_namespace_v1.platform.metadata[0].name
+  # field_selector "metadata.name=..." is silently ignored by the
+  # Terraform kubernetes provider's resources data source — it does
+  # not propagate the selector to the API list call. Filter in HCL
+  # instead from the full namespace listing.
+  label_selector = ""
 }
 
 locals {
+  zitadel_tf_pat_secrets = [
+    for o in data.kubernetes_resources.zitadel_tf_pat.objects :
+    o if o.metadata.name == "zitadel-tf-pat"
+  ]
   zitadel_tf_pat = try(
-    base64decode(data.kubernetes_resources.zitadel_tf_pat.objects[0].data.access_token),
+    base64decode(local.zitadel_tf_pat_secrets[0].data.access_token),
     ""
   )
 }

@@ -266,6 +266,7 @@ resource "kubernetes_deployment_v1" "zitadel" {
             "start-from-init",
             "--masterkeyFromEnv",
             "--tlsMode", "external",
+            "--steps", "/etc/zitadel/steps.yaml",
           ]
 
           port {
@@ -423,26 +424,18 @@ resource "kubernetes_deployment_v1" "zitadel" {
             value = tostring(var.login_policy.allow_username_password)
           }
 
-          env {
-            name  = "ZITADEL_FIRSTINSTANCE_PATPATH"
-            value = "/var/zitadel/secrets/pat"
-          }
-          env {
-            name  = "ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_USERNAME"
-            value = "tf-platform"
-          }
-          env {
-            name  = "ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_NAME"
-            value = "tf-platform"
-          }
-          env {
-            name  = "ZITADEL_FIRSTINSTANCE_ORG_MACHINE_PAT_EXPIRATIONDATE"
-            value = "2099-12-31T00:00:00Z"
-          }
-
+          # Machine user + PAT lifted to file via the steps.yaml
+          # ConfigMap mounted at /etc/zitadel/steps.yaml. Plain envs
+          # don't expose PatPath — that knob lives only on the
+          # FirstInstance section consumed by `--steps`.
           volume_mount {
             name       = "pat-output"
             mount_path = "/var/zitadel/secrets"
+          }
+          volume_mount {
+            name       = "steps"
+            mount_path = "/etc/zitadel"
+            read_only  = true
           }
 
           # Go binary, idle ~50-100m CPU. 1 CPU limit covers a
@@ -516,9 +509,13 @@ resource "kubernetes_deployment_v1" "zitadel" {
             EOT
           ]
 
+          # bitnami/kubectl is lean (Alpine + the kubectl binary)
+          # but `kubectl apply` spikes memory parsing the API
+          # discovery cache on first run. 64Mi was too tight (OOM
+          # exit-137 on first apply); 192Mi has comfortable headroom.
           resources {
-            requests = { cpu = "10m", memory = "32Mi" }
-            limits   = { cpu = "100m", memory = "64Mi" }
+            requests = { cpu = "10m", memory = "64Mi" }
+            limits   = { cpu = "100m", memory = "192Mi" }
           }
 
           volume_mount {
@@ -533,8 +530,52 @@ resource "kubernetes_deployment_v1" "zitadel" {
           name = "pat-output"
           empty_dir {}
         }
+
+        volume {
+          name = "steps"
+          config_map {
+            name = kubernetes_config_map_v1.steps["enabled"].metadata[0].name
+          }
+        }
       }
     }
+  }
+}
+
+# ── Steps ConfigMap (FirstInstance setup) ─────────────────────────────────────
+#
+# Loaded via `--steps /etc/zitadel/steps.yaml` on the Zitadel
+# container. The DefaultInstance env-var path does NOT expose PatPath
+# / MachineKeyPath — those live only in the steps file. So we mount a
+# minimal steps.yaml whose only job is to set FirstInstance.PatPath +
+# FirstInstance.Org.Machine.Machine + Pat so a PAT lands in a file
+# the sidecar can lift into a Secret.
+
+resource "kubernetes_config_map_v1" "steps" {
+  for_each = local.instances
+
+  metadata {
+    name      = "zitadel-steps"
+    namespace = var.namespace
+  }
+
+  data = {
+    "steps.yaml" = yamlencode({
+      FirstInstance = {
+        PatPath = "/var/zitadel/secrets/pat"
+        Org = {
+          Machine = {
+            Machine = {
+              Username = "tf-platform"
+              Name     = "tf-platform"
+            }
+            Pat = {
+              ExpirationDate = "2099-12-31T00:00:00Z"
+            }
+          }
+        }
+      }
+    })
   }
 }
 
