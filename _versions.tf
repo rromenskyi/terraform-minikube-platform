@@ -22,6 +22,10 @@ terraform {
       source  = "hashicorp/random"
       version = "~> 3.0"
     }
+    zitadel = {
+      source  = "zitadel/zitadel"
+      version = "~> 2.9"
+    }
     # minikube and k3s provider requirements are declared by the child modules
     # (`terraform-minikube-k8s` / `terraform-k3s-k8s`). The root stack does not
     # reference either provider directly.

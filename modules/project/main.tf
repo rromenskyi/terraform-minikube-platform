@@ -12,6 +12,10 @@ terraform {
       source  = "hashicorp/random"
       version = "~> 3.0"
     }
+    zitadel = {
+      source  = "zitadel/zitadel"
+      version = "~> 2.9"
+    }
   }
 }
 
@@ -90,6 +94,18 @@ variable "ollama_url" {
   default     = null
 }
 
+variable "zitadel_org_name" {
+  description = "Zitadel org name where `kind: app` components auto-provision projects + applications. Defaults to the bootstrap `ZITADEL` org. Per-org tenancy lands in a follow-up PR."
+  type        = string
+  default     = "ZITADEL"
+}
+
+variable "zitadel_issuer_url" {
+  description = "Zitadel public issuer URL (https://id.<your-domain>) — embedded into AUTH_ZITADEL_ISSUER inside the per-app OIDC Secret. Null disables OIDC provisioning entirely (any kind: app component with `oidc.enabled: true` will fail with a clear error from the check below)."
+  type        = string
+  default     = null
+}
+
 variable "volume_base_path" {
   description = "Parent path used verbatim by hostPath PersistentVolumes for every component in this project. Must resolve to a real writable directory from the kubelet's point of view. Forwarded unchanged to modules/component."
   type        = string
@@ -153,14 +169,30 @@ locals {
     )
   }
 
+  # `kind: deployment` (legacy/general containers) and `kind: app`
+  # (first-party apps with optional Zitadel auto-provisioning) both
+  # produce a Deployment + Service through `module.component`. The
+  # difference is purely whether the project module also stands up
+  # an OIDC client for them — see `app_components_with_oidc` below.
   deployable_components = {
     for name, c in local.normalized_components :
-    name => c if c.kind == "deployment"
+    name => c if c.kind == "deployment" || c.kind == "app"
   }
 
   external_components = {
     for name, c in local.normalized_components :
     name => c if c.kind == "external"
+  }
+
+  # Components that opted into Zitadel auto-provisioning (kind: app +
+  # oidc.enabled: true). One Project + Application + Roles get
+  # provisioned per entry, and the resulting client_id/secret/issuer
+  # land in a per-component k8s Secret that the workload mounts as
+  # env_from.
+  app_components_with_oidc = {
+    for name, c in local.normalized_components :
+    name => c
+    if c.kind == "app" && try(c.oidc.enabled, false)
   }
 
   # Per-component list of fully-qualified hostnames. The host prefix from
@@ -731,6 +763,68 @@ resource "kubernetes_secret_v1" "ollama_endpoint" {
   }
 }
 
+# ── Zitadel auto-provisioning for `kind: app` components ─────────────────────
+#
+# One Project + Application + Roles + k8s Secret per opted-in app.
+# Project name defaults to the component name (v1: one project per
+# app); roles default to `[platform_admin, tenant_admin, user]` so a
+# bare `oidc.enabled: true` already buys a usable role tree. Override
+# both via the component yaml — see config/components/sipmesh-frontend.yaml
+# for the worked shape.
+
+check "zitadel_issuer_set_when_app_oidc_used" {
+  assert {
+    condition     = length(local.app_components_with_oidc) == 0 || var.zitadel_issuer_url != null
+    error_message = "project '${local.namespace}' has at least one `kind: app` component with `oidc.enabled: true` (${join(", ", keys(local.app_components_with_oidc))}) but `services.zitadel.enabled` is false. Either flip Zitadel on in `config/platform.yaml` or remove the oidc block."
+  }
+}
+
+module "zitadel_app" {
+  for_each = local.app_components_with_oidc
+
+  source = "../zitadel-app"
+
+  org_name     = try(each.value.oidc.org, var.zitadel_org_name)
+  project_name = try(each.value.oidc.project, each.key)
+  app_name     = each.key
+
+  issuer_url = var.zitadel_issuer_url
+
+  # Build prod-style redirect URIs from the hostnames Traefik routes
+  # to this component crossed with the operator-supplied paths. Local
+  # `http://localhost:5173/...` URIs are intentionally NOT auto-added
+  # — wire those by hand on a separate dev-mode application in the
+  # Zitadel UI when iterating locally.
+  redirect_uris = flatten([
+    for host in local.routes_by_component[each.key] : [
+      for path in try(each.value.oidc.redirect_paths, ["/auth/callback/zitadel"]) :
+      "https://${host}${path}"
+    ]
+  ])
+
+  post_logout_uris = flatten([
+    for host in local.routes_by_component[each.key] : [
+      for path in try(each.value.oidc.post_logout_paths, ["/"]) :
+      "https://${host}${path}"
+    ]
+  ])
+
+  grant_types    = try(each.value.oidc.grant_types, ["OIDC_GRANT_TYPE_AUTHORIZATION_CODE", "OIDC_GRANT_TYPE_REFRESH_TOKEN"])
+  response_types = try(each.value.oidc.response_types, ["OIDC_RESPONSE_TYPE_CODE"])
+  app_type       = try(each.value.oidc.app_type, "OIDC_APP_TYPE_WEB")
+  auth_method    = try(each.value.oidc.auth_method, "OIDC_AUTH_METHOD_TYPE_BASIC")
+  dev_mode       = try(each.value.oidc.dev_mode, false)
+
+  roles = try(each.value.oidc.roles, [
+    { key = "platform_admin", display_name = "Platform Admin", group = "" },
+    { key = "tenant_admin", display_name = "Tenant Admin", group = "" },
+    { key = "user", display_name = "User", group = "" },
+  ])
+
+  secret_namespace = kubernetes_namespace_v1.this.metadata[0].name
+  secret_name      = "${each.key}-oidc"
+}
+
 # ── Components ────────────────────────────────────────────────────────────────
 
 module "component" {
@@ -765,6 +859,10 @@ module "component" {
 
   ollama_secret_name = try(each.value.ollama, false) && local.needs_ollama ? (
     kubernetes_secret_v1.ollama_endpoint[0].metadata[0].name
+  ) : null
+
+  oidc_secret_name = contains(keys(local.app_components_with_oidc), each.key) ? (
+    module.zitadel_app[each.key].secret_name
   ) : null
 
   static_env = try(each.value.env_static, {})
