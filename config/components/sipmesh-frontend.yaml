@@ -1,0 +1,64 @@
+# First-party SvelteKit operator console for sipmesh.
+# Source: https://github.com/rromenskyi/sipmesh-frontend
+#
+# Demonstrates the `kind: app` shape — same Deployment/Service
+# machinery as `kind: deployment`, plus auto-provisioning of a
+# Zitadel Project + OIDC Application + Roles via the platform's
+# Zitadel TF provider. The resulting client_id/client_secret/issuer
+# land in a per-component k8s Secret (`sipmesh-frontend-oidc`)
+# wired into the pod as env_from — so the SvelteKit Auth.js Zitadel
+# provider boots with zero in-app config.
+
+kind: app
+
+# Pre-built image — once PR2 (build-from-git) lands, swap this for a
+# `build:` block pointing at the upstream repo + ref.
+image: ghcr.io/rromenskyi/sipmesh-frontend:latest
+port:  3000
+
+# adapter-node serves SSR — single replica is fine while we're
+# small; bump when traffic warrants and/or when session storage
+# moves to Redis (cookie-only sessions don't need sticky routing).
+replicas: 1
+
+resources:
+  requests: { cpu: 100m,  memory: 128Mi }
+  limits:   { cpu: 500m,  memory: 512Mi }
+
+# Auth.js's /auth/* routes answer on every path under /auth/, and the
+# server also wants to know it's healthy without going through the
+# session middleware — `/` returns 200 OK rendered by SvelteKit, which
+# is good enough for a liveness probe.
+health_path: /
+
+oidc:
+  enabled: true
+
+  # Project the Application lives under. Multiple sipmesh components
+  # (frontend, future admin app, mobile) can share `project: sipmesh`
+  # once project sharing lands — for v1 it's one project per app, so
+  # the project ends up named after this component.
+  project: sipmesh
+
+  # Paths Auth.js's @auth/sveltekit handler answers on. The platform
+  # expands these into full URLs against every host this component is
+  # routed at, e.g. `https://app.example.com/auth/callback/zitadel`.
+  redirect_paths:
+    - /auth/callback/zitadel
+  post_logout_paths:
+    - /
+
+  # Project roles created up front. Drop into the user's OIDC token
+  # under `urn:zitadel:iam:org:project:roles` — gate features in the
+  # frontend on `session.user.roles?.includes('platform_admin')`.
+  roles:
+    - { key: platform_admin, display_name: "Platform Admin" }
+    - { key: tenant_admin,   display_name: "Tenant Admin" }
+    - { key: user,           display_name: "User" }
+
+  # `OIDC_APP_TYPE_WEB` + `OIDC_AUTH_METHOD_TYPE_BASIC` = standard
+  # SSR webapp with client_secret. Defaults; left commented for
+  # discoverability.
+  # app_type:    OIDC_APP_TYPE_WEB
+  # auth_method: OIDC_AUTH_METHOD_TYPE_BASIC
+  # dev_mode:    false

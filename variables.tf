@@ -73,3 +73,17 @@ variable "host_volume_path" {
   type        = string
   default     = "/data/vol"
 }
+
+variable "zitadel_pat" {
+  description = <<-EOT
+    Personal Access Token for the Zitadel TF provider. One-time
+    bootstrap: log into the Zitadel console, Settings → Service
+    Users → New, name it `tf-platform`, grant role `IAM_OWNER`,
+    generate a PAT, paste here as `TF_VAR_zitadel_pat`. Empty when
+    `services.zitadel.enabled = false` — the provider config in
+    `zitadel.tf` no-ops in that case.
+  EOT
+  type        = string
+  default     = ""
+  sensitive   = true
+}

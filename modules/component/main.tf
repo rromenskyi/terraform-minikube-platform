@@ -110,6 +110,12 @@ variable "ollama_secret_name" {
   default     = null
 }
 
+variable "oidc_secret_name" {
+  description = "Name of the oidc-credentials Secret to expose as env_from. Null = no Zitadel client wired (kind: app components without `oidc.enabled: true`, or any non-app component). Injects AUTH_ZITADEL_ISSUER/AUTH_ZITADEL_ID/AUTH_ZITADEL_SECRET/AUTH_SECRET so a stock @auth/sveltekit Zitadel provider boots with zero in-app config."
+  type        = string
+  default     = null
+}
+
 variable "static_env" {
   description = "Additional static env vars (name → literal value) mounted directly on the container. Use when a component needs a plain env knob that isn't a secret and doesn't come from a shared service."
   type        = map(string)
@@ -494,6 +500,18 @@ resource "kubernetes_deployment_v1" "this" {
           # Ollama endpoint (OLLAMA_HOST)
           dynamic "env_from" {
             for_each = var.ollama_secret_name != null ? [var.ollama_secret_name] : []
+            content {
+              secret_ref {
+                name = env_from.value
+              }
+            }
+          }
+
+          # OIDC client credentials (AUTH_ZITADEL_*, AUTH_SECRET) —
+          # populated by modules/zitadel-app for `kind: app` components
+          # whose YAML opted into `oidc.enabled: true`.
+          dynamic "env_from" {
+            for_each = var.oidc_secret_name != null ? [var.oidc_secret_name] : []
             content {
               secret_ref {
                 name = env_from.value

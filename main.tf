@@ -131,4 +131,10 @@ module "project" {
   redis_host                = module.redis.host
   redis_default_secret      = module.redis.default_secret_name
   ollama_url                = module.ollama.url
+
+  # Zitadel — issuer URL is null when `services.zitadel.enabled = false`,
+  # which trips the project-level check on any `kind: app` component
+  # that opted into oidc.
+  zitadel_org_name   = "ZITADEL"
+  zitadel_issuer_url = local.platform.services.zitadel.enabled ? "https://${local.platform.services.zitadel.external_domain}" : null
 }
