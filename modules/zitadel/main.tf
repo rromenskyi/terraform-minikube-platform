@@ -57,6 +57,28 @@ variable "first_admin_username" {
   default     = "zitadel-admin"
 }
 
+variable "login_policy" {
+  description = <<-EOT
+    Default Login Policy applied at FIRSTINSTANCE bootstrap. Sets the
+    instance-wide gate for self-service registration, external IDP
+    federation, and username/password login. Secure default: registration
+    OFF (operator decides who joins; nobody self-onboards), Google/SAML
+    federation ON (so wired IDPs work), username/password ON (so the
+    bootstrap admin can log in).
+
+    NOTE: FIRSTINSTANCE config takes effect only on the very first boot
+    against an empty database. Tweaking these values on an existing
+    instance won't propagate without a DB drop OR the (deferred)
+    TF-driven `zitadel_default_login_policy` resource.
+  EOT
+  type = object({
+    allow_register          = optional(bool, false)
+    allow_external_idp      = optional(bool, true)
+    allow_username_password = optional(bool, true)
+  })
+  default = {}
+}
+
 # ── Locals ────────────────────────────────────────────────────────────────────
 
 locals {
@@ -377,6 +399,52 @@ resource "kubernetes_deployment_v1" "zitadel" {
             value = "false"
           }
 
+          # Machine user + Personal Access Token, generated at first
+          # boot and written to PatPath inside the container. The
+          # `pat-broker` sidecar below picks the file up and pushes
+          # the token into a k8s Secret (`zitadel-tf-pat`) so the TF
+          # Zitadel provider can authenticate without an operator
+          # ever touching the UI. Far-future expiry — the PAT is
+          # platform infrastructure, not a user credential.
+          # Default Login Policy — set at FIRSTINSTANCE so a fresh
+          # bootstrap lands secure (no public registration). Tweaks
+          # via these envs against an existing instance don't take —
+          # FIRSTINSTANCE config is consulted exactly once.
+          env {
+            name  = "ZITADEL_FIRSTINSTANCE_LOGINPOLICY_ALLOWREGISTER"
+            value = tostring(var.login_policy.allow_register)
+          }
+          env {
+            name  = "ZITADEL_FIRSTINSTANCE_LOGINPOLICY_ALLOWEXTERNALIDP"
+            value = tostring(var.login_policy.allow_external_idp)
+          }
+          env {
+            name  = "ZITADEL_FIRSTINSTANCE_LOGINPOLICY_ALLOWUSERNAMEPASSWORD"
+            value = tostring(var.login_policy.allow_username_password)
+          }
+
+          env {
+            name  = "ZITADEL_FIRSTINSTANCE_PATPATH"
+            value = "/var/zitadel/secrets/pat"
+          }
+          env {
+            name  = "ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_USERNAME"
+            value = "tf-platform"
+          }
+          env {
+            name  = "ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_NAME"
+            value = "tf-platform"
+          }
+          env {
+            name  = "ZITADEL_FIRSTINSTANCE_ORG_MACHINE_PAT_EXPIRATIONDATE"
+            value = "2099-12-31T00:00:00Z"
+          }
+
+          volume_mount {
+            name       = "pat-output"
+            mount_path = "/var/zitadel/secrets"
+          }
+
           # Go binary, idle ~50-100m CPU. 1 CPU limit covers a
           # spike of concurrent OIDC token exchanges without
           # CPU-throttling. Fits the platform-budget ResourceQuota
@@ -419,8 +487,107 @@ resource "kubernetes_deployment_v1" "zitadel" {
             timeout_seconds   = 3
           }
         }
+
+        # PAT broker. Watches the PatPath for the FIRSTINSTANCE-
+        # generated machine-user token, then creates/updates the
+        # `zitadel-tf-pat` Secret so the TF Zitadel provider can pick
+        # it up via `data "kubernetes_resources"` on the next apply.
+        # Uses the dedicated `zitadel-pat-broker` ServiceAccount which
+        # only has Secret create/patch in this namespace.
+        container {
+          name  = "pat-broker"
+          image = "bitnami/kubectl:latest"
+
+          command = ["/bin/bash", "-c"]
+          args = [
+            <<-EOT
+            set -euo pipefail
+            echo "pat-broker: waiting for PAT file..."
+            until [ -s /var/zitadel/secrets/pat ]; do sleep 2; done
+            TOKEN=$(cat /var/zitadel/secrets/pat)
+            echo "pat-broker: PAT captured ($${#TOKEN} chars), syncing Secret..."
+            kubectl create secret generic zitadel-tf-pat \
+              --namespace="${var.namespace}" \
+              --from-literal=access_token="$TOKEN" \
+              --dry-run=client -o yaml \
+              | kubectl apply -f -
+            echo "pat-broker: Secret synced, idling."
+            sleep infinity
+            EOT
+          ]
+
+          resources {
+            requests = { cpu = "10m", memory = "32Mi" }
+            limits   = { cpu = "100m", memory = "64Mi" }
+          }
+
+          volume_mount {
+            name       = "pat-output"
+            mount_path = "/var/zitadel/secrets"
+          }
+        }
+
+        service_account_name = kubernetes_service_account_v1.pat_broker["enabled"].metadata[0].name
+
+        volume {
+          name = "pat-output"
+          empty_dir {}
+        }
       }
     }
+  }
+}
+
+# ── PAT broker RBAC ───────────────────────────────────────────────────────────
+#
+# Minimal scope: the sidecar can only create/patch Secrets in its own
+# namespace. Targeted further to the single Secret name with a
+# resource_names limiter would be cleaner but RBAC's resourceNames
+# blocks `create` (only post-creation verbs honour it), so namespace
+# scope is the floor.
+
+resource "kubernetes_service_account_v1" "pat_broker" {
+  for_each = local.instances
+
+  metadata {
+    name      = "zitadel-pat-broker"
+    namespace = var.namespace
+  }
+}
+
+resource "kubernetes_role_v1" "pat_broker" {
+  for_each = local.instances
+
+  metadata {
+    name      = "zitadel-pat-broker"
+    namespace = var.namespace
+  }
+
+  rule {
+    api_groups = [""]
+    resources  = ["secrets"]
+    verbs      = ["create", "get", "patch", "update"]
+  }
+}
+
+resource "kubernetes_role_binding_v1" "pat_broker" {
+  for_each = local.instances
+
+  metadata {
+    name      = "zitadel-pat-broker"
+    namespace = var.namespace
+  }
+
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "Role"
+    name      = kubernetes_role_v1.pat_broker["enabled"].metadata[0].name
+  }
+
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account_v1.pat_broker["enabled"].metadata[0].name
+    namespace = var.namespace
   }
 }
 
@@ -487,3 +654,4 @@ output "admin_password" {
   sensitive   = true
   description = "Bootstrap human admin password. Change in the UI on first login. Only re-emitted if the random_password resource is replaced."
 }
+

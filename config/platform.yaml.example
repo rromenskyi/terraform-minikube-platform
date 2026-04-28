@@ -112,3 +112,14 @@ services:
     first_admin_email: you@example.com
     # Optional: override the default username `zitadel-admin`.
     # first_admin_username: ops
+
+    # Default Login Policy at FIRSTINSTANCE bootstrap. Defaults are
+    # secure: no public registration; Google/SAML federation on;
+    # username/password login on (needed for the bootstrap admin).
+    # Tweaks here only land on a FRESH instance — change on an
+    # existing one needs a DB drop or the (deferred) TF-managed
+    # `zitadel_default_login_policy` resource.
+    # login_policy:
+    #   allow_register:          false
+    #   allow_external_idp:      true
+    #   allow_username_password: true

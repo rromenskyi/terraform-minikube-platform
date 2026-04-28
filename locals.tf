@@ -33,6 +33,11 @@ locals {
         external_domain      = ""
         first_admin_email    = ""
         first_admin_username = "zitadel-admin"
+        login_policy = {
+          allow_register          = false
+          allow_external_idp      = true
+          allow_username_password = true
+        }
       }
     }
   }
