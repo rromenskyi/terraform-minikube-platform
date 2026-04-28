@@ -90,3 +90,25 @@ services:
     #     OLLAMA_NUM_GPU: "999"
     #     GGML_VK_VISIBLE_DEVICES: "1"     # pick non-iGPU index
     #     MESA_VK_DEVICE_SELECT: "8086:e212"  # Mesa device picker (PCI vendor:device)
+
+  # Zitadel — shared OIDC/SAML IdP for every project (and the
+  # platform-admin surface itself). Stores state in the shared Postgres
+  # (db `platform_zitadel`, role `platform_zitadel`, provisioned by
+  # the module). Public ingress is registered like any other service:
+  # add an `id: zitadel` route to your operator-domain yaml under
+  # `config/domains/<your-domain>.yaml` (the matching `kind: external`
+  # component already lives at `config/components/zitadel.yaml`).
+  zitadel:
+    enabled: false
+    # Public hostname Zitadel issues OIDC tokens for. Must equal the
+    # route you wired in `config/domains/<your-domain>.yaml`. Changing
+    # later breaks every existing client's redirect-URI registration.
+    external_domain:   id.example.com
+    # Bootstrap admin lands as a HUMAN user in the master instance with
+    # email pre-verified (so login works without SMTP). Pull initial
+    # password via `terraform output -json zitadel | jq -r .admin_password`.
+    # Login name in the UI: `<username>@zitadel.<external_domain>` OR
+    # `<email>` directly.
+    first_admin_email: you@example.com
+    # Optional: override the default username `zitadel-admin`.
+    # first_admin_username: ops

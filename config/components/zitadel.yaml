@@ -1,0 +1,10 @@
+# External component — routing only, no Deployment. Points at the
+# shared Zitadel StatefulSet in the `platform` namespace (deployed by
+# modules/zitadel). Traefik forwards plain HTTP to port 8080; TLS
+# terminates at Cloudflare's edge.
+kind: external
+
+service:
+  name:      zitadel
+  namespace: platform
+  port:      8080
