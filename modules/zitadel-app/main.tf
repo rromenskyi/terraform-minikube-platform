@@ -157,15 +157,15 @@ resource "zitadel_application_oidc" "this" {
 
   # ID-token enrichment so Auth.js / similar can decode roles from
   # the JWT without a follow-up /userinfo call.
-  id_token_role_assertion        = true
-  id_token_userinfo_assertion    = true
-  access_token_role_assertion    = true
-  access_token_type              = "OIDC_TOKEN_TYPE_BEARER"
-  additional_origins             = []
-  clock_skew                     = "0s"
-  version                        = "OIDC_VERSION_1_0"
-  skip_native_app_success_page   = false
-  back_channel_logout_uri        = ""
+  id_token_role_assertion      = true
+  id_token_userinfo_assertion  = true
+  access_token_role_assertion  = true
+  access_token_type            = "OIDC_TOKEN_TYPE_BEARER"
+  additional_origins           = []
+  clock_skew                   = "0s"
+  version                      = "OIDC_VERSION_1_0"
+  skip_native_app_success_page = false
+  back_channel_logout_uri      = ""
 }
 
 # Cookie / session encryption key for downstream Auth.js (or similar).
