@@ -8,3 +8,11 @@ service:
   name:      zitadel
   namespace: platform
   port:      8080
+
+# Zitadel speaks gRPC + HTTP on the same port. The HTTP API is fine
+# over HTTP/1.1, but gRPC requires HTTP/2 framing — force Traefik to
+# use h2c (HTTP/2 cleartext) on the upstream. Combined with the
+# `http2_origin: true` flag below this propagates end-to-end so the
+# zitadel/zitadel TF provider can talk gRPC through the public chain.
+scheme: h2c
+http2_origin: true

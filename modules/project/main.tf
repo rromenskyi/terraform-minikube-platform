@@ -230,6 +230,11 @@ locals {
         name      = try(c.ingress_service.name, c.kind == "external" ? c.service.name : name)
         namespace = c.kind == "external" && try(c.ingress_service, null) == null ? c.service.namespace : null
         port      = try(c.ingress_service, null) != null ? null : (c.kind == "external" ? tonumber(c.service.port) : tonumber(c.port))
+        # Upstream protocol Traefik uses to talk to the backend.
+        # `h2c` (HTTP/2 cleartext) is required for components that
+        # expose gRPC — Traefik's default is HTTP/1.1 which breaks
+        # gRPC framing. Set `scheme: h2c` in the component yaml.
+        scheme = try(c.scheme, null)
       } : k => v if v != null
     }
   }
@@ -1032,13 +1037,19 @@ output "env" {
 # Every fully-qualified hostname → which component/service it routes to.
 # Consumed by the root `cloudflare.tf` to build the Cloudflare tunnel
 # ingress rules and the per-host CNAME DNS records.
+#
+# `http2_origin` propagates from the component yaml (`http2_origin: true`)
+# to the cloudflared route's `origin_request.http2_origin`, which is
+# what flips cloudflared from HTTP/1.1 to HTTP/2 upstream — required
+# end-to-end for any service that exposes gRPC alongside HTTP (Zitadel).
 output "hostnames" {
   value = merge([
     for component, hosts in local.routes_by_component : {
       for host in hosts : host => {
-        component = component
-        service   = local.component_service_urls[component]
-        zone_id   = try(var.project_config.cloudflare_zone_id, null)
+        component    = component
+        service      = local.component_service_urls[component]
+        zone_id      = try(var.project_config.cloudflare_zone_id, null)
+        http2_origin = try(local.normalized_components[component].http2_origin, false)
       }
     }
   ]...)
