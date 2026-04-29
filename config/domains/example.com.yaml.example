@@ -28,6 +28,48 @@ envs:
       www:   web          # www.example.com          → web
       api:   whoami       # api.example.com          → whoami
       debug: echo         # debug.example.com        → echo
+      # First-party app — inline `kind: app` definition right here,
+      # no separate `config/components/<name>.yaml`. See `components:`
+      # block below for the matching shape.
+      app:   my-app       # app.example.com          → my-app (kind: app)
+
+    # Per-route component overrides AND inline component definitions.
+    # The per-project shallow merge order is:
+    #   1. defaults (kind=deployment, etc.)
+    #   2. config/components/<name>.yaml if it exists (generic templates)
+    #   3. this `components:` block (operator-specific overrides + inline definitions)
+    # First-party `kind: app` components belong here — they reference an
+    # operator-private image (ghcr.io/<your-handle>/...), an OIDC redirect
+    # URI tied to your domain, and a role taxonomy you own. There is no
+    # generic template to fall back on, so the whole spec lives inline.
+    components:
+      my-app:
+        kind: app
+        image: ghcr.io/your-handle/my-app:latest
+        port:  3000
+        replicas: 1
+        resources:
+          requests: { cpu: 100m, memory: 128Mi }
+          limits:   { cpu: 500m, memory: 512Mi }
+        health_path: /
+        # Public-origin envs for SSR frameworks behind cloudflared —
+        # without these Auth.js / similar generate http:// callback
+        # URLs that the IdP rejects.
+        env_static:
+          ORIGIN:           https://app.example.com
+          AUTH_URL:         https://app.example.com
+          PROTOCOL_HEADER:  x-forwarded-proto
+          HOST_HEADER:      x-forwarded-host
+        oidc:
+          enabled: true
+          project: my-app
+          redirect_paths:
+            - /auth/callback/zitadel
+          post_logout_paths:
+            - /
+          roles:
+            - { key: admin, display_name: "Admin" }
+            - { key: user,  display_name: "User"  }
 
   # Optional additional env. Pick prefixes that don't collide with prod:
   # dev:

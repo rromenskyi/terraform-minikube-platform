@@ -7,6 +7,18 @@
 config/domains/*.yaml
 !config/domains/*.yaml.example
 
+# Operator-specific app components — anything with operator-private
+# image refs (`ghcr.io/<your-handle>/...`), redirect URIs, role
+# taxonomy. Generic shared templates stay committed (web, wordpress,
+# chat, echo, whoami, traefik, grafana, ollama, zitadel); per-operator
+# kind:app configs (first-party operator dashboards, tenant frontends,
+# anything else not meant for shared distribution) live inline in
+# `config/domains/<domain>.yaml` under `envs.<env>.components.<name>`.
+# These two get listed explicitly so a stale committed copy on a
+# fresh clone trips the gitignore instead of polluting state.
+config/components/sipmesh-frontend.yaml
+config/components/platform-dash.yaml
+
 # Platform-service toggles — the live file is per-operator
 config/platform.yaml
 !config/platform.yaml.example
