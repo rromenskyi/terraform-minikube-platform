@@ -135,6 +135,7 @@ module "project" {
   # Zitadel — issuer URL is null when `services.zitadel.enabled = false`,
   # which trips the project-level check on any `kind: app` component
   # that opted into oidc.
-  zitadel_org_name   = "ZITADEL"
-  zitadel_issuer_url = local.platform.services.zitadel.enabled ? "https://${local.platform.services.zitadel.external_domain}" : null
+  zitadel_org_name               = "ZITADEL"
+  zitadel_issuer_url             = local.platform.services.zitadel.enabled ? "https://${local.platform.services.zitadel.external_domain}" : null
+  zitadel_provider_authenticated = var.zitadel_pat != ""
 }

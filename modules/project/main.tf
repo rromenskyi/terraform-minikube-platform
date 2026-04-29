@@ -106,6 +106,12 @@ variable "zitadel_issuer_url" {
   default     = null
 }
 
+variable "zitadel_provider_authenticated" {
+  description = "True when the root TF has been handed a non-empty `TF_VAR_zitadel_pat` for the Zitadel provider. False trips the precondition on any active `kind: app` + `oidc.enabled: true` component, with a pointer at the operator-side bootstrap docs."
+  type        = bool
+  default     = false
+}
+
 variable "volume_base_path" {
   description = "Parent path used verbatim by hostPath PersistentVolumes for every component in this project. Must resolve to a real writable directory from the kubelet's point of view. Forwarded unchanged to modules/component."
   type        = string
@@ -164,7 +170,7 @@ locals {
     name => merge(
       { kind = "deployment" },
       local.component_defaults,
-      var.components[name],
+      try(var.components[name], {}),
       try(var.project_config.components[name], {}),
     )
   }
@@ -319,12 +325,16 @@ locals {
 }
 
 # Catch typos / missing component definitions at plan time.
+# A routed component is "known" if it has either a generic template
+# at `config/components/<name>.yaml` OR an inline definition in this
+# project's `envs.<env>.components.<name>` block.
 check "routes_reference_known_components" {
   assert {
     condition = alltrue([
-      for name in local._component_names : contains(keys(var.components), name)
+      for name in local._component_names :
+      contains(keys(var.components), name) || contains(keys(try(var.project_config.components, {})), name)
     ])
-    error_message = "project '${local.namespace}' has a route to an unknown component. Referenced components: ${jsonencode(local._component_names)}. Available components: ${jsonencode(keys(var.components))}. Add the missing config/components/<name>.yaml or fix the route target."
+    error_message = "project '${local.namespace}' has a route to an unknown component. Referenced components: ${jsonencode(local._component_names)}. Available templates: ${jsonencode(keys(var.components))}. Inline overrides: ${jsonencode(keys(try(var.project_config.components, {})))}. Add `config/components/<name>.yaml` OR an inline `envs.<env>.components.<name>` block in the domain yaml."
   }
 }
 
@@ -781,6 +791,13 @@ check "zitadel_issuer_set_when_app_oidc_used" {
   assert {
     condition     = length(local.app_components_with_oidc) == 0 || var.zitadel_issuer_url != null
     error_message = "project '${local.namespace}' has at least one `kind: app` component with `oidc.enabled: true` (${join(", ", keys(local.app_components_with_oidc))}) but `services.zitadel.enabled` is false. Either flip Zitadel on in `config/platform.yaml` or remove the oidc block."
+  }
+}
+
+check "zitadel_pat_set_when_app_oidc_used" {
+  assert {
+    condition     = length(local.app_components_with_oidc) == 0 || var.zitadel_provider_authenticated
+    error_message = "project '${local.namespace}' has `kind: app` components with `oidc.enabled: true` (${join(", ", keys(local.app_components_with_oidc))}) but `TF_VAR_zitadel_pat` is empty. Bootstrap the PAT once: `kubectl get secret zitadel-tf-pat -n platform -o jsonpath='{.data.access_token}' | base64 -d`, then paste it into `.env` as `TF_VAR_zitadel_pat=...`. See operating.md → 'Zitadel PAT bootstrap'."
   }
 }
 
