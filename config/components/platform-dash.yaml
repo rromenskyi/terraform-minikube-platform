@@ -1,0 +1,45 @@
+# First-party SvelteKit operator console for the platform itself.
+# Source: https://github.com/rromenskyi/platform-dash
+#
+# Same stack as sipmesh-frontend (kind: app + Auth.js + Zitadel OIDC),
+# different Zitadel project — `platform`, holding the platform-wide
+# `platform_admin` / `platform_sre` roles. Other apps reference these
+# via Project Grant when they want to consume platform-scope identities
+# in their own JWTs (deferred — `oidc.consume_platform_roles` knob).
+
+kind: app
+
+image: ghcr.io/rromenskyi/platform-dash:latest
+port:  3000
+
+replicas: 1
+
+resources:
+  requests: { cpu: 100m, memory: 128Mi }
+  limits:   { cpu: 500m, memory: 512Mi }
+
+health_path: /
+
+env_static:
+  ORIGIN:           https://dash.ipsupport.us
+  AUTH_URL:         https://dash.ipsupport.us
+  PROTOCOL_HEADER:  x-forwarded-proto
+  HOST_HEADER:      x-forwarded-host
+
+oidc:
+  enabled: true
+
+  # Dedicated `platform` project — anchors the platform-wide role
+  # taxonomy. Future first-party apps that want to honour these roles
+  # do so via Project Grants (deferred work).
+  project: platform
+
+  redirect_paths:
+    - /auth/callback/zitadel
+  post_logout_paths:
+    - /
+
+  roles:
+    - { key: platform_admin, display_name: "Platform Admin" }
+    - { key: platform_sre,   display_name: "Platform SRE"   }
+    - { key: user,           display_name: "User"           }
