@@ -38,6 +38,22 @@ locals {
           allow_external_idp      = true
           allow_username_password = true
         }
+        # Provider transport — how the Zitadel TF provider (gRPC)
+        # reaches the Zitadel API. Default = `public`: provider hits
+        # the real ExternalDomain over HTTPS, which works on any
+        # reasonable ingress chain that forwards HTTP/2 trailers.
+        # Override to `port_forward` only on infra where the proxy
+        # strips gRPC trailers (Cloudflare pure-proxy mode is the
+        # known offender) — `./tf` wrapper detects the mode and runs
+        # `kubectl port-forward svc/zitadel 8080:8080` for the apply
+        # window. Both modes set `transport_headers.Host =
+        # external_domain` so Zitadel multi-tenant routing matches.
+        provider = {
+          mode     = "public"
+          host     = "" # empty = use external_domain
+          port     = 443
+          insecure = false
+        }
       }
     }
   }
