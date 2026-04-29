@@ -8,6 +8,10 @@ terraform {
       source  = "gavinbunney/kubectl"
       version = "~> 1.14"
     }
+    null = {
+      source  = "hashicorp/null"
+      version = "~> 3.0"
+    }
     random = {
       source  = "hashicorp/random"
       version = "~> 3.0"
@@ -36,9 +40,9 @@ variable "image" {
 }
 
 variable "login_image" {
-  description = "Zitadel Login UI v2 sidecar image. Versioned independently from the main server (separate repo: zitadel/typescript). v3.0.1 is the latest tagged release and pairs with main server v4.x."
+  description = "Zitadel Login UI v2 sidecar image. Versioned independently from the main server (separate repo: zitadel/typescript). v3.0.1 (latest tagged release) ships without the wait-for-token-file entrypoint that newer commits added — the `:main` rolling tag has it. Pin to `:main` until the next semver release is cut."
   type        = string
-  default     = "ghcr.io/zitadel/login:v3.0.1"
+  default     = "ghcr.io/zitadel/login:main"
 }
 
 variable "postgres_host" {
@@ -544,6 +548,26 @@ resource "kubernetes_deployment_v1" "zitadel" {
           name  = "login"
           image = var.login_image
 
+          # The published login image expects ZITADEL_SERVICE_USER_TOKEN
+          # to be set as an env var. Per upstream comments the image
+          # *should* convert _TOKEN_FILE → _TOKEN at startup, but neither
+          # v3.0.1 nor :main does it (no entrypoint wrapper, server.js
+          # boots straight from PID 1). Do the conversion ourselves —
+          # block until the FIRSTINSTANCE-bootstrapped login-client.pat
+          # file appears, read it, then exec the upstream entrypoint.
+          command = ["/bin/sh", "-c"]
+          args = [
+            <<-EOT
+            until [ -s /var/zitadel/secrets/login-client.pat ]; do
+              echo "login: waiting for login-client.pat..."
+              sleep 2
+            done
+            export ZITADEL_SERVICE_USER_TOKEN="$(cat /var/zitadel/secrets/login-client.pat)"
+            echo "login: token loaded ($${#ZITADEL_SERVICE_USER_TOKEN} chars), starting next-server..."
+            exec node apps/login/server.js
+            EOT
+          ]
+
           port {
             name           = "http"
             container_port = 3000
@@ -553,9 +577,18 @@ resource "kubernetes_deployment_v1" "zitadel" {
             name  = "ZITADEL_API_URL"
             value = "http://localhost:8080"
           }
+
+          # login-v2 talks to the main Zitadel API over loopback, but
+          # Zitadel routes incoming requests to the right instance by
+          # matching the Host header against the instance's configured
+          # ExternalDomain. `localhost:8080` doesn't match → "Instance
+          # not found". Override the outgoing Host header so gRPC
+          # calls land on the right instance. (This is the canonical
+          # CUSTOM_REQUEST_HEADERS pattern from the official Helm
+          # chart — `Host:<ExternalDomain>` exactly.)
           env {
-            name  = "ZITADEL_SERVICE_USER_TOKEN_FILE"
-            value = "/var/zitadel/secrets/pat"
+            name  = "CUSTOM_REQUEST_HEADERS"
+            value = "Host:${var.external_domain}"
           }
           # Surface verification + customisation flags as defaults;
           # operators can extend by mounting a sidecar-side .env.
@@ -648,7 +681,15 @@ resource "kubernetes_config_map_v1" "steps" {
   data = {
     "steps.yaml" = yamlencode({
       FirstInstance = {
+        # tf-platform machine user PAT — for the TF Zitadel provider
+        # (auto-provisioning kind:app components) and any other
+        # external admin tooling.
         PatPath = "/var/zitadel/secrets/pat"
+        # login-client machine user PAT — v4 wants the login UI v2
+        # sidecar to authenticate as its OWN dedicated service
+        # account, not as the platform's general admin user. Two
+        # files, two service accounts, separate blast radius.
+        LoginClientPatPath = "/var/zitadel/secrets/login-client.pat"
         Org = {
           Machine = {
             Machine = {
@@ -659,9 +700,103 @@ resource "kubernetes_config_map_v1" "steps" {
               ExpirationDate = "2099-12-31T00:00:00Z"
             }
           }
+          LoginClient = {
+            Machine = {
+              Username = "login-client"
+              Name     = "login-client"
+            }
+            Pat = {
+              ExpirationDate = "2099-12-31T00:00:00Z"
+            }
+          }
         }
       }
     })
+  }
+}
+
+# ── Default Login Policy reconciler ───────────────────────────────────────────
+#
+# v4 dropped LoginPolicy from FirstInstance steps schema, so seeding
+# the policy at bootstrap doesn't work — the instance comes up with
+# Zitadel's built-in defaults (registration ON). The official TF
+# provider's zitadel_default_login_policy resource WOULD be the right
+# answer, but it speaks gRPC over HTTP/2 and our cloudflared → Traefik
+# path is HTTP/1.1 by default — provider hits 403/HTML on every call
+# (zitadel/terraform-provider-zitadel#242). Until we wire end-to-end
+# h2c (separate PR), reconcile the policy via a TF-managed PUT to
+# /admin/v1/policies/login. PAT comes from the FIRSTINSTANCE-bootstrapped
+# `zitadel-tf-pat` Secret. Idempotent (PUT), re-runs whenever any of
+# the triggers change.
+
+resource "null_resource" "default_login_policy" {
+  for_each = local.instances
+
+  depends_on = [kubernetes_deployment_v1.zitadel]
+
+  triggers = {
+    allow_register          = tostring(var.login_policy.allow_register)
+    allow_external_idp      = tostring(var.login_policy.allow_external_idp)
+    allow_username_password = tostring(var.login_policy.allow_username_password)
+    external_domain         = var.external_domain
+    namespace               = var.namespace
+  }
+
+  provisioner "local-exec" {
+    interpreter = ["bash", "-c"]
+    environment = {
+      ALLOW_REGISTER  = self.triggers.allow_register
+      ALLOW_EXTERNAL  = self.triggers.allow_external_idp
+      ALLOW_USERPW    = self.triggers.allow_username_password
+      EXTERNAL_DOMAIN = self.triggers.external_domain
+      NAMESPACE       = self.triggers.namespace
+    }
+    command = <<-EOT
+      set -euo pipefail
+
+      # Wait up to ~3min for the FIRSTINSTANCE-bootstrapped PAT Secret.
+      # On a fresh apply the sidecar needs Zitadel main to boot before
+      # it can write the Secret, so kubectl get may miss it the first
+      # second or three.
+      PAT=""
+      for i in $(seq 1 90); do
+        PAT="$(kubectl get secret zitadel-tf-pat -n "$NAMESPACE" -o jsonpath='{.data.access_token}' 2>/dev/null | base64 -d || true)"
+        [[ -n "$PAT" ]] && break
+        sleep 2
+      done
+      if [[ -z "$PAT" ]]; then
+        echo "default_login_policy: zitadel-tf-pat Secret never appeared, giving up" >&2
+        exit 1
+      fi
+
+      # Wait for the issuer URL to actually answer (Zitadel migrations
+      # can take a minute on a fresh DB).
+      for i in $(seq 1 90); do
+        if curl -fsS -o /dev/null "https://$EXTERNAL_DOMAIN/.well-known/openid-configuration"; then
+          break
+        fi
+        sleep 2
+      done
+
+      # PUT the policy. Zitadel returns 400 with code 9 + body
+      # "Default Login Policy has not been changed" when the request
+      # matches current state — treat that as a successful no-op.
+      RESP=$(curl -sS -w "\n%%{http_code}" -X PUT \
+        -H "Authorization: Bearer $PAT" \
+        -H "Content-Type: application/json" \
+        -d "{\"allowRegister\":$ALLOW_REGISTER,\"allowExternalIdp\":$ALLOW_EXTERNAL,\"allowUsernamePassword\":$ALLOW_USERPW,\"passwordlessType\":\"PASSWORDLESS_TYPE_ALLOWED\",\"ignoreUnknownUsernames\":true,\"passwordCheckLifetime\":\"864000s\",\"externalLoginCheckLifetime\":\"864000s\",\"mfaInitSkipLifetime\":\"2592000s\",\"secondFactorCheckLifetime\":\"64800s\",\"multiFactorCheckLifetime\":\"43200s\",\"forceMfa\":false,\"forceMfaLocalOnly\":false,\"hidePasswordReset\":false,\"allowDomainDiscovery\":false,\"disableLoginWithEmail\":false,\"disableLoginWithPhone\":false}" \
+        "https://$EXTERNAL_DOMAIN/admin/v1/policies/login")
+      CODE=$(echo "$RESP" | tail -n1)
+      BODY=$(echo "$RESP" | head -n -1)
+      if [[ "$CODE" == "200" ]]; then
+        echo "default_login_policy: updated (allowRegister=$ALLOW_REGISTER allowExternalIdp=$ALLOW_EXTERNAL allowUsernamePassword=$ALLOW_USERPW)"
+      elif echo "$BODY" | grep -q "has not been changed"; then
+        echo "default_login_policy: already matches (allowRegister=$ALLOW_REGISTER allowExternalIdp=$ALLOW_EXTERNAL allowUsernamePassword=$ALLOW_USERPW)"
+      else
+        echo "default_login_policy: PUT failed with HTTP $CODE: $BODY" >&2
+        exit 1
+      fi
+    EOT
   }
 }
 
