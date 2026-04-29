@@ -113,6 +113,78 @@ resolve_cloudflare_tunnel_name() {
   printf '%s\n' "platform"
 }
 
+# ── Zitadel port-forward (provider transport) ────────────────────────────────
+#
+# The Zitadel TF provider speaks gRPC. Cloudflare's pure-proxy mode
+# strips HTTP/2 trailers on the response, which the provider's grpc-go
+# client treats as an unrecoverable stream-closed error. Bypass the
+# CF chain entirely by pointing the provider at a kubectl port-forward
+# tunnel; provider config in zitadel.tf reads `domain=localhost`,
+# `port=8080`, `transport_headers.Host=<external_domain>` to keep
+# Zitadel's instance routing happy.
+#
+# Skip cleanly when Zitadel isn't deployed yet — first apply on a
+# clean cluster has no zitadel Service to forward to, and we don't
+# want bootstrap to break on its absence.
+ZITADEL_PF_PID=""
+
+# Read the operator-supplied transport mode from config/platform.yaml.
+# Default (when the file is missing or the key is unset) is the
+# port-forward path so a clean clone with Cloudflare in the chain
+# bootstraps without operator intervention. Site-specific overrides
+# in `services.zitadel.provider.mode` flip this off.
+zitadel_provider_mode() {
+  local cfg="${SCRIPT_DIR}/config/platform.yaml"
+  [[ -f "${cfg}" ]] || { printf '%s\n' "port_forward"; return; }
+  local mode
+  mode="$(awk '
+    /^[[:space:]]*zitadel:/   { in_z=1; next }
+    in_z && /^[[:space:]]*provider:/ { in_p=1; next }
+    in_p && /^[[:space:]]*mode:/ {
+      sub(/.*mode:[[:space:]]*/, "")
+      gsub(/["[:space:]]/, "")
+      print; exit
+    }
+    /^[a-zA-Z]/ { in_z=0; in_p=0 }
+  ' "${cfg}" 2>/dev/null)"
+  printf '%s\n' "${mode:-port_forward}"
+}
+
+start_zitadel_port_forward() {
+  local mode
+  mode="$(zitadel_provider_mode)"
+  if [[ "${mode}" != "port_forward" ]]; then
+    return 0
+  fi
+  if ! kubectl get svc zitadel -n platform >/dev/null 2>&1; then
+    return 0
+  fi
+  if ss -tln 2>/dev/null | grep -q ":8080 "; then
+    echo "tf: localhost:8080 already in use — skipping kubectl port-forward (assumed already running)"
+    return 0
+  fi
+  echo "tf: kubectl port-forward svc/zitadel 8080:8080 (provider transport, bypasses Cloudflare gRPC trailer-strip)"
+  kubectl port-forward -n platform svc/zitadel 8080:8080 >/dev/null 2>&1 &
+  ZITADEL_PF_PID=$!
+  for _ in $(seq 1 30); do
+    if curl -fsS -o /dev/null --max-time 1 "http://localhost:8080/.well-known/openid-configuration" 2>/dev/null; then
+      return 0
+    fi
+    sleep 0.5
+  done
+  echo "tf: port-forward never became ready, continuing anyway (Zitadel may not be up yet)" >&2
+}
+
+stop_zitadel_port_forward() {
+  if [[ -n "${ZITADEL_PF_PID:-}" ]]; then
+    kill "${ZITADEL_PF_PID}" 2>/dev/null || true
+    wait "${ZITADEL_PF_PID}" 2>/dev/null || true
+    ZITADEL_PF_PID=""
+  fi
+}
+
+trap stop_zitadel_port_forward EXIT INT TERM
+
 reset_minikube_profile() {
   local profile="$1"
   local profile_dir="${HOME}/.minikube/profiles/${profile}"
@@ -632,6 +704,7 @@ EOF
     ;;
 
   *)
+    start_zitadel_port_forward
     echo "Running: terraform $*"
     terraform "$@"
     ;;
