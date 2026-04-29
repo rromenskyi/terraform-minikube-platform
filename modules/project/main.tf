@@ -164,7 +164,7 @@ locals {
     name => merge(
       { kind = "deployment" },
       local.component_defaults,
-      var.components[name],
+      try(var.components[name], {}),
       try(var.project_config.components[name], {}),
     )
   }
@@ -319,12 +319,16 @@ locals {
 }
 
 # Catch typos / missing component definitions at plan time.
+# A routed component is "known" if it has either a generic template
+# at `config/components/<name>.yaml` OR an inline definition in this
+# project's `envs.<env>.components.<name>` block.
 check "routes_reference_known_components" {
   assert {
     condition = alltrue([
-      for name in local._component_names : contains(keys(var.components), name)
+      for name in local._component_names :
+      contains(keys(var.components), name) || contains(keys(try(var.project_config.components, {})), name)
     ])
-    error_message = "project '${local.namespace}' has a route to an unknown component. Referenced components: ${jsonencode(local._component_names)}. Available components: ${jsonencode(keys(var.components))}. Add the missing config/components/<name>.yaml or fix the route target."
+    error_message = "project '${local.namespace}' has a route to an unknown component. Referenced components: ${jsonencode(local._component_names)}. Available templates: ${jsonencode(keys(var.components))}. Inline overrides: ${jsonencode(keys(try(var.project_config.components, {})))}. Add `config/components/<name>.yaml` OR an inline `envs.<env>.components.<name>` block in the domain yaml."
   }
 }
 
