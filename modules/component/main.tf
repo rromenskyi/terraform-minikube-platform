@@ -37,7 +37,7 @@ variable "image_pull_policy" {
   type        = string
   default     = null
   validation {
-    condition     = var.image_pull_policy == null || contains(["Always", "IfNotPresent", "Never"], var.image_pull_policy)
+    condition     = var.image_pull_policy == null ? true : contains(["Always", "IfNotPresent", "Never"], var.image_pull_policy)
     error_message = "image_pull_policy must be null (auto-derive) or one of Always, IfNotPresent, Never."
   }
 }
