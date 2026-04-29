@@ -230,6 +230,11 @@ locals {
         name      = try(c.ingress_service.name, c.kind == "external" ? c.service.name : name)
         namespace = c.kind == "external" && try(c.ingress_service, null) == null ? c.service.namespace : null
         port      = try(c.ingress_service, null) != null ? null : (c.kind == "external" ? tonumber(c.service.port) : tonumber(c.port))
+        # Upstream protocol Traefik uses to talk to the backend.
+        # `h2c` (HTTP/2 cleartext) is required for components that
+        # expose gRPC — Traefik's default is HTTP/1.1 which breaks
+        # gRPC framing. Set `scheme: h2c` in the component yaml.
+        scheme = try(c.scheme, null)
       } : k => v if v != null
     }
   }

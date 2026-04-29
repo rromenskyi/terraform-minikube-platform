@@ -4,6 +4,10 @@ terraform {
       source  = "hashicorp/kubernetes"
       version = "~> 2.0"
     }
+    kubectl = {
+      source  = "gavinbunney/kubectl"
+      version = "~> 1.14"
+    }
     random = {
       source  = "hashicorp/random"
       version = "~> 3.0"
@@ -26,9 +30,15 @@ variable "namespace" {
 }
 
 variable "image" {
-  description = "Zitadel container image. Pin a specific tag — `:latest` is not maintained as a stable channel. v3.x kept here intentionally because v4 removes the embedded Angular login UI entirely; v4 requires deploying the separate Next.js login-v2 sidecar with a service-account PAT, which is a chicken-and-egg without an existing logged-in operator. Migrate when we wire login-v2 properly."
+  description = "Zitadel main container image. v4 dropped the embedded Angular login form — the login UI now lives in the separate Next.js sidecar (`login_image`). Together with the FirstInstance machine-user PAT we bootstrap to disk, the chicken-and-egg of provisioning login-v2's service account vanishes."
   type        = string
-  default     = "ghcr.io/zitadel/zitadel:v3.4.9"
+  default     = "ghcr.io/zitadel/zitadel:v4.14.0"
+}
+
+variable "login_image" {
+  description = "Zitadel Login UI v2 sidecar image. Versioned independently from the main server (separate repo: zitadel/typescript). v3.0.1 is the latest tagged release and pairs with main server v4.x."
+  type        = string
+  default     = "ghcr.io/zitadel/login:v3.0.1"
 }
 
 variable "postgres_host" {
@@ -524,6 +534,82 @@ resource "kubernetes_deployment_v1" "zitadel" {
           }
         }
 
+        # Login UI v2 — Next.js app, served at /ui/v2/login. Runs as
+        # a sidecar so it can authenticate to the main Zitadel API
+        # over loopback (http://localhost:8080) and read the same
+        # FIRSTINSTANCE-bootstrapped PAT file the pat-broker harvests.
+        # Traefik routes /ui/v2/login/* to the `zitadel-login`
+        # Service emitted below.
+        container {
+          name  = "login"
+          image = var.login_image
+
+          port {
+            name           = "http"
+            container_port = 3000
+          }
+
+          env {
+            name  = "ZITADEL_API_URL"
+            value = "http://localhost:8080"
+          }
+          env {
+            name  = "ZITADEL_SERVICE_USER_TOKEN_FILE"
+            value = "/var/zitadel/secrets/pat"
+          }
+          # Surface verification + customisation flags as defaults;
+          # operators can extend by mounting a sidecar-side .env.
+          env {
+            name  = "EMAIL_VERIFICATION"
+            value = "false"
+          }
+          env {
+            name  = "NEXT_PUBLIC_BASE_PATH"
+            value = "/ui/v2/login"
+          }
+
+          resources {
+            requests = { cpu = "50m", memory = "128Mi" }
+            limits   = { cpu = "500m", memory = "512Mi" }
+          }
+
+          startup_probe {
+            http_get {
+              path = "/ui/v2/login"
+              port = 3000
+            }
+            period_seconds    = 5
+            failure_threshold = 30
+            timeout_seconds   = 3
+          }
+
+          liveness_probe {
+            http_get {
+              path = "/ui/v2/login"
+              port = 3000
+            }
+            period_seconds    = 10
+            failure_threshold = 3
+            timeout_seconds   = 3
+          }
+
+          readiness_probe {
+            http_get {
+              path = "/ui/v2/login"
+              port = 3000
+            }
+            period_seconds    = 5
+            failure_threshold = 3
+            timeout_seconds   = 3
+          }
+
+          volume_mount {
+            name       = "pat-output"
+            mount_path = "/var/zitadel/secrets"
+            read_only  = true
+          }
+        }
+
         service_account_name = kubernetes_service_account_v1.pat_broker["enabled"].metadata[0].name
 
         volume {
@@ -652,6 +738,66 @@ resource "kubernetes_service_v1" "zitadel" {
       target_port = 8080
     }
   }
+}
+
+# Separate Service so Traefik can path-route `/ui/v2/login/*` to the
+# login-v2 sidecar (port 3000) while keeping the rest of the host on
+# the main Zitadel API (port 8080).
+resource "kubernetes_service_v1" "zitadel_login" {
+  for_each = local.instances
+
+  metadata {
+    name      = "zitadel-login"
+    namespace = var.namespace
+    labels    = { app = "zitadel" }
+  }
+
+  spec {
+    selector = { app = "zitadel" }
+
+    port {
+      name        = "http"
+      port        = 3000
+      target_port = 3000
+    }
+  }
+}
+
+# Path-prefix IngressRoute for the login-v2 sidecar.
+#
+# The default IngressRoute that modules/project emits for the zitadel
+# `kind: external` component matches Host(<external_domain>) only. We
+# layer a higher-priority route on top: same host PLUS PathPrefix
+# `/ui/v2/login` → zitadel-login Service. Traefik's default router
+# scoring picks the longer match (Host AND Path) over the
+# Host-only rule for any URL under /ui/v2/login/*, so login traffic
+# lands on the sidecar and everything else stays on the main API.
+
+resource "kubectl_manifest" "login_ingress_route" {
+  for_each = local.instances
+
+  depends_on = [kubernetes_deployment_v1.zitadel, kubernetes_service_v1.zitadel_login]
+
+  yaml_body = yamlencode({
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "IngressRoute"
+    metadata = {
+      name      = "zitadel-login"
+      namespace = var.namespace
+    }
+    spec = {
+      entryPoints = ["web"]
+      routes = [{
+        match = "Host(`${var.external_domain}`) && PathPrefix(`/ui/v2/login`)"
+        kind  = "Rule"
+        services = [{
+          name      = "zitadel-login"
+          namespace = var.namespace
+          port      = 3000
+        }]
+      }]
+    }
+  })
 }
 
 # ── Outputs ───────────────────────────────────────────────────────────────────
