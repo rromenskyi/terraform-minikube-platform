@@ -897,6 +897,8 @@ module "component" {
   config_files = try(each.value.config_files, {})
   security     = try(each.value.security, {})
   sidecars     = try(each.value.sidecars, {})
+
+  cluster_role_rules = try(each.value.cluster_role_rules, [])
 }
 
 # ── BasicAuth (per-component) ─────────────────────────────────────────────────
