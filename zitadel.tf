@@ -33,33 +33,21 @@
 #   - sidecar bootstraps the PAT Secret asynchronously
 # Re-apply after that picks up the real PAT and provisions any
 # kind:app components that show up in YAML.
-# PAT lookup at root scope — NOT inside modules/zitadel — so the data
-# source has no depends_on chain to the Deployment and resolves at
-# refresh time independent of the module's apply state. Empty `objects`
-# list on first apply (Secret doesn't exist yet); populated thereafter.
-# Going through the root keeps `provider "zitadel"` from picking up an
-# `(known after apply)` value, which Terraform refuses to validate at
-# plan time.
-data "kubernetes_resources" "zitadel_tf_pat" {
+# Read-only lookup of the FIRSTINSTANCE-bootstrapped PAT for the
+# `zitadel_pat` output below. `kubernetes_resources` returns an empty
+# `objects` list when the Secret doesn't exist yet (clean clone, pre-
+# bootstrap), so the output degrades to "" instead of failing the
+# whole plan. Refreshes on every plan/apply, so a freshly-populated
+# Secret shows up on the next run.
+# `count` gates the lookup on `services.zitadel.enabled` — when
+# Zitadel is fully disabled the data source isn't fetched at all and
+# the output collapses to "".
+data "kubernetes_resources" "zitadel_tf_pat_output" {
+  for_each = local.platform.services.zitadel.enabled ? toset(["enabled"]) : toset([])
+
   api_version = "v1"
   kind        = "Secret"
   namespace   = kubernetes_namespace_v1.platform.metadata[0].name
-  # field_selector "metadata.name=..." is silently ignored by the
-  # Terraform kubernetes provider's resources data source — it does
-  # not propagate the selector to the API list call. Filter in HCL
-  # instead from the full namespace listing.
-  label_selector = ""
-}
-
-locals {
-  zitadel_tf_pat_secrets = [
-    for o in data.kubernetes_resources.zitadel_tf_pat.objects :
-    o if o.metadata.name == "zitadel-tf-pat"
-  ]
-  zitadel_tf_pat = try(
-    base64decode(local.zitadel_tf_pat_secrets[0].data.access_token),
-    ""
-  )
 }
 
 # Provider transport is operator-configurable via
@@ -96,15 +84,22 @@ locals {
 }
 
 provider "zitadel" {
-  domain       = local.zitadel_provider_host
-  insecure     = tostring(local.platform.services.zitadel.provider.insecure)
-  port         = tostring(local.platform.services.zitadel.provider.port)
-  access_token = coalesce(local.zitadel_tf_pat, var.zitadel_pat, "PLACEHOLDER_BOOTSTRAP")
+  domain   = local.zitadel_provider_host
+  insecure = tostring(local.platform.services.zitadel.provider.insecure)
+  port     = tostring(local.platform.services.zitadel.provider.port)
+  # PAT lives in the operator's `.env` as `TF_VAR_zitadel_pat` (one-
+  # time setup — see operating.md → "Zitadel PAT bootstrap"). Empty
+  # placeholder satisfies provider validation on a clean clone where
+  # Zitadel hasn't been bootstrapped yet; the precondition below
+  # catches the real misuse case (kind:app components active without
+  # a PAT in `.env`).
+  access_token = var.zitadel_pat != "" ? var.zitadel_pat : "PLACEHOLDER_BOOTSTRAP"
 
   transport_headers = {
     Host = local.platform.services.zitadel.external_domain
   }
 }
+
 
 module "zitadel" {
   source     = "./modules/zitadel"
