@@ -28,3 +28,9 @@ jobs:
 
     - name: Terraform Validate
       run: terraform validate
+
+    - name: Terraform Test (modules/component)
+      working-directory: modules/component
+      run: |
+        terraform init -backend=false
+        terraform test
