@@ -91,6 +91,20 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "main" {
       content {
         hostname = ingress_rule.key
         service  = ingress_rule.value.service
+
+        # cloudflared talks HTTP/1.1 to origin by default. Components
+        # that need end-to-end gRPC (Zitadel today, anything kind:app
+        # backed by gRPC tomorrow) flip `http2_origin: true` in their
+        # YAML — that propagates through modules/project's hostnames
+        # output and lands here. Cloudflared then negotiates HTTP/2
+        # cleartext upstream against Traefik, which has its own
+        # `scheme: h2c` knob to pass the framing through to the pod.
+        dynamic "origin_request" {
+          for_each = try(ingress_rule.value.http2_origin, false) ? [1] : []
+          content {
+            http2_origin = true
+          }
+        }
       }
     }
 

@@ -62,11 +62,48 @@ locals {
   )
 }
 
+# Provider transport is operator-configurable via
+# `services.zitadel.provider` in `config/platform.yaml`. Two modes
+# the platform supports out of the box:
+#
+#   - "public" — provider connects to the real ExternalDomain over
+#     HTTPS:443. Right answer when the ingress chain forwards HTTP/2
+#     trailers cleanly (any direct ingress, most non-CF clouds, even
+#     CF with the right Workers / Spectrum config).
+#
+#   - "port_forward" — provider connects to localhost:8080 over plain
+#     HTTP, with the `./tf` wrapper running `kubectl port-forward
+#     svc/zitadel 8080:8080` for the duration of the apply. Used here
+#     because our deploy sits behind Cloudflare's pure-proxy mode,
+#     which strips gRPC HTTP/2 trailers — the provider's grpc-go
+#     client treats absent trailers as a stream-closed error. Verified
+#     in the wild: same gRPC call via port-forward returns
+#     `grpc-status: 2` trailer; through CF the response has no
+#     trailers at all.
+#
+# `transport_headers.Host` is set to the ExternalDomain in both modes
+# so Zitadel's multi-tenant instance lookup matches even when the
+# transport host is `localhost`.
+locals {
+  # Empty `provider.host` falls back to the external_domain — saves
+  # operators duplicating "id.example.com" in two places when running
+  # in `public` mode.
+  zitadel_provider_host = (
+    local.platform.services.zitadel.provider.host == ""
+    ? local.platform.services.zitadel.external_domain
+    : local.platform.services.zitadel.provider.host
+  )
+}
+
 provider "zitadel" {
-  domain       = local.platform.services.zitadel.external_domain
-  insecure     = "false"
-  port         = "443"
+  domain       = local.zitadel_provider_host
+  insecure     = tostring(local.platform.services.zitadel.provider.insecure)
+  port         = tostring(local.platform.services.zitadel.provider.port)
   access_token = coalesce(local.zitadel_tf_pat, var.zitadel_pat, "PLACEHOLDER_BOOTSTRAP")
+
+  transport_headers = {
+    Host = local.platform.services.zitadel.external_domain
+  }
 }
 
 module "zitadel" {
