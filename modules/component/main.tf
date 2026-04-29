@@ -204,6 +204,26 @@ variable "sidecars" {
   default = {}
 }
 
+variable "cluster_role_rules" {
+  description = <<-EOT
+    Cluster-scoped read access this component needs for the k8s API.
+    Non-empty list opts the component into the managed-identity
+    pattern: a ServiceAccount named `<component>` in the component's
+    namespace + a ClusterRole + ClusterRoleBinding named
+    `<namespace>-<component>` carrying the supplied rules. The Pod's
+    `service_account_name` is set to the SA so in-cluster requests
+    (k8s client libs, kubectl from inside the pod) authenticate
+    against the role automatically. Empty list = default SA, no
+    cluster RBAC, identical to today's behaviour.
+  EOT
+  type = list(object({
+    api_groups = list(string)
+    resources  = list(string)
+    verbs      = list(string)
+  }))
+  default = []
+}
+
 variable "env_random_keys" {
   description = <<-EOT
     Keys present in the Secret referenced by `random_env_secret_name`.
@@ -248,6 +268,8 @@ locals {
   # The regex captures the tag after the LAST `:` as long as it's not
   # followed by `/` (registry hostname port like `ghcr.io:443/...` won't
   # accidentally match) and not inside an `@`-separated digest.
+  rbac_instances = length(var.cluster_role_rules) > 0 ? toset(["enabled"]) : toset([])
+
   effective_image_pull_policy = (
     var.image_pull_policy != null
     ? var.image_pull_policy
@@ -361,6 +383,63 @@ resource "kubernetes_config_map_v1" "files" {
   }
 }
 
+# ── Cluster RBAC (managed-identity pattern) ───────────────────────────────────
+#
+# When `var.cluster_role_rules` is non-empty, emit a SA in the
+# component's namespace + a cluster-scoped Role + Binding so the
+# Pod's in-cluster k8s API requests authenticate as the component
+# itself. Names: SA = `<component>`; ClusterRole + Binding =
+# `<namespace>-<component>` so they don't collide cluster-wide.
+
+resource "kubernetes_service_account_v1" "this" {
+  for_each = local.rbac_instances
+
+  metadata {
+    name      = var.name
+    namespace = var.namespace
+    labels    = { app = var.name }
+  }
+}
+
+resource "kubernetes_cluster_role_v1" "this" {
+  for_each = local.rbac_instances
+
+  metadata {
+    name   = "${var.namespace}-${var.name}"
+    labels = { app = var.name }
+  }
+
+  dynamic "rule" {
+    for_each = var.cluster_role_rules
+    content {
+      api_groups = rule.value.api_groups
+      resources  = rule.value.resources
+      verbs      = rule.value.verbs
+    }
+  }
+}
+
+resource "kubernetes_cluster_role_binding_v1" "this" {
+  for_each = local.rbac_instances
+
+  metadata {
+    name   = "${var.namespace}-${var.name}"
+    labels = { app = var.name }
+  }
+
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "ClusterRole"
+    name      = kubernetes_cluster_role_v1.this["enabled"].metadata[0].name
+  }
+
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account_v1.this["enabled"].metadata[0].name
+    namespace = var.namespace
+  }
+}
+
 # ── Deployment ────────────────────────────────────────────────────────────────
 
 resource "kubernetes_deployment_v1" "this" {
@@ -383,6 +462,11 @@ resource "kubernetes_deployment_v1" "this" {
       }
 
       spec {
+        # Custom SA when cluster_role_rules is non-empty; default SA
+        # otherwise. K8s defaults to "default" SA in the namespace —
+        # leaving service_account_name unset preserves that.
+        service_account_name = length(var.cluster_role_rules) > 0 ? kubernetes_service_account_v1.this["enabled"].metadata[0].name : null
+
         dynamic "security_context" {
           for_each = (
             try(var.security.run_as_user, null) != null
