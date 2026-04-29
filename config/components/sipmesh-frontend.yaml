@@ -31,6 +31,28 @@ resources:
 # is good enough for a liveness probe.
 health_path: /
 
+# adapter-node sees `Host: sipmeshd.ipsupport.us` from cloudflared but
+# can't infer the public scheme/port — `cf-visitor` proxies through
+# without obvious markers and the X-Forwarded-Proto chain we'd want
+# to trust isn't always set in CF Tunnel public mode. Without ORIGIN
+# Auth.js generates `http://` callback URLs and Zitadel's redirect_uri
+# allowlist (which is registered as `https://`) rejects the round-trip.
+env_static:
+  # Public-facing origin Auth.js uses to build callback URLs +
+  # cookies. Without these it falls back to Host header alone and
+  # hard-codes `http://` (no proto info reaches the pod through
+  # cloudflared otherwise). AUTH_URL is Auth.js's specific override
+  # that wins over hostname/header detection — needed because
+  # `trustHost: true` in `src/auth.ts` only governs Host validation,
+  # not scheme inference.
+  ORIGIN: https://sipmeshd.ipsupport.us
+  AUTH_URL: https://sipmeshd.ipsupport.us
+  # adapter-node reads these to recover the original scheme/host from
+  # cloudflared's forwarded headers — together with ORIGIN they make
+  # `request.url` reflect what the browser actually saw.
+  PROTOCOL_HEADER: x-forwarded-proto
+  HOST_HEADER: x-forwarded-host
+
 oidc:
   enabled: true
 
