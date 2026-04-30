@@ -9,6 +9,58 @@ name: example.com                              # Domain name (used in hostnames)
 slug: example-com                              # URL-safe slug (used in namespace names)
 cloudflare_zone_id: "your-zone-id-from-cf"     # Cloudflare Zone ID for this domain
 
+# (Optional) Manual DNS records. Domain-scoped (not env-scoped) — these
+# describe the zone, not per-env routing. The platform automatically
+# emits a CNAME for every `envs.*.routes:` entry below pointing at the
+# Cloudflare Tunnel; use `dns:` here for everything else (MX/SPF/DKIM/
+# DMARC for mail, SRV for SIP/XMPP, apex A when a host has a public
+# WAN IP for non-HTTP, third-party verification TXT, etc.).
+#
+# Each entry:
+#   name     — record name. "@" or "" = apex; otherwise relative to the zone.
+#   type     — A | AAAA | CNAME | MX | TXT | SRV | NS | CAA | PTR | LOC.
+#   content  — string value (required for non-SRV/CAA/LOC types).
+#   data     — structured object (required for SRV/CAA/LOC; replaces content).
+#   ttl      — seconds. Default 1 = "Auto" on Cloudflare Free.
+#   proxied  — orange-cloud (CF proxy). Only valid for A/AAAA/CNAME. Default false.
+#   priority — for MX records. Default null.
+#   comment  — free-text shown in CF UI for context.
+#
+# dns:
+#   # Mail — external relay holds the public IP and the MX, since
+#   # residential ISPs block inbound :25 and CF Tunnel doesn't forward TCP.
+#   - name: "@"
+#     type: MX
+#     content: "mail-relay.example.net"
+#     priority: 10
+#   - name: "@"
+#     type: TXT
+#     content: "v=spf1 include:mail-relay.example.net ~all"
+#     comment: "SPF — authorise mail-relay to send as @example.com"
+#   - name: _dmarc
+#     type: TXT
+#     content: "v=DMARC1; p=none; rua=mailto:postmaster@example.com"
+#
+#   # Apex A — when home box has a public WAN IP exposed (e.g. SIP UDP).
+#   - name: "@"
+#     type: A
+#     content: "203.0.113.5"
+#     proxied: false               # CF Tunnel proxy is HTTP-only; UDP needs unproxied
+#
+#   # SIP service discovery — sipmesh sip-proxy listens on UDP 5060 at sip.example.com.
+#   - name: _sip._udp
+#     type: SRV
+#     data:
+#       priority: 10
+#       weight:   100
+#       port:     5060
+#       target:   sip.example.com
+#
+#   # Third-party verification (Bing webmaster, GitHub Pages, etc.)
+#   - name: "@"
+#     type: TXT
+#     content: "google-site-verification=AbCdEf..."
+
 # `envs` is a map of env name → per-env routing config.
 # Hostnames and components are decoupled:
 #   - the map key is the HOST PREFIX    ("" = bare apex, "www" = www.example.com)
