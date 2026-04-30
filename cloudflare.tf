@@ -129,3 +129,60 @@ resource "cloudflare_record" "tunnel" {
   type    = "CNAME"
   proxied = true
 }
+
+# ── Manual DNS records — declared per-domain in YAML ─────────────────────────
+#
+# The auto-generated CNAMEs above cover everything routed through the
+# Cloudflare Tunnel (= every component declared in `envs.*.routes:`).
+# Manual records here cover the rest: MX/SPF/DKIM/DMARC for mail,
+# SRV records for service discovery (e.g. `_sip._udp` for sipmesh),
+# apex A records when a host has a public WAN IP exposed for non-HTTP
+# traffic, third-party verification TXT, etc.
+#
+# Schema lives on each `config/domains/<domain>.yaml` under top-level
+# `dns:` — see config/domains/example.com.yaml.example for the worked
+# shape. Records are domain-scoped (not env-scoped) — they describe the
+# zone, not a per-env routing decision.
+resource "cloudflare_record" "manual" {
+  for_each = local.manual_dns_records
+
+  zone_id  = each.value.zone_id
+  name     = each.value.name
+  type     = each.value.type
+  ttl      = each.value.ttl
+  proxied  = each.value.proxied
+  priority = each.value.priority
+  comment  = each.value.comment
+
+  # Flat `content` for A/AAAA/CNAME/MX/TXT/NS/PTR. SRV/CAA/LOC use the
+  # structured `data` block instead — the provider rejects co-presence
+  # of both, so each record specifies exactly one in YAML.
+  content = each.value.data == null ? each.value.content : null
+
+  dynamic "data" {
+    for_each = each.value.data == null ? [] : [each.value.data]
+    content {
+      priority = try(data.value.priority, null)
+      weight   = try(data.value.weight, null)
+      port     = try(data.value.port, null)
+      target   = try(data.value.target, null)
+      service  = try(data.value.service, null)
+      proto    = try(data.value.proto, null)
+      name     = try(data.value.name, null)
+      flags    = try(data.value.flags, null)
+      tag      = try(data.value.tag, null)
+      value    = try(data.value.value, null)
+    }
+  }
+
+  lifecycle {
+    precondition {
+      condition     = each.value.content != null || each.value.data != null
+      error_message = "DNS record ${each.key} must declare either `content` (string) or `data` (object). See config/domains/example.com.yaml.example."
+    }
+    precondition {
+      condition     = each.value.zone_id != null
+      error_message = "DNS record ${each.key}: domain has no `cloudflare_zone_id` — set it on the domain YAML before declaring `dns:` records."
+    }
+  }
+}
