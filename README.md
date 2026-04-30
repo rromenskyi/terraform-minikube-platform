@@ -275,9 +275,27 @@ envs:                                         # Map of env → per-env routing
 limits:                                       # (Optional) override default resource quota per project
   cpu: "4"
   memory: "8Gi"
+
+dns:                                          # (Optional) manual DNS records, domain-scoped
+  - name: "@"                                 # apex (or "" — same thing)
+    type: MX
+    content: "mail-relay.example.net"
+    priority: 10
+  - name: "@"
+    type: TXT
+    content: "v=spf1 include:mail-relay.example.net ~all"
+  - name: _sip._udp                           # SRV uses structured `data:` not `content:`
+    type: SRV
+    data:
+      priority: 10
+      weight:   100
+      port:     5060
+      target:   sip.example.com
 ```
 
 **Hostname generation:** the host prefix from the route map key is used literally. Empty string = apex. No env is injected into the hostname — if two envs of the same domain need distinct URLs, spell out the subdomain in the key (`api.dev: whoami` → `api.dev.example.com`).
+
+**DNS records (`dns:`)** — manual records added on top of the auto-generated CNAMEs that every `routes:` entry produces (each routed hostname → the Cloudflare Tunnel CNAME). Use `dns:` for MX/SPF/DKIM/DMARC, `_sip._udp` SRV records (sipmesh deploy), apex A records when a host has a public WAN IP for non-HTTP traffic, third-party verification TXT, and so on. Domain-scoped, not env-scoped — these describe the zone, not a per-env routing decision. Supported fields: `name`, `type`, `content` OR `data` (SRV/CAA/LOC use the structured `data` block), `ttl` (default 1 = "Auto" on CF Free), `proxied` (only meaningful for A/AAAA/CNAME), `priority` (for MX), `comment`. The `for_each` key is content-hashed so re-ordering the YAML list does not churn the plan; editing a record's content rotates that one key (CF requires delete+create for value changes anyway). See `config/domains/example.com.yaml.example` for worked examples covering mail, SIP SRV, apex A, and verification TXT.
 
 **Decoupled routes + components:** a component is deployed iff at least one route targets it. The same component can back multiple hosts (bare + `www`); different hosts can back different components (api → `whoami2`, bare → `whoami`).
 
