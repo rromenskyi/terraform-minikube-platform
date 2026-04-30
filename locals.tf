@@ -125,6 +125,35 @@ locals {
     trimsuffix(basename(f), ".yaml") => yamldecode(file("${path.module}/config/components/${f}"))
   }
 
+  # Manual DNS records from `config/domains/<domain>.yaml#dns:`. Domain-
+  # scoped (not env-scoped) — DNS records are facts about the zone, not
+  # about an env. Auto-generated CNAMEs for `envs.*.routes:` are emitted
+  # separately by cloudflare.tf via `local.all_hostnames`.
+  #
+  # for_each key = "{domain_key}|{type}|{name}|{md5(content|data)}". Re-
+  # ordering the YAML list does not churn the plan; editing content
+  # rotates only that record's key (replace, not in-place update — CF
+  # doesn't allow changing the value of an existing record without a
+  # delete+create, so this matches reality).
+  manual_dns_records = {
+    for entry in flatten([
+      for domain_key, cfg in local._domain_configs : [
+        for rec in try(cfg.dns, []) : {
+          domain_key = domain_key
+          zone_id    = cfg.cloudflare_zone_id
+          name       = rec.name
+          type       = rec.type
+          content    = try(rec.content, null)
+          data       = try(rec.data, null)
+          ttl        = try(rec.ttl, 1)
+          proxied    = try(rec.proxied, false)
+          priority   = try(rec.priority, null)
+          comment    = try(rec.comment, null)
+        }
+      ]
+    ]) : "${entry.domain_key}|${entry.type}|${entry.name}|${md5(coalesce(entry.content, jsonencode(entry.data)))}" => entry
+  }
+
   # Resource-quota settings per namespace. `config/limits/<namespace>.yaml`
   # overrides `config/limits/default.yaml` — e.g. `config/limits/platform.yaml`
   # bumps the root platform namespace above the tenant-default tier
