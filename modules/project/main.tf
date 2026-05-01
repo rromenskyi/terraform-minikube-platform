@@ -914,6 +914,13 @@ module "component" {
     module.zitadel_app[each.key].secret_name
   ) : null
 
+  # Drive a pod rollout whenever the OIDC Secret rotates. K8s doesn't
+  # do this on its own for envFrom-sourced env vars — see the
+  # `pod_annotations` var in modules/component for the why.
+  pod_annotations = contains(keys(local.app_components_with_oidc), each.key) ? {
+    "checksum/oidc" = module.zitadel_app[each.key].secret_checksum
+  } : {}
+
   static_env = try(each.value.env_static, {})
 
   random_env_secret_name = contains(local.env_random_components, each.key) ? (
