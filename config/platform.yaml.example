@@ -98,6 +98,26 @@ services:
   # add an `id: zitadel` route to your operator-domain yaml under
   # `config/domains/<your-domain>.yaml` (the matching `kind: external`
   # component already lives at `config/components/zitadel.yaml`).
+  # Infisical — platform secrets store. Phase 0: brings up the
+  # server with a bootstrap recovery admin. Phase 1 (deferred) wires
+  # Zitadel OIDC SSO. Phase 2 introduces the agent sidecar that
+  # materialises k8s Secrets from Infisical paths. Until Phase 2,
+  # nothing else in the cluster reads from Infisical — it's an empty
+  # box you can log into.
+  #
+  # Hard requirements: services.postgres.enabled = true (main store)
+  # and services.redis.enabled = true (Bull queues + rate limiting).
+  # Both are gated by check blocks in `infisical.tf`.
+  infisical:
+    enabled: false
+    # Public hostname Infisical answers on. Drives SITE_URL and the
+    # IngressRoute Host(...) match. Must match the route you wired
+    # in `config/domains/<your-domain>.yaml`.
+    hostname: secrets.example.com
+    # Bootstrap admin email for the `/api/v1/admin/signup` flow.
+    # Login password comes from `terraform output -json infisical`.
+    recovery_admin_email: ops@example.com
+
   zitadel:
     enabled: false
     # Public hostname Zitadel issues OIDC tokens for. Must equal the
