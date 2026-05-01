@@ -6,12 +6,21 @@
 # a tiny socat forwarder (also in `mail`) bound to the WireGuard
 # address — Cloudflare Tunnel does not forward TCP/25, the public
 # relay forwards there. SMTP outbound is wired to the same relay
-# through Stalwart's MtaRoute Relay variant; smarthost vars
-# (var.smarthost_*) plumb in at the module call below. An empty
-# smarthost_address falls back to direct MX, which residential ISPs
-# silently swallow.
+# through Stalwart's MtaRoute Relay variant; smarthost values come
+# from `local.mail.smarthost.*` (sourced from the domain yaml that
+# carries `mail.primary: true`). An empty `smarthost.address` falls
+# back to direct MX, which residential ISPs silently swallow.
+#
+# Tenant-specific values (smarthost target, WG bind IP, public IP for
+# SPF, DKIM selector, DMARC policy) live under `mail:` in the primary
+# domain's yaml — those files are gitignored. Only the SMTP-AUTH
+# password (when used) stays out of yaml: pass via TF_VAR_smarthost_password
+# in `.env`. The mail stack is created iff exactly one domain yaml
+# sets `mail.primary: true`.
 
 resource "kubernetes_namespace_v1" "mail" {
+  count = local.mail == null ? 0 : 1
+
   metadata {
     name = "mail"
     labels = {
@@ -29,11 +38,13 @@ resource "kubernetes_namespace_v1" "mail" {
 # Roundcube 200m/256Mi, smtp-relay 100m/32Mi — a hair under 1.1Gi
 # memory limits with all four pods running, plus the operator's
 # expected mailbox count is one digit. 2Gi memory + 2 CPU leaves
-# enough room without blowing past the 32Gi / 12-CPU node.
+# enough room without blowing past a typical home-lab node.
 resource "kubernetes_resource_quota_v1" "mail" {
+  count = local.mail == null ? 0 : 1
+
   metadata {
     name      = "mail-budget"
-    namespace = kubernetes_namespace_v1.mail.metadata[0].name
+    namespace = kubernetes_namespace_v1.mail[0].metadata[0].name
     labels = {
       "app.kubernetes.io/managed-by" = "terraform"
     }
@@ -54,18 +65,26 @@ module "stalwart" {
   source     = "./modules/stalwart"
   depends_on = [module.addons, module.zitadel, kubernetes_resource_quota_v1.mail]
 
-  enabled          = true
-  namespace        = kubernetes_namespace_v1.mail.metadata[0].name
+  enabled          = local.mail != null
+  namespace        = local.mail == null ? "" : kubernetes_namespace_v1.mail[0].metadata[0].name
   volume_base_path = var.host_volume_path
 
-  # Primary domain + matching Cloudflare zone come from the same
-  # entry in `_domain_configs`. `primary_mail_domain` is the variable
-  # operators flip when the home of mail moves to a different tenant
-  # — everything else (DKIM/SPF/DMARC TXT records, the mail UI's
-  # `defaultDomainId`, OIDC auto-provisioning) follows from it.
-  primary_domain     = var.primary_mail_domain
-  hostname           = "mail.${var.primary_mail_domain}"
-  cloudflare_zone_id = try(local._domain_configs[var.primary_mail_domain].cloudflare_zone_id, "")
+  # Primary domain + matching Cloudflare zone come from the domain
+  # yaml that opts in via `mail.primary: true`. Hostname defaults to
+  # `mail.<domain>` but can be overridden in yaml.
+  primary_domain     = try(local.mail.primary_domain, "")
+  hostname           = try(local.mail.hostname, "")
+  cloudflare_zone_id = try(local.mail.cloudflare_zone_id, "")
+
+  # DNS / DKIM knobs from yaml.
+  dkim_selector     = try(local.mail.dkim_selector, "stalwart")
+  spf_authorized_ip = try(local.mail.spf_authorized_ip, "")
+  dmarc_policy      = try(local.mail.dmarc_policy, "quarantine")
+
+  # SMTP inbound forwarder bind IP — typically the WireGuard interface
+  # address on the home node so the public relay's outbound tunnel can
+  # reach it without exposing :25 on the LAN.
+  smtp_relay_listen_ip = try(local.mail.smtp_relay_listen_ip, "")
 
   # Zitadel wiring — when zitadel is on at platform root, the module
   # creates an OIDC app + role + the bootstrap plan attaches Zitadel
@@ -75,17 +94,18 @@ module "stalwart" {
   zitadel_issuer_url             = local.platform.services.zitadel.enabled ? "https://${local.platform.services.zitadel.external_domain}" : ""
   zitadel_provider_authenticated = var.zitadel_pat != ""
 
-  # Outbound smart-host — set TF_VAR_smarthost_address (and the
-  # adjacent _port / _username / _password if the relay needs auth)
-  # in `.env` to push every non-local message through the public
-  # Postfix relay VPS. Empty leaves Stalwart on direct-MX which the
-  # network silently swallows.
-  smarthost_address             = var.smarthost_address
-  smarthost_port                = var.smarthost_port
-  smarthost_implicit_tls        = var.smarthost_implicit_tls
-  smarthost_allow_invalid_certs = var.smarthost_allow_invalid_certs
-  smarthost_username            = var.smarthost_username
-  smarthost_password            = var.smarthost_password
+  # Outbound smart-host. yaml provides target/port/TLS shape. The home
+  # cluster's relay accepts mail by source-IP / WG peer-ACL, so SMTP
+  # AUTH is unused — `smarthost_username` stays empty and the module's
+  # `smarthost_password` defaults to empty too. Operators relaying
+  # through an AUTH-required SaaS (Mailgun, SendGrid, etc.) would need
+  # to add a `var.smarthost_password` (sensitive, .env-only) and pipe
+  # it through here.
+  smarthost_address             = try(local.mail.smarthost.address, "")
+  smarthost_port                = try(local.mail.smarthost.port, 25)
+  smarthost_implicit_tls        = try(local.mail.smarthost.implicit_tls, false)
+  smarthost_allow_invalid_certs = try(local.mail.smarthost.allow_invalid_certs, false)
+  smarthost_username            = try(local.mail.smarthost.username, "")
 }
 
 # Roundcube webmail — fronts the actual mailbox UI at the root of
@@ -97,9 +117,9 @@ module "roundcube" {
   source     = "./modules/roundcube"
   depends_on = [module.stalwart]
 
-  enabled          = local.platform.services.zitadel.enabled
-  namespace        = kubernetes_namespace_v1.mail.metadata[0].name
-  hostname         = "mail.${var.primary_mail_domain}"
+  enabled          = local.mail != null && local.platform.services.zitadel.enabled
+  namespace        = local.mail == null ? "" : kubernetes_namespace_v1.mail[0].metadata[0].name
+  hostname         = try(local.mail.hostname, "")
   volume_base_path = var.host_volume_path
 
   zitadel_org_id                 = local.platform.services.zitadel.enabled ? data.zitadel_orgs.platform_org[0].ids[0] : ""

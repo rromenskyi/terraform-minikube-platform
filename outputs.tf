@@ -186,7 +186,7 @@ output "cheatsheet" {
       terraform output -raw stalwart_recovery_admin_password
 
     Mail — Roundcube webmail (Zitadel SSO; auto-provisions Stalwart UserAccount on first login):
-      https://mail.ipsupport.us/
+      https://${try(local.mail.hostname, "<configure mail in a domain yaml>")}/
 
     Mail — Stalwart admin panel (operator-only; URL hidden behind a random prefix
     so the login screen doesn't surface to drive-by scans — paste from the

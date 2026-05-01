@@ -9,6 +9,39 @@ name: example.com                              # Domain name (used in hostnames)
 slug: example-com                              # URL-safe slug (used in namespace names)
 cloudflare_zone_id: "your-zone-id-from-cf"     # Cloudflare Zone ID for this domain
 
+# (Optional) Mail-stack opt-in. Exactly ONE domain across all
+# `config/domains/*.yaml` files should set `mail.primary: true` —
+# that domain becomes the home of the platform mail stack
+# (`mail.tf` reads `local.mail`, which is derived from the
+# primary-mail domain's yaml). When zero domains opt in, the mail
+# stack stays uncreated. The mail UI hostname defaults to
+# `mail.<name>`; override `hostname` if you want a different
+# subdomain.
+#
+# Smarthost: typically the WG IP of a public Postfix relay VPS
+# (residential ISPs and Cloudflare Tunnel both block outbound :25,
+# so a relay is required). Empty `address` falls back to direct MX
+# — fine on a public-IP VPS where :25 is reachable.
+#
+# `spf_authorized_ip` is the public IP that mail leaves through
+# (the relay's WAN IP) — drives the `v=spf1 ip4:<this> -all`
+# record `modules/stalwart` emits. Empty omits SPF entirely.
+#
+# mail:
+#   primary: true
+#   hostname: mail.example.com                 # default: mail.<name>
+#   smtp_relay_listen_ip: "10.10.0.2"          # WG iface on this node
+#   spf_authorized_ip: "203.0.113.5"           # relay's public IP
+#   dkim_selector: "stalwart"
+#   dmarc_policy: "quarantine"                 # tighten to "reject" later
+#   smarthost:
+#     address: "10.10.0.1"                     # WG IP of the relay
+#     port: 25
+#     implicit_tls: false
+#     allow_invalid_certs: false
+#     username: ""                             # empty = no SMTP AUTH
+#     # password — set TF_VAR_smarthost_password in `.env` if AUTH is needed
+
 # (Optional) Manual DNS records. Domain-scoped (not env-scoped) — these
 # describe the zone, not per-env routing. The platform automatically
 # emits a CNAME for every `envs.*.routes:` entry below pointing at the
