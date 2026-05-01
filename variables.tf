@@ -87,3 +87,43 @@ variable "zitadel_pat" {
   default     = ""
   sensitive   = true
 }
+
+variable "zitadel_login_client_pat" {
+  description = <<-EOT
+    Personal Access Token for the Zitadel `login-client` machine
+    user — read by the Login UI v2 sidecar to talk gRPC to the main
+    Zitadel API. Created automatically at FIRSTINSTANCE and written
+    to an emptyDir; that emptyDir is lost on every pod restart, so
+    the Login UI hangs at "waiting for login-client.pat..." after
+    any reboot. To unstick: paste the value here as
+    `TF_VAR_zitadel_login_client_pat` once, TF mounts it via Secret
+    at the path the sidecar expects, and restarts stop being
+    destructive. Generate a fresh one with the tf-platform PAT:
+
+      TF_PAT=$(kubectl get secret -n platform zitadel-tf-pat -o jsonpath='{.data.access_token}' | base64 -d)
+      kubectl port-forward -n platform svc/zitadel 8080:8080 &
+      USER_ID=$(curl -s -H "Authorization: Bearer $TF_PAT" -H 'Content-Type: application/json' \\
+        -X POST 'http://localhost:8080/v2/users' \\
+        -d '{"queries":[{"userNameQuery":{"userName":"login-client","method":"TEXT_QUERY_METHOD_EQUALS"}}]}' \\
+        | jq -r '.result[0].userId')
+      curl -s -H "Authorization: Bearer $TF_PAT" -H 'Content-Type: application/json' \\
+        -X POST "http://localhost:8080/management/v1/users/$USER_ID/pats" \\
+        -d '{"expirationDate":"2099-12-31T00:00:00Z"}' | jq -r '.token'
+
+    Empty when `services.zitadel.enabled = false`.
+  EOT
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+# Mail-stack tenant settings (smarthost target/port/auth-mode, WG bind
+# IP, public IP for SPF, DKIM selector, DMARC policy, and which domain
+# owns the stack) live under `mail:` in the primary domain's yaml —
+# see `config/domains/example.com.yaml.example`. Domain yamls are
+# gitignored, so tenant-specific values stay out of the repo. The only
+# bit that doesn't fit yaml is the SMTP-AUTH password (when relaying
+# through an AUTH-required SaaS like Mailgun); operators on that path
+# can re-add a sensitive `smarthost_password` variable here and pipe
+# it through `mail.tf`. The home-cluster relay accepts by WG peer-ACL,
+# so no AUTH is needed and the var is unused.

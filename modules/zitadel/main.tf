@@ -40,9 +40,9 @@ variable "image" {
 }
 
 variable "login_image" {
-  description = "Zitadel Login UI v2 sidecar image. Versioned independently from the main server (separate repo: zitadel/typescript). v3.0.1 (latest tagged release) ships without the wait-for-token-file entrypoint that newer commits added — the `:main` rolling tag has it. Pin to `:main` until the next semver release is cut."
+  description = "Zitadel Login UI v2 sidecar image. Pinned to the last tagged release — the rolling `:main` tag has been observed to ship a SPA race that double-submits `createCallback` and trips `Auth Request has already been handled (COMMAND-Sx208nt)` on every OIDC flow, breaking forward-auth-style gates. The wait-for-token-file behaviour we used to need from `:main` is now done in this module's own container `command` override, so the tagged release is fine."
   type        = string
-  default     = "ghcr.io/zitadel/login:main"
+  default     = "ghcr.io/zitadel/login:v3.0.1"
 }
 
 variable "postgres_host" {
@@ -69,6 +69,13 @@ variable "first_admin_username" {
   description = "Username for the bootstrap human admin."
   type        = string
   default     = "zitadel-admin"
+}
+
+variable "login_client_pat" {
+  description = "Pre-existing PAT for the `login-client` machine user. FIRSTINSTANCE writes a fresh PAT to an emptyDir on first install; that file is lost on pod restart and the Login UI v2 sidecar hangs forever waiting for it. Setting this var to an existing PAT (regenerated via the management API once and pasted into the operator's `.env`) makes the deployment mount it from a Secret instead, surviving any number of pod restarts. Empty (default) keeps the original FIRSTINSTANCE-only behavior — fine on a fresh install, broken on every subsequent restart."
+  type        = string
+  default     = ""
+  sensitive   = true
 }
 
 variable "login_policy" {
@@ -148,6 +155,25 @@ resource "kubernetes_secret_v1" "zitadel" {
     masterkey      = random_password.masterkey["enabled"].result
     db_password    = random_password.db["enabled"].result
     admin_password = random_password.admin["enabled"].result
+  }
+}
+
+# Persisted login-client PAT — only created when the operator supplies
+# one via `var.login_client_pat` (regenerated once via the management
+# API and pasted into `.env`). The Login UI v2 sidecar mounts this and
+# survives pod restarts; without the var, the sidecar still falls back
+# to the FIRSTINSTANCE-written emptyDir file (works for fresh installs,
+# breaks on every restart after that).
+resource "kubernetes_secret_v1" "login_client_pat" {
+  for_each = var.enabled && nonsensitive(var.login_client_pat != "") ? toset(["enabled"]) : toset([])
+
+  metadata {
+    name      = "zitadel-login-client-pat"
+    namespace = var.namespace
+  }
+
+  data = {
+    "login-client.pat" = var.login_client_pat
   }
 }
 
@@ -553,16 +579,23 @@ resource "kubernetes_deployment_v1" "zitadel" {
           # *should* convert _TOKEN_FILE → _TOKEN at startup, but neither
           # v3.0.1 nor :main does it (no entrypoint wrapper, server.js
           # boots straight from PID 1). Do the conversion ourselves —
-          # block until the FIRSTINSTANCE-bootstrapped login-client.pat
-          # file appears, read it, then exec the upstream entrypoint.
+          # prefer the operator-provided PAT mounted from a Secret
+          # (survives pod restart), fall back to the FIRSTINSTANCE-
+          # bootstrapped emptyDir version (works only on the first pod).
           command = ["/bin/sh", "-c"]
           args = [
             <<-EOT
-            until [ -s /var/zitadel/secrets/login-client.pat ]; do
-              echo "login: waiting for login-client.pat..."
-              sleep 2
-            done
-            export ZITADEL_SERVICE_USER_TOKEN="$(cat /var/zitadel/secrets/login-client.pat)"
+            if [ -s /var/zitadel/login-client-pat/login-client.pat ]; then
+              PAT_FILE=/var/zitadel/login-client-pat/login-client.pat
+              echo "login: using Secret-mounted login-client.pat"
+            else
+              PAT_FILE=/var/zitadel/secrets/login-client.pat
+              until [ -s "$PAT_FILE" ]; do
+                echo "login: waiting for login-client.pat..."
+                sleep 2
+              done
+            fi
+            export ZITADEL_SERVICE_USER_TOKEN="$(cat "$PAT_FILE")"
             echo "login: token loaded ($${#ZITADEL_SERVICE_USER_TOKEN} chars), starting next-server..."
             exec node apps/login/server.js
             EOT
@@ -641,6 +674,18 @@ resource "kubernetes_deployment_v1" "zitadel" {
             mount_path = "/var/zitadel/secrets"
             read_only  = true
           }
+
+          # Operator-provided PAT, mounted from a Secret. Only attached
+          # when `var.login_client_pat` is non-empty — falls back to the
+          # FIRSTINSTANCE emptyDir flow above when not set.
+          dynamic "volume_mount" {
+            for_each = nonsensitive(var.login_client_pat == "") ? [] : [1]
+            content {
+              name       = "login-client-pat"
+              mount_path = "/var/zitadel/login-client-pat"
+              read_only  = true
+            }
+          }
         }
 
         service_account_name = kubernetes_service_account_v1.pat_broker["enabled"].metadata[0].name
@@ -648,6 +693,16 @@ resource "kubernetes_deployment_v1" "zitadel" {
         volume {
           name = "pat-output"
           empty_dir {}
+        }
+
+        dynamic "volume" {
+          for_each = nonsensitive(var.login_client_pat == "") ? [] : [1]
+          content {
+            name = "login-client-pat"
+            secret {
+              secret_name = kubernetes_secret_v1.login_client_pat["enabled"].metadata[0].name
+            }
+          }
         }
 
         volume {

@@ -142,6 +142,30 @@ All three live in the root-owned `platform` namespace (ResourceQuota from `confi
 - Model-pull Job runs `ollama pull <model>` for every entry in `services.ollama.models` after the server is ready. Idempotent — re-applies are free for already-cached models. Name hashes the model list, so a list change rotates the Job.
 - No auth. Tenants address it via `OLLAMA_HOST` / `OLLAMA_BASE_URL` / `OLLAMA_API_BASE` env vars injected through the per-tenant `ollama-endpoint` Secret.
 
+## Mail Stack (mail namespace)
+
+A separate top-level stack for `mail.<primary_mail_domain>`, wired in `mail.tf`. Lives in its own `mail` namespace with a 2 GiB / 2 CPU / 6-pod ResourceQuota.
+
+**Stalwart** (`modules/stalwart`, v0.16.x):
+- All-in-one mail server: SMTP submission/delivery + IMAP + JMAP + WebUI, Rust, declarative config via `stalwart-cli apply <plan.ndjson>`.
+- StatefulSet, 1 replica, hostPath PV (`<host_volume_path>/mail/stalwart/`) — internal RocksDB store, no Postgres/MySQL needed.
+- Bootstraps on first apply: an `applier` sidecar runs `stalwart-cli` against the JMAP API to push `plan.ndjson` (Authentication directory swap → Zitadel `OidcDirectory`, MtaRoute `Relay` to the smart-host, `DkimSignature` from a TF-generated RSA key, mail UI `defaultDomainId`). The plan engine groups all destroys before all updates, so the directory swap is split into a pre-step `update Authentication singleton --field directoryId=null` to avoid a "still-referenced" abort.
+- OIDC: a Zitadel app (BASIC client) + project + two roles (`admin`, `mail-user`) provisioned by the module. Stalwart auto-provisions accounts on first OIDC login but only when the user carries the `mail-user` role; the role check is the membership gate. **`OidcDirectory` is cached in RAM at Stalwart startup**, so any schema change applied by the applier sidecar after Stalwart is up needs a second pod rollout to take effect (see BACKLOG).
+- DNS records (DKIM TXT at `<dkim_selector>._domainkey`, SPF, DMARC) emitted directly as `cloudflare_record` resources from the module — values derived from the in-state RSA pubkey, never hand-pasted.
+- Admin/account WebUI hidden behind a random per-deploy URL prefix (`random_password.admin_path`) — operator-only, no public discovery surface.
+- SMTP outbound goes through `MtaRoute Relay smarthost` to the public Postfix relay VPS (`var.smarthost_*`). SMTP inbound :25 lands at a sibling `socat` Deployment (`stalwart-smtp-relay`) bound to the WireGuard interface and forwarded back to the public relay's chain — Cloudflare Tunnel does not forward TCP/25.
+
+**Roundcube** (`modules/roundcube`, 1.6.x):
+- The actual mailbox UI (Stalwart's built-in webui has admin/account but no inbox view).
+- Deployment, 1 replica, hostPath SQLite at `<host_volume_path>/mail/roundcube/db/` (init container `fix-db-perms` chowns to apache uid 33).
+- OIDC-only auth — no password login. Roundcube's built-in OAuth2 flow (core feature in 1.5+, NOT a plugin) issues a Zitadel `OIDC_AUTH_METHOD_TYPE_BASIC` confidential client; the client secret rides into the pod via a k8s Secret (config.inc.php reads `getenv('ROUNDCUBE_OAUTH_CLIENT_SECRET')`) because TF doesn't detect drift on sensitive ConfigMap data.
+- IMAP/SMTP to Stalwart use SASL XOAUTH2 with the same Zitadel access token Roundcube minted at login.
+
+**oauth2-proxy** (`modules/oauth2-proxy`, thomseddon/traefik-forward-auth):
+- Cluster-wide ForwardAuth handler for any component that opts into `auth: zitadel` in its yaml. Fronts non-OIDC-aware apps (e.g. the Stalwart admin UI's path obscurity is belt-and-braces; other components can route through forward-auth alone).
+- Service in `ingress-controller`; tenant projects attach the middleware on demand via the `oauth2_proxy_middleware` var passed into `modules/project`. Component yamls flag `auth: zitadel: true` to pull it in on a route.
+- Self-protection: the `oauth2-proxy` component has `auth: zitadel` on itself so `auth.<domain>` request lands with the X-Forwarded-* headers thomseddon's mux requires (see Known Limitations).
+
 ## Bootstrap Flow (k3s, Option B default)
 
 ```
@@ -213,3 +237,4 @@ For non-root images (WordPress = UID 33, Redis = UID 999, Open WebUI = UID 1000)
 - Single-node only (minikube or a single k3s server). For multi-node k3s, the hostPath model has to be replaced with a network-backed StorageClass (longhorn, nfs-subdir, etc.).
 - Re-bootstrap regenerates every credential in state (MySQL root, Redis default, component BasicAuth) but persistent hostPath data retains the old credentials. Wipe the relevant `<host_volume_path>/<namespace>/<component>/` dir to reset.
 - `host_volume_path` is distribution-coupled: the value must match how the kubelet sees the FS (native-Linux k3s and `--driver=none` minikube use a regular host dir; macOS Docker-driver minikube uses `/minikube-host/...` because it auto-mounts `/Users`; Linux Docker-driver minikube needs an explicit `minikube mount`).
+- **traefik-forward-auth requires the ForwardAuth middleware on its own host.** thomseddon/traefik-forward-auth's internal mux dispatches `/_oauth` (the OIDC callback) and other paths based on `r.URL` AFTER `RootHandler` rewrites the request from `X-Forwarded-Method`/`-Host`/`-Uri` headers — those headers are only set when the request arrives via Traefik's ForwardAuth middleware. If `auth.<domain>` is routed straight to the forward-auth Service without the middleware, the Zitadel-issued `/_oauth?code=…` callback comes in with empty X-Forwarded-* values, RootHandler rewrites `r.URL` to empty, the mux falls through to the default AuthHandler, and the browser gets 307'd back to the provider — infinite loop. The `oauth2-proxy` component has `auth: zitadel` set on itself for exactly this reason; the comment in `config/components/oauth2-proxy.yaml` calls out why self-protection isn't a deadlock (`/_oauth` is routed above the auth-required default in forward-auth's mux).

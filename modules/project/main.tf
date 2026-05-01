@@ -112,6 +112,15 @@ variable "zitadel_provider_authenticated" {
   default     = false
 }
 
+variable "oauth2_proxy_middlewares" {
+  description = "Ordered list of cross-namespace Traefik Middleware refs (each `{name, namespace}`) the IngressRoute attaches under `spec.routes[].middlewares[]` for components with `auth: zitadel`. Order matters — the chain is applied head-first, so the `force-https-proto` headers middleware comes BEFORE the ForwardAuth so the latter sees the corrected `X-Forwarded-Proto`. Null when oauth2-proxy is disabled (Zitadel off)."
+  type = list(object({
+    name      = string
+    namespace = string
+  }))
+  default = null
+}
+
 variable "volume_base_path" {
   description = "Parent path used verbatim by hostPath PersistentVolumes for every component in this project. Must resolve to a real writable directory from the kubelet's point of view. Forwarded unchanged to modules/component."
   type        = string
@@ -279,6 +288,17 @@ locals {
     name => c if try(c.basic_auth, false)
   }
 
+  # Components that opt into the cluster-wide oauth2-proxy auth gate
+  # (`auth: zitadel` in the component yaml). The IngressRoute attaches
+  # the cross-namespace ForwardAuth middleware emitted by the
+  # `oauth2-proxy` root module. Empty when no component asks for it,
+  # OR when the operator left Zitadel off — the precondition below
+  # rejects `auth: zitadel` on a Zitadel-less platform up front.
+  zitadel_auth_components = {
+    for name, c in local.normalized_components :
+    name => c if try(c.auth, "") == "zitadel"
+  }
+
   # Components that declare `env_random: [VAR_1, VAR_2, ...]` in their
   # yaml. Every listed env name gets a random 32-char value terraform
   # owns and persists in state, injected into the container via a
@@ -369,6 +389,13 @@ check "ollama_enabled_when_needed" {
   assert {
     condition     = !local.needs_ollama || var.ollama_url != null
     error_message = "project '${local.namespace}' has a component with `ollama: true` but `services.ollama` is disabled in config/platform.yaml. Either enable Ollama or drop `ollama: true` from the component spec."
+  }
+}
+
+check "oauth2_proxy_available_when_zitadel_auth_used" {
+  assert {
+    condition     = length(local.zitadel_auth_components) == 0 || (var.oauth2_proxy_middlewares != null && length(var.oauth2_proxy_middlewares) > 0)
+    error_message = "project '${local.namespace}' has at least one component with `auth: zitadel` (${join(", ", keys(local.zitadel_auth_components))}) but the cluster-wide oauth2-proxy is not deployed — that gate is gated on `services.zitadel.enabled`. Either turn Zitadel on, or drop the `auth: zitadel` knob."
   }
 }
 
@@ -1026,8 +1053,21 @@ resource "kubectl_manifest" "ingressroute" {
             kind     = "Rule"
             services = [local.ir_service_refs[each.key]]
           },
-          contains(keys(local.basic_auth_components), each.key)
-          ? { middlewares = [{ name = "${each.key}-basic-auth" }] }
+          # Compose the middleware list from two opt-in sources:
+          # `basic_auth: true` (per-component, in-namespace middleware)
+          # and `auth: zitadel` (cross-namespace forward-auth → oauth2-
+          # proxy in `ingress-controller`). They can stack in principle,
+          # though the typical case is one or the other.
+          length(concat(
+            contains(keys(local.basic_auth_components), each.key) ? [{ name = "${each.key}-basic-auth" }] : [],
+            contains(keys(local.zitadel_auth_components), each.key) ? var.oauth2_proxy_middlewares : [],
+          )) > 0
+          ? {
+            middlewares = concat(
+              contains(keys(local.basic_auth_components), each.key) ? [{ name = "${each.key}-basic-auth" }] : [],
+              contains(keys(local.zitadel_auth_components), each.key) ? var.oauth2_proxy_middlewares : [],
+            )
+          }
           : {}
         )]
       },

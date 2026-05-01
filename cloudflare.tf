@@ -92,18 +92,24 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "main" {
         hostname = ingress_rule.key
         service  = ingress_rule.value.service
 
-        # cloudflared talks HTTP/1.1 to origin by default. Components
-        # that need end-to-end gRPC (Zitadel today, anything kind:app
-        # backed by gRPC tomorrow) flip `http2_origin: true` in their
-        # YAML — that propagates through modules/project's hostnames
-        # output and lands here. Cloudflared then negotiates HTTP/2
-        # cleartext upstream against Traefik, which has its own
-        # `scheme: h2c` knob to pass the framing through to the pod.
-        dynamic "origin_request" {
-          for_each = try(ingress_rule.value.http2_origin, false) ? [1] : []
-          content {
-            http2_origin = true
-          }
+        # End-to-end TLS to Traefik. `origin_server_name` sets the SNI
+        # cloudflared presents on the upstream TLS handshake — without
+        # it cloudflared would SNI as the service-URL host
+        # (`traefik.ingress-controller.svc.cluster.local`), Traefik
+        # would fall back to its self-signed default cert, and
+        # cloudflared would reject it. Setting SNI to the public
+        # hostname lets Traefik serve the correct Let's Encrypt cert,
+        # which cloudflared validates cleanly.
+        #
+        # `http2_origin` is opt-in via the component yaml — flips
+        # cloudflared from HTTP/1.1 to HTTP/2 cleartext upstream;
+        # required end-to-end for any service that exposes gRPC
+        # alongside HTTP (Zitadel today, anything kind:app backed by
+        # gRPC tomorrow). Traefik's own `scheme: h2c` knob passes the
+        # HTTP/2 framing through to the pod.
+        origin_request {
+          origin_server_name = ingress_rule.key
+          http2_origin       = try(ingress_rule.value.http2_origin, false)
         }
       }
     }
