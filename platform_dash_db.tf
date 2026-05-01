@@ -13,16 +13,10 @@
 # the per-tenant DB users that already exist.
 
 locals {
-  # Find every project that includes the `platform-dash` component.
-  # We assume one such deploy per cluster — if two materialise, sort
-  # picks deterministically and the second loses to dash_namespace.
-  dash_projects = {
-    for k, p in module.project : k => p
-    if contains(p.components, "platform-dash")
-  }
-
-  dash_namespaces  = sort([for k, p in local.dash_projects : p.namespace])
-  dash_namespace   = length(local.dash_namespaces) > 0 ? local.dash_namespaces[0] : null
+  # Dashboard's namespace = whatever the platform-dash module emits
+  # (the shared `platform` namespace). Null when disabled — every
+  # resource here gates on that.
+  dash_namespace   = try(module.platform_dash.namespace, null)
   dash_pg_enabled  = module.postgres.host != null && local.dash_namespace != null
   dash_red_enabled = module.redis.host != null && local.dash_namespace != null
 
