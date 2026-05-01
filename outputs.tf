@@ -143,6 +143,20 @@ output "stalwart_account_url" {
   sensitive   = true
 }
 
+output "infisical" {
+  description = "Infisical platform secrets store — public hostname, in-cluster Service, and bootstrap recovery admin credentials. Phase 0: primary login until Phase 1 wires Zitadel OIDC SSO; after that, recovery admin is break-glass only."
+  value = {
+    hostname                = module.infisical.hostname
+    url                     = module.infisical.url
+    namespace               = module.infisical.namespace
+    service                 = module.infisical.service_name
+    port                    = module.infisical.port
+    recovery_admin_email    = module.infisical.recovery_admin_email
+    recovery_admin_password = module.infisical.recovery_admin_password
+  }
+  sensitive = true
+}
+
 output "zitadel_pat" {
   description = "PAT for the Zitadel TF provider (machine user `tf-platform`, IAM_OWNER, far-future expiry). Lifted from the in-cluster `zitadel-tf-pat` Secret that the FIRSTINSTANCE-bootstrapped pat-broker sidecar populates. Empty when Zitadel is disabled OR the sidecar hasn't run yet (pre-bootstrap clean clone); populated after the first `./tf apply` brings Zitadel up. Fetch with `terraform output -raw zitadel_pat`, then paste into `.env` as `TF_VAR_zitadel_pat=...` so subsequent applies provision kind:app components."
   sensitive   = true
@@ -184,6 +198,12 @@ output "cheatsheet" {
 
     Stalwart recovery admin (bypasses OIDC; user `admin`):
       terraform output -raw stalwart_recovery_admin_password
+
+    Infisical recovery admin (bootstrap login until Phase 1 wires SSO):
+      terraform output -json infisical | jq -r '.recovery_admin_email + " / " + .recovery_admin_password'
+
+    Infisical URL:
+      terraform output -json infisical | jq -r '.url'
 
     Mail — Roundcube webmail (Zitadel SSO; auto-provisions Stalwart UserAccount on first login):
       https://${try(local.mail.hostname, "<configure mail in a domain yaml>")}/
