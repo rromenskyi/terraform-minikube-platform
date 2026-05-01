@@ -390,6 +390,69 @@ resource "kubernetes_deployment_v1" "infisical" {
         # `tcp://...`. Cheap insurance.
         enable_service_links = false
 
+        # DB schema migrations. The infisical/infisical image's main
+        # entrypoint runs `node server.js` directly — it does NOT run
+        # migrations on start. First boot against an empty database
+        # fails on `relation "super_admin" does not exist` the moment
+        # the boot path queries SuperAdmin. Run `npm run migration:latest`
+        # via knex from the same image as an init container so the
+        # main container always starts against a current schema.
+        # Idempotent: knex skips already-applied migrations.
+        init_container {
+          name  = "db-migrate"
+          image = var.image
+
+          command = ["/bin/sh", "-c", "npm run migration:latest"]
+
+          env_from {
+            secret_ref {
+              name = kubernetes_secret_v1.infisical["enabled"].metadata[0].name
+            }
+          }
+
+          # Repeat the password-first ordering trick so $(DB_PASSWORD)
+          # in DB_CONNECTION_URI resolves correctly here too.
+          env {
+            name = "DB_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret_v1.infisical["enabled"].metadata[0].name
+                key  = "db_password"
+              }
+            }
+          }
+
+          env {
+            name  = "DB_CONNECTION_URI"
+            value = "postgres://${local.db_user}:$(DB_PASSWORD)@${var.postgres_host}:5432/${local.db_name}"
+          }
+
+          env {
+            name = "ENCRYPTION_KEY"
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret_v1.infisical["enabled"].metadata[0].name
+                key  = "encryption_key"
+              }
+            }
+          }
+
+          env {
+            name = "AUTH_SECRET"
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret_v1.infisical["enabled"].metadata[0].name
+                key  = "auth_secret"
+              }
+            }
+          }
+
+          resources {
+            requests = { cpu = "50m", memory = "128Mi" }
+            limits   = { cpu = "500m", memory = "512Mi" }
+          }
+        }
+
         container {
           name  = "infisical"
           image = var.image
