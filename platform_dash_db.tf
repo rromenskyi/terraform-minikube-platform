@@ -270,11 +270,22 @@ resource "kubernetes_job_v1" "mysql_dashboard_ro_setup" {
 
           # CREATE USER IF NOT EXISTS + ALTER USER for password sync;
           # GRANTs are idempotent (re-running is a no-op).
-          # FLUSH PRIVILEGES for safety though MySQL 8 doesn't
-          # require it for most grant changes.
+          #
+          # MySQL 8 quirks worked around here:
+          # - GRANT on information_schema / performance_schema is
+          #   rejected (those are built-in schemas; all users have
+          #   default visibility filtered by row-level permissions).
+          #   Dropped — dashboard_ro reads them without an explicit grant.
+          # - For per-tenant-db SIZES via information_schema.tables to
+          #   list every db, the user needs at least SELECT on those dbs
+          #   (info_schema only surfaces objects the caller can see).
+          #   `GRANT SELECT ON *.*` is the cleanest equivalent of PG's
+          #   pg_read_all_data — read-only across everything, no writes.
+          #   Single-operator platform; same posture as pg_monitor +
+          #   CONNECT-on-every-db on the Postgres side.
           command = [
             "sh", "-c",
-            "mysql -h ${module.mysql.host} -u root -p\"$MYSQL_ROOT_PASSWORD\" -e \"CREATE USER IF NOT EXISTS 'dashboard_ro'@'%' IDENTIFIED BY '$RO_PASSWORD'; ALTER USER 'dashboard_ro'@'%' IDENTIFIED BY '$RO_PASSWORD'; GRANT PROCESS, REPLICATION CLIENT ON *.* TO 'dashboard_ro'@'%'; GRANT SELECT ON performance_schema.* TO 'dashboard_ro'@'%'; GRANT SELECT ON information_schema.* TO 'dashboard_ro'@'%'; FLUSH PRIVILEGES;\""
+            "mysql -h ${module.mysql.host} -u root -p\"$MYSQL_ROOT_PASSWORD\" -e \"CREATE USER IF NOT EXISTS 'dashboard_ro'@'%' IDENTIFIED BY '$RO_PASSWORD'; ALTER USER 'dashboard_ro'@'%' IDENTIFIED BY '$RO_PASSWORD'; GRANT PROCESS, REPLICATION CLIENT ON *.* TO 'dashboard_ro'@'%'; GRANT SELECT ON *.* TO 'dashboard_ro'@'%'; FLUSH PRIVILEGES;\""
           ]
         }
       }
