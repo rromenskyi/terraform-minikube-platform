@@ -157,6 +157,19 @@ output "infisical" {
   sensitive = true
 }
 
+output "infisical_oidc" {
+  description = "Phase 1 OIDC paste-into-UI values. After `./tf apply` provisions the Zitadel side, the operator opens Infisical UI → Org settings → Single Sign-On → OIDC SSO → Connect and pastes these four values. See BACKLOG `Soft-gate vs hard-fail` and the Phase 1B follow-up for why this isn't fully automated yet. Empty when `services.infisical.enable_oidc = false`."
+  value = local.platform.services.infisical.enable_oidc ? {
+    issuer        = "https://${local.platform.services.zitadel.external_domain}"
+    discovery_url = "https://${local.platform.services.zitadel.external_domain}/.well-known/openid-configuration"
+    client_id     = try(module.infisical_zitadel_app[0].client_id, "")
+    client_secret = try(module.infisical_zitadel_app[0].client_secret, "")
+    redirect_uri  = "https://${local.platform.services.infisical.hostname}/api/v1/sso/oidc/callback"
+    org_id        = local.platform.services.infisical.organization_id
+  } : null
+  sensitive = true
+}
+
 output "zitadel_pat" {
   description = "PAT for the Zitadel TF provider (machine user `tf-platform`, IAM_OWNER, far-future expiry). Lifted from the in-cluster `zitadel-tf-pat` Secret that the FIRSTINSTANCE-bootstrapped pat-broker sidecar populates. Empty when Zitadel is disabled OR the sidecar hasn't run yet (pre-bootstrap clean clone); populated after the first `./tf apply` brings Zitadel up. Fetch with `terraform output -raw zitadel_pat`, then paste into `.env` as `TF_VAR_zitadel_pat=...` so subsequent applies provision kind:app components."
   sensitive   = true
@@ -199,11 +212,16 @@ output "cheatsheet" {
     Stalwart recovery admin (bypasses OIDC; user `admin`):
       terraform output -raw stalwart_recovery_admin_password
 
-    Infisical recovery admin (bootstrap login until Phase 1 wires SSO):
+    Infisical recovery admin (bootstrap login + post-Phase-1 break-glass):
       terraform output -json infisical | jq -r '.recovery_admin_email + " / " + .recovery_admin_password'
 
     Infisical URL:
       terraform output -json infisical | jq -r '.url'
+
+    Infisical OIDC paste values (one-time UI step after enable_oidc:true):
+      Open `<URL>/org/<org_id>/settings` → Single Sign-On → OIDC SSO → Connect
+      and paste the values from:
+        terraform output -json infisical_oidc | jq
 
     Mail — Roundcube webmail (Zitadel SSO; auto-provisions Stalwart UserAccount on first login):
       https://${try(local.mail.hostname, "<configure mail in a domain yaml>")}/

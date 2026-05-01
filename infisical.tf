@@ -40,16 +40,19 @@ check "infisical_recovery_admin_email_set" {
 
 # ── Phase 1 — Zitadel OIDC SSO checks ────────────────────────────────────────
 #
-# Phase 1 needs three things from the operator:
-#   1. `services.zitadel.enabled = true` (we're using Zitadel as the OIDC IdP).
-#   2. `services.infisical.organization_id` set to the org id Infisical assigned
-#      during the Phase 0 recovery-admin signup. Lookup once: log into
-#      Infisical, the URL becomes `https://<host>/org/<this-id>/...`. Yaml.
-#   3. `TF_VAR_infisical_ua_client_id` + `TF_VAR_infisical_ua_client_secret`
-#      from the operator-bootstrapped `tf-platform` Universal-Auth identity.
-#      Same UI step Phase 0 took for the recovery admin — Org settings →
-#      Access Control → Identities → Create `tf-platform` (role Admin) →
-#      Authentication → Universal Auth → Create client_secret.
+# Phase 1 needs two things from the operator:
+#   1. `services.zitadel.enabled = true` (we use Zitadel as the OIDC IdP).
+#   2. `services.infisical.organization_id` set to the org id Infisical
+#      assigned during the Phase 0 recovery-admin signup. Lookup once:
+#      log into Infisical, the URL becomes
+#      `https://<host>/org/<this-id>/...`. Paste under
+#      `services.infisical.organization_id` in `config/platform.yaml`.
+#
+# Once these are set, `terraform output -json infisical_oidc` returns
+# the four values the operator pastes into Infisical UI → Org settings
+# → Single Sign-On → OIDC SSO → Connect (one-time op). See the comment
+# block at the top of `modules/infisical/main.tf`'s Phase 1 section
+# for why this isn't a TF Job today + the Phase 1B follow-up plan.
 
 check "infisical_oidc_requires_zitadel" {
   assert {
@@ -62,13 +65,6 @@ check "infisical_oidc_organization_id_set" {
   assert {
     condition     = !local.platform.services.infisical.enable_oidc || local.platform.services.infisical.organization_id != ""
     error_message = "services.infisical.organization_id must be set when enable_oidc is true. Find it once after the Phase 0 signup: log into Infisical, the URL contains `/org/<id>/...`. Paste in config/platform.yaml."
-  }
-}
-
-check "infisical_ua_credentials_set" {
-  assert {
-    condition     = !local.platform.services.infisical.enable_oidc || (var.infisical_ua_client_id != "" && var.infisical_ua_client_secret != "")
-    error_message = "TF_VAR_infisical_ua_client_id and TF_VAR_infisical_ua_client_secret must be set when enable_oidc = true. One-time bootstrap: in Infisical UI, Org settings → Access Control → Identities → Create `tf-platform` (Admin role) → Authentication → Universal Auth → New Client Secret. Paste both values into .env."
   }
 }
 
@@ -130,6 +126,11 @@ module "infisical" {
   redis_default_secret = module.redis.default_secret_name
 
   # ── Phase 1 — OIDC ────────────────────────────────────────────────────────
+  # Module-side OIDC vars are wired through but only used by the (deferred
+  # Phase 1B) automated SSO-config Job. Phase 1 today: the Zitadel side is
+  # provisioned via `module.infisical_zitadel_app` above, the four paste-
+  # values land in `terraform output -json infisical_oidc`, and the
+  # operator copies them into Infisical UI → Org → SSO → OIDC once.
   enable_oidc                = local.platform.services.infisical.enable_oidc
   oidc_issuer_url            = local.platform.services.zitadel.enabled ? "https://${local.platform.services.zitadel.external_domain}" : ""
   oidc_client_id             = local.platform.services.infisical.enable_oidc ? module.infisical_zitadel_app[0].client_id : ""
