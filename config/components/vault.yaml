@@ -1,0 +1,26 @@
+# Vault community — platform secrets store routing.
+#
+# `kind: external` because the workload itself is owned by `modules/
+# vault` (StatefulSet + raft storage in the platform namespace,
+# bootstrapped via `vault.tf` at the root). This component file only
+# describes how the hostname routes through Traefik + Cloudflare
+# Tunnel. Wire by adding a route to your domain yaml — the prefix
+# part of `<prefix>: vault` MUST match the
+# `services.vault.hostname` host-prefix you set in
+# `config/platform.yaml` (e.g. `hostname: vault.example.com` →
+# route `vault: vault`).
+#
+# Phase 0 leaves the UI publicly reachable with only Vault's built-
+# in auth gating (root token via `terraform output -raw vault_root_token`,
+# break-glass). Phase 1 (deferred) wires Zitadel OIDC SSO via the
+# `vault_jwt_auth_backend` TF provider — Vault handles authn itself,
+# no need for a forward-auth middleware in front. Vault also provides
+# fine-grained access control via policies, so the SSO step alone
+# replaces the whole "human + machine identity + role" tier Infisical
+# advertised.
+kind: external
+
+service:
+  name:      vault
+  namespace: platform
+  port:      8200
