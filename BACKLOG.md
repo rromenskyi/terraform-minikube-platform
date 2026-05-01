@@ -78,59 +78,54 @@ LetsEncrypt over the standard public path, and never fetch a single
 byte through cloudflared. Existing `cloudflare_tunnel` deploys
 should require zero change.
 
-### Infisical as the platform secrets store (Zitadel-OIDC-gated)
+### Platform secrets store — superseded: Vault community after Infisical paywall
 
-All sensitive material currently lives in two places: `terraform output
--raw <name>` for things that originate in TF (recovery admin password,
-DB superuser passwords, smart-host credentials, basic auth pairs) and
-`kubectl get secret … -o jsonpath` for per-namespace per-component
-credentials. Both rotate on `./tf bootstrap-k3s` but otherwise sit in
-state and on disk indefinitely. Every operator look-up (cheatsheet,
-"give me the redis password") is a CLI ritual.
+(Originally tracked as "Infisical as the platform secrets store
+(Zitadel-OIDC-gated)". Closed after a real apply on the home cluster
+exposed two blockers in the v0.74-postgres self-host build: `oidcSSO`
+is set to `false` in `getDefaultOnPremFeatures()` so the SSO settings
+UI is grayed out for non-Pro tenants, and POST `/api/v1/sso/oidc/config`
+denies machine-identity actors with CASL 403 even when the bearer is
+a fully-authorised Universal-Auth `tf-platform` Admin identity. Two
+PRs landed and were reverted: #30 stood up the empty Phase 0 module
+and #31 attempted Phase 1 OIDC and was closed without merge.)
 
-Plan: deploy Infisical as a platform service in the `platform`
-namespace, OIDC-gated through Zitadel (a `mail-user`-style project
-role on a new Infisical Zitadel app gates access), and migrate every
-TF-managed secret into it. Components that need a credential read it
-out of Infisical at runtime via the in-cluster API rather than out of
-a hand-rolled `kubernetes_secret_v1`. Operator look-up shifts from
-`terraform output -raw` to a single Infisical UI/CLI gated by the
-same SSO that fronts the cluster.
+Replacement target: **HashiCorp Vault community edition**. Free OIDC
+auth method, mature `hashicorp/vault` TF provider with native CRDs
+for mounts/policies/KV/identity, k8s-side consumer story via Vault
+Agent Injector or Vault Secrets Operator. Trade-off versus Infisical:
+worse UI polish but no paywall on SSO, and the unseal ceremony is
+solved by an init container that reads unseal keys from a
+`kubernetes_secret_v1` populated by a one-time `vault operator init`
+Job (same shape as the Stalwart applier sidecar / Zitadel pat-broker).
 
-Open questions:
+Roadmap stays four-phase, mirroring the Infisical attempt:
 
-1. **TF integration shape** — `infisical/infisical` provider exists
-   for declarative project + folder + secret-key creation, but the
-   write path conflicts with the bootstrap chicken-and-egg (the
-   provider needs Infisical reachable to plan; first apply has to
-   bring Infisical up before any other component can resolve its
-   secrets). Either: phased apply (Infisical comes up empty, then a
-   second pass populates secrets and rewires consumers) or write all
-   secrets via a `null_resource + local-exec` after Infisical is
-   ready and pre-mark them in TF state as imports.
+1. **Phase 0** — module skeleton, raft storage, hostPath PV, init
+   Job + auto-unseal init container, root token output for break-
+   glass. Public route `vault.<domain>` (or reuse `secrets.<domain>`
+   if migrating in place).
+2. **Phase 1** — Zitadel JWT auth method via
+   `vault_jwt_auth_backend` + role mapping Zitadel `vault_admin` /
+   `vault_operator` claims to Vault policies. UI login page gets the
+   "Sign in with OIDC" button automatically.
+3. **Phase 2** — first migrated secret (lowest blast radius:
+   per-project Traefik dashboard BasicAuth password). Vault Secrets
+   Operator + a `VaultStaticSecret` CR materialise `kubernetes_secret_v1`
+   in the consumer namespace. Existing `env_from`-style consumption
+   stays unchanged.
+4. **Phase 3** — bulk migration of cheatsheet-bound TF outputs
+   (mysql.root, postgres.superuser, redis.default, zitadel.admin,
+   the rest of basic_auth). Per-tenant DB credentials keep their
+   `kubernetes_secret_v1` lifecycle.
+5. **Phase 4** — drop the secret-bearing rows from
+   `outputs.tf::cheatsheet` once dual-write has soaked.
 
-2. **Consumer pattern** — components currently read TF-managed
-   `kubernetes_secret_v1` via env-var. Two integration options:
-   `infisical-agent` sidecar that watches Infisical and rewrites a
-   local Secret on change, or the operator-flavour Infisical
-   ServiceAccount + CSI driver (CSI = colder, more native, more
-   moving parts). Lean towards sidecar for the small number of
-   components on this cluster.
-
-3. **Bootstrap admin** — Infisical itself needs an initial admin
-   account before OIDC is wired in. Mirror the Stalwart pattern:
-   `INFISICAL_RECOVERY_ADMIN` env-pinned plus a `random_password`
-   resource and a `terraform output -raw infisical_recovery_admin_password`.
-
-4. **What gets migrated first** — start with the things the
-   operator actually looks up from the cheatsheet (mail recovery
-   admin, BasicAuth pairs, MySQL/Postgres/Redis root passwords).
-   Per-tenant DB credentials probably stay as-is for now since they
-   get composed into per-component env-vars at TF-render time.
-
-When this lands, drop the secret-bearing rows from
-`outputs.tf::cheatsheet` and replace with a single line pointing at
-the Infisical URL.
+Open question deferred to Phase 0 design: keep the "platform-services
+share one Postgres" pattern by using Vault's external Postgres backend,
+or ship raft (Vault's bundled key-value store) for simplicity. Lean
+towards raft because it removes a cross-service dep and matches
+Stalwart's RocksDB-internal-store choice.
 
 ### Multi-domain support for the mail stack
 
