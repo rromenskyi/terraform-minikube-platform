@@ -403,6 +403,23 @@ resource "kubernetes_deployment_v1" "roundcube" {
         labels = { app = "roundcube" }
         annotations = {
           "platform.local/config-hash" = local.config_inc_hash
+
+          # Rolls the pod when the OIDC Secret content changes — same
+          # rationale as `modules/component`'s `pod_annotations.checksum/oidc`:
+          # K8s does NOT auto-rollout pods on Secret-data change for
+          # envFrom-mounted vars (env is read at process start). The
+          # client_secret is consumed via env (`ROUNDCUBE_OAUTH_CLIENT_SECRET`),
+          # not interpolated into config_inc_php, so a Zitadel app rotation
+          # that shifts client_secret independently of client_id would slip
+          # past the config-hash above without this. `nonsensitive()` drops
+          # the sensitivity bit on the hash output (the hash itself reveals
+          # nothing).
+          "platform.local/oidc-hash" = local.oidc_enabled ? nonsensitive(sha1(jsonencode({
+            issuer        = var.zitadel_issuer_url
+            client_id     = local.client_id
+            client_secret = local.client_secret
+            des_key       = random_password.des_key["enabled"].result
+          }))) : ""
         }
       }
 

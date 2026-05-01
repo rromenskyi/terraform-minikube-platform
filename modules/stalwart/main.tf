@@ -823,9 +823,16 @@ resource "kubernetes_secret_v1" "recovery_admin" {
   }
 }
 
-# ── ConfigMap with config.json + plan.ndjson ──────────────────────────────────
-
-resource "kubernetes_config_map_v1" "stalwart_seed" {
+# ── Secret with config.json + plan.ndjson ────────────────────────────────────
+#
+# Routed via Secret (not ConfigMap) because plan.ndjson can carry
+# `var.smarthost_password` plaintext when the operator uses an
+# AUTH-required outbound relay. ConfigMap data lands in etcd as
+# plaintext; Secret data is base64 + etcd-encryption-at-rest when the
+# cluster is configured for it (k3s enables it by default since
+# 1.20). The applier sidecar reads the same files at the same mount
+# path — only the volume source differs.
+resource "kubernetes_secret_v1" "stalwart_seed" {
   for_each = local.instances
 
   metadata {
@@ -1385,8 +1392,8 @@ resource "kubernetes_deployment_v1" "stalwart" {
 
         volume {
           name = "seed"
-          config_map {
-            name = kubernetes_config_map_v1.stalwart_seed["enabled"].metadata[0].name
+          secret {
+            secret_name = kubernetes_secret_v1.stalwart_seed["enabled"].metadata[0].name
           }
         }
 
