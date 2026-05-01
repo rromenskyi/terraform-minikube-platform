@@ -93,21 +93,21 @@ variable "webui_url" {
 }
 
 variable "smtp_relay_listen_ip" {
-  description = "Host IP the SMTP relay forwarder binds to. Specific by design — wants to be reachable from the public-relay tunnel, NOT from the LAN, so this should be the WireGuard interface address (not 0.0.0.0)."
+  description = "Host IP the SMTP relay forwarder binds to. Specific by design — should be reachable from the public-relay tunnel only, NOT from the LAN, so this should be the WireGuard interface address (not 0.0.0.0). Required (no sane default — depends entirely on the operator's overlay topology)."
   type        = string
-  default     = "10.23.0.2"
+  default     = ""
 }
 
 variable "hostname" {
-  description = "Public hostname Stalwart announces in SMTP banners and signs DKIM with. Should match the relay's reverse DNS — Gmail rejects mismatches."
+  description = "Public hostname Stalwart announces in SMTP banners and signs DKIM with. Should match the relay's reverse DNS — Gmail rejects mismatches. Required."
   type        = string
-  default     = "mail.ipsupport.us"
+  default     = ""
 }
 
 variable "primary_domain" {
-  description = "Default mail domain bootstrapped into Stalwart. Used as defaultDomainId on SystemSettings and as the domain Zitadel-OIDC users are auto-provisioned under."
+  description = "Default mail domain bootstrapped into Stalwart. Used as defaultDomainId on SystemSettings and as the domain Zitadel-OIDC users are auto-provisioned under. Required when the module is enabled."
   type        = string
-  default     = "ipsupport.us"
+  default     = ""
 }
 
 variable "zitadel_org_id" {
@@ -129,7 +129,7 @@ variable "zitadel_provider_authenticated" {
 }
 
 variable "smarthost_address" {
-  description = "Hostname or IP of the outbound SMTP relay. Empty string keeps the default `mx` route (direct MX delivery); set to a relay address (e.g. the WireGuard IP of the public Postfix relay VPS, or `relay.ipsupport.us`) to push every non-local message through it. Residential ISPs and Cloudflare Tunnel both block outbound :25 — without a smart host the queue spools forever and bounces. The relay must be configured to accept mail from this Stalwart's outgoing IP (typically by static IP / WG peer ACL) and to handle SPF/DKIM signing on the public side."
+  description = "Hostname or IP of the outbound SMTP relay. Empty string keeps the default `mx` route (direct MX delivery); set to a relay address (typically the WireGuard IP of a public Postfix relay VPS, or its public hostname) to push every non-local message through it. Residential ISPs and Cloudflare Tunnel both block outbound :25 — without a smart host the queue spools forever and bounces. The relay must be configured to accept mail from this Stalwart's outgoing IP (typically by static IP / WG peer ACL) and to handle SPF/DKIM signing on the public side."
   type        = string
   default     = ""
 }
@@ -178,9 +178,9 @@ variable "cloudflare_zone_id" {
 }
 
 variable "spf_authorized_ip" {
-  description = "IPv4 (or `ip4:x ip4:y` chain) authorised to send mail for the primary domain. Defaults to the public Postfix relay IP — every outbound message exits there."
+  description = "IPv4 (or `ip4:x ip4:y` chain) authorised to send mail for the primary domain. Should be the public IP of the relay every outbound message exits through. Empty string omits the SPF TXT record entirely — fine if SPF is published manually elsewhere."
   type        = string
-  default     = "130.51.23.250"
+  default     = ""
 }
 
 variable "dmarc_policy" {
@@ -268,8 +268,8 @@ locals {
   dkim_dns_value = var.enabled ? "v=DKIM1; k=rsa; p=${local.dkim_pubkey_body}" : ""
   dkim_dns_name  = "${var.dkim_selector}._domainkey"
 
-  spf_dns_value   = var.enabled ? "v=spf1 ip4:${var.spf_authorized_ip} -all" : ""
-  dmarc_dns_value = var.enabled ? "v=DMARC1; p=${var.dmarc_policy}; rua=mailto:postmaster@${var.primary_domain}" : ""
+  spf_dns_value   = var.enabled && var.spf_authorized_ip != "" ? "v=spf1 ip4:${var.spf_authorized_ip} -all" : ""
+  dmarc_dns_value = var.enabled && var.primary_domain != "" ? "v=DMARC1; p=${var.dmarc_policy}; rua=mailto:postmaster@${var.primary_domain}" : ""
 
   # Whether the module manages SPF/DKIM/DMARC TXT records directly
   # in Cloudflare (bypassing the per-domain yaml). Off when the
@@ -277,6 +277,12 @@ locals {
   # standalone testing without a Cloudflare zone.
   dns_records_enabled = var.enabled && var.cloudflare_zone_id != ""
   dns_records_set     = local.dns_records_enabled ? toset(["enabled"]) : toset([])
+
+  # Per-record gates so an empty source value (e.g. operator hasn't
+  # set spf_authorized_ip) skips just that record instead of breaking
+  # the apply with an invalid TXT content.
+  spf_record_set   = local.dns_records_enabled && local.spf_dns_value != "" ? toset(["enabled"]) : toset([])
+  dmarc_record_set = local.dns_records_enabled && local.dmarc_dns_value != "" ? toset(["enabled"]) : toset([])
 
   # Whether to wire an outbound smart-host. Off (empty address) keeps
   # Stalwart on its default direct-MX route — which silently bounces
@@ -413,8 +419,8 @@ locals {
     local.oidc_enabled ? [
       # External IdP for end-user authentication. Stalwart validates
       # bearer tokens by calling Zitadel /userinfo. usernameDomain
-      # appends @ipsupport.us to bare claim values so a Zitadel user
-      # `roman` becomes `roman@ipsupport.us` mailbox. claimGroups
+      # appends @<primary_domain> to bare claim values so a Zitadel user
+      # `alice` becomes `alice@<primary_domain>` mailbox. claimGroups
       # populates Stalwart group memberships, which carry roles via
       # the Group entity created below.
       #
@@ -732,7 +738,7 @@ resource "zitadel_project_role" "user" {
 # vars). Hand-pasting the rendered DKIM body into yaml every key
 # rotation would be busy-work; this keeps the source-of-truth single.
 resource "cloudflare_record" "spf" {
-  for_each = local.dns_records_set
+  for_each = local.spf_record_set
 
   zone_id = var.cloudflare_zone_id
   name    = "@"
@@ -756,7 +762,7 @@ resource "cloudflare_record" "dkim" {
 }
 
 resource "cloudflare_record" "dmarc" {
-  for_each = local.dns_records_set
+  for_each = local.dmarc_record_set
 
   zone_id = var.cloudflare_zone_id
   name    = "_dmarc"
@@ -1519,18 +1525,18 @@ output "zitadel_admin_role" {
 }
 
 output "dkim_dns_name" {
-  description = "Name component of the DKIM TXT record (relative to the primary domain). Concatenate with the domain to get the FQDN — e.g. `stalwart._domainkey.ipsupport.us`."
+  description = "Name component of the DKIM TXT record (relative to the primary domain). Concatenate with the domain to get the FQDN — e.g. `<dkim_selector>._domainkey.<primary_domain>`."
   value       = var.enabled ? local.dkim_dns_name : null
 }
 
 output "dkim_dns_value" {
-  description = "Value of the DKIM TXT record. Drop verbatim into `config/domains/<primary>.yaml`'s `dns:` block as `{ name: stalwart._domainkey, type: TXT, content: \"<this>\" }`."
+  description = "Value of the DKIM TXT record. Drop verbatim into `config/domains/<primary>.yaml`'s `dns:` block as `{ name: <dkim_selector>._domainkey, type: TXT, content: \"<this>\" }`."
   value       = var.enabled ? local.dkim_dns_value : null
 }
 
 output "spf_dns_value" {
-  description = "Recommended SPF TXT for the primary domain — authorises only the public relay's IP and rejects everything else (`-all`)."
-  value       = var.enabled ? "v=spf1 ip4:130.51.23.250 -all" : null
+  description = "Recommended SPF TXT for the primary domain — authorises only the relay's public IP and rejects everything else (`-all`). Empty when `var.spf_authorized_ip` is unset."
+  value       = var.enabled ? local.spf_dns_value : null
 }
 
 output "dmarc_dns_name" {

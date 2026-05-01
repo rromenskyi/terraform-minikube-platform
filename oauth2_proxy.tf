@@ -6,11 +6,11 @@
 # every protected subdomain on the same parent domain.
 #
 # Auth + cookie domain are derived from `zitadel.external_domain`:
-# `id.ipsupport.us` → auth host `auth.ipsupport.us`, cookie scope
-# `.ipsupport.us`. Cookies can't cross parent domains, so this proxy
-# only protects subdomains of *that* parent — services on other
-# tenants' domains would need their own gate, or operator-driven
-# split routing in a follow-up.
+# `id.<parent>` → auth host `auth.<parent>`, cookie scope `.<parent>`.
+# Cookies can't cross parent domains, so this proxy only protects
+# subdomains of *that* parent — services on other tenants' domains
+# would need their own gate, or operator-driven split routing in a
+# follow-up.
 #
 # Gated on `services.zitadel.enabled` — when the operator runs without
 # Zitadel, the module produces zero resources and any `auth: zitadel`

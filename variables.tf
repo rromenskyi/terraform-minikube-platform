@@ -117,45 +117,13 @@ variable "zitadel_login_client_pat" {
   sensitive   = true
 }
 
-variable "smarthost_address" {
-  description = "Hostname or IP of the outbound SMTP smart-host (relay) Stalwart sends every non-local message through. Empty disables relaying — direct MX delivery. Residential ISPs and Cloudflare Tunnel both block outbound :25, so a working relay is required for prod mail; the home cluster relays through a Postfix VPS at relay.ipsupport.us via the WireGuard overlay."
-  type        = string
-  default     = ""
-}
-
-variable "smarthost_port" {
-  description = "Smart-host TCP port. 25 for plain SMTP relay over a trusted overlay (WireGuard), 465 for implicit TLS submission, 587 for STARTTLS submission with auth."
-  type        = number
-  default     = 25
-}
-
-variable "smarthost_implicit_tls" {
-  description = "Use TLS for every connection to the smart host (port 465 style). False for plain :25 over a trusted overlay."
-  type        = bool
-  default     = false
-}
-
-variable "smarthost_allow_invalid_certs" {
-  description = "Skip TLS certificate validation when connecting to the smart host. Only flip on for a relay presenting a self-signed cert on a trusted network."
-  type        = bool
-  default     = false
-}
-
-variable "smarthost_username" {
-  description = "Optional SMTP AUTH username for the smart host. Empty skips AUTH (relay accepts by source IP)."
-  type        = string
-  default     = ""
-}
-
-variable "smarthost_password" {
-  description = "SMTP AUTH password matching `smarthost_username`. Sensitive — supply via TF_VAR_smarthost_password in .env. Ignored when username is empty."
-  type        = string
-  default     = ""
-  sensitive   = true
-}
-
-variable "primary_mail_domain" {
-  description = "Tenant domain that owns the platform's mail stack. Must match a `name:` in `config/domains/<x>.yaml` — its `cloudflare_zone_id` drives the SPF/DKIM/DMARC TXT records `modules/stalwart` emits, and `mail.<this>` is the WebUI hostname. Single-domain mail today; the variable lets you flip primary without code edits when a different tenant takes over mail."
-  type        = string
-  default     = "ipsupport.us"
-}
+# Mail-stack tenant settings (smarthost target/port/auth-mode, WG bind
+# IP, public IP for SPF, DKIM selector, DMARC policy, and which domain
+# owns the stack) live under `mail:` in the primary domain's yaml —
+# see `config/domains/example.com.yaml.example`. Domain yamls are
+# gitignored, so tenant-specific values stay out of the repo. The only
+# bit that doesn't fit yaml is the SMTP-AUTH password (when relaying
+# through an AUTH-required SaaS like Mailgun); operators on that path
+# can re-add a sensitive `smarthost_password` variable here and pipe
+# it through `mail.tf`. The home-cluster relay accepts by WG peer-ACL,
+# so no AUTH is needed and the var is unused.

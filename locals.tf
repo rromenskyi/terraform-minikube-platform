@@ -163,4 +163,45 @@ locals {
     trimsuffix(basename(f), ".yaml") => yamldecode(file("${path.module}/config/limits/${f}"))
   }
   default_limits = local.namespace_limits.default
+
+  # Mail-stack settings. Sourced from the domain yaml carrying
+  # `mail.primary: true` — exactly one tenant domain owns the
+  # platform's mail stack at a time, the others are routed elsewhere.
+  # `null` when no domain opts in (mail stack stays uncreated).
+  _mail_domain_keys = [
+    for k, cfg in local._domain_configs : k if try(cfg.mail.primary, false)
+  ]
+  _mail_domain_key = length(local._mail_domain_keys) > 0 ? local._mail_domain_keys[0] : null
+  _mail_raw        = local._mail_domain_key == null ? null : local._domain_configs[local._mail_domain_key]
+  mail = local._mail_domain_key == null ? null : merge(
+    {
+      hostname             = "mail.${local._mail_raw.name}"
+      smtp_relay_listen_ip = ""
+      spf_authorized_ip    = ""
+      dkim_selector        = "stalwart"
+      dmarc_policy         = "quarantine"
+      smarthost = {
+        address             = ""
+        port                = 25
+        implicit_tls        = false
+        allow_invalid_certs = false
+        username            = ""
+      }
+    },
+    try(local._mail_raw.mail, {}),
+    {
+      primary_domain     = local._mail_raw.name
+      cloudflare_zone_id = try(local._mail_raw.cloudflare_zone_id, "")
+      smarthost = merge(
+        {
+          address             = ""
+          port                = 25
+          implicit_tls        = false
+          allow_invalid_certs = false
+          username            = ""
+        },
+        try(local._mail_raw.mail.smarthost, {}),
+      )
+    },
+  )
 }

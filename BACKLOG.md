@@ -132,60 +132,35 @@ When this lands, drop the secret-bearing rows from
 `outputs.tf::cheatsheet` and replace with a single line pointing at
 the Infisical URL.
 
-### ~~PTR for `relay.ipsupport.us`~~ — done 2026-04-30
+### Multi-domain support for the mail stack
 
-VPS provider rDNS now resolves `130.51.23.250` → `relay.ipsupport.us`.
-No further action; leaves SPF/DKIM/DMARC alignment as the remaining
-deliverability gate.
+Today the mail stack is single-domain: exactly one entry under
+`config/domains/<x>.yaml#mail.primary: true` drives `local.mail`,
+and `modules/stalwart` emits SPF/DKIM/DMARC for that one domain
+only. Stalwart itself happily hosts mailboxes for many domains; the
+gap is on the TF side (DNS records + Zitadel role + DKIM key
+generation).
 
-### Stalwart wizard + DNS records (DKIM / SPF / DMARC)
-
-Mail server is up but unconfigured. Walk the wizard at
-`https://mail.ipsupport.us`:
-
-1. Set the admin password.
-2. Add domain `ipsupport.us`.
-3. Generate DKIM key (Domains → ipsupport.us → DKIM → Create).
-4. Optionally create accounts (`roman@ipsupport.us`, etc.).
-
-Then add the mail-related DNS records to the `dns:` block in
-`config/domains/ipsupport.us.yaml` (the static A/AAAA records are
-already there; this is just the TXT/MX additions):
-
-- MX `ipsupport.us` → `relay.ipsupport.us` (currently set by hand
-  on Cloudflare — move into the YAML and import into state, OR let
-  TF recreate it).
-- SPF TXT on `ipsupport.us`: `v=spf1 ip4:130.51.23.250 -all`.
-- DKIM TXT (key emitted by Stalwart): `<selector>._domainkey...`.
-- DMARC TXT on `_dmarc.ipsupport.us`:
-  `v=DMARC1; p=quarantine; rua=mailto:postmaster@ipsupport.us`.
-
-The DNS-as-YAML schema supports MX (`type: MX, content: "10 relay.ipsupport.us"`)
-and TXT (`type: TXT, content: "v=spf1 ..."`) directly via the flat
-`content:` form; SRV/CAA/LOC use the structured `data:` form.
-
-### Outbound mail relay covers more than `ipsupport.us`
-
-`gh/ansible-relay.ipsupport.us` Postfix `relay_domains` list is
-currently single-domain. When other tenant domains
-(`jagdterrier.club`, `paseka.co`, `priroda.kharkov.ua`) need mail,
-add them to `relay_mail_domains` in
-`inventories/prod/group_vars/mail_relay_vps.yml` and re-apply.
-Document this in the repo's README so it's a one-grep ops note.
+Plan: shift `local.mail` from a single-domain object to a map keyed
+by domain, with `mail.enabled: true` (no `primary` flag — the
+single-domain case is just a one-entry map). `modules/stalwart`'s
+DKIM/SPF/DMARC `cloudflare_record` resources gain a `for_each` over
+that map; one DKIM key per domain (`tls_private_key.dkim` becomes
+keyed). The relay (smarthost) typically stays one-and-the-same;
+extend its `relay_domains` (Postfix) to accept all configured
+domains.
 
 ## Medium — quality of life
 
 ### Consolidate Zitadel projects: per-domain, not per-app
 
-Today every Zitadel-integrated app — `kind: app` components
-(platform-dash, sipmesh-frontend) plus cluster-wide infra clients
-(forward-auth, future Grafana SSO, Traefik SSO) — gets its own
-Zitadel project. With N apps, the operator stares at N nearly-empty
-projects in the Zitadel console.
+Today every Zitadel-integrated app — `kind: app` components plus
+cluster-wide infra clients (forward-auth, future Grafana SSO,
+Traefik SSO) — gets its own Zitadel project. With N apps, the
+operator stares at N nearly-empty projects in the Zitadel console.
 
-Proper layout: **one project per tenant domain** (`ipsupport.us`,
-`jagdterrier.club`, `paseka.co`, `priroda.kharkov.ua`) holding all
-that domain's kind:app components, plus **one `platform-services`
+Proper layout: **one project per tenant domain** holding all that
+domain's kind:app components, plus **one `platform-services`
 project** for cluster-wide infra OIDC clients. ~5 projects total
 forever, vs growing 1-per-app indefinitely.
 
@@ -218,7 +193,7 @@ before the main containers start. After this lands:
 
 Worth pulling out into `docs/diagnostics.md` as a quick-reference for
 the operator (and for future-me staring at a stuck cluster). The
-recipes that came up in this session:
+recipes that came up while building the mail stack:
 
 **Where's free CPU/memory on the node?**
 ```bash
@@ -226,7 +201,7 @@ kubectl describe node | grep -E '^Name:|Allocatable:|Allocated|cpu '
 kubectl top node
 ```
 First gives the static Allocatable + the requests/limits tally that
-the scheduler actually uses (your "77% of limits at 1.8 CPU
+the scheduler actually uses (the "77% of limits at 1.8 CPU
 requests" view). Second gives live usage from metrics-server. Bump
 namespace quotas only after checking the requests/limits column —
 that's the gate, not real CPU.
@@ -270,32 +245,15 @@ F12-Network-tab walkthrough for the operator.
 - The cluster has a zombie Deployment — `kubectl delete deploy/<name>`
   + `terraform apply` recreates it cleanly.
 
-
-
-### Ansible-relay → Ansible-mail rename
-
-The repo `gh/ansible-relay.ipsupport.us` covers the VPS relay
-**and** will soon cover the home backend's WireGuard config (which
-is currently a manual `wg-quick@wg0` install). Rename to
-`ansible-mail`, add a `mail_home_backend` group + `wireguard_client`
-role for the home host so the WG bring-up is reproducible. Inventory
-gains a second host.
-
-### LAN-side firewall for the SMTP forwarder pod
-
-`stalwart-smtp-relay` is `hostNetwork=true` and binds explicitly to
-`10.23.0.2:25` (WG IP), so it's NOT exposed on the LAN. But the
-choice was a property of the bind address. Belt-and-suspenders: add
-a host-level ufw rule (managed via `ansible-mail`) that explicitly
-denies `:25` from the LAN interfaces, only allowing from the WG peer.
-
 ### Stalwart admin still uses internal user/password
 
-We layered Zitadel forward-auth in front of the admin UI for the
-network-level gate, but Stalwart itself doesn't speak OIDC for its
-admin login. Two-factor in practice. Sufficient for v1. If it
-annoys: bridge Zitadel to Stalwart's userdb via SCIM, or enable
-Stalwart's IMAP+OIDC if a future version supports admin OIDC.
+`modules/oauth2-proxy` puts the cluster-wide forward-auth gate in
+front of the admin UI for the network-level gate, but Stalwart
+itself doesn't speak OIDC for its admin login. Two-factor in
+practice (Zitadel forward-auth + Stalwart's own admin password).
+Sufficient for v1. If it annoys: bridge Zitadel to Stalwart's
+userdb via SCIM, or enable Stalwart's IMAP+OIDC if a future version
+supports admin OIDC.
 
 ### platform-dash CRD viewer
 
@@ -304,7 +262,6 @@ ServersTransport is verbose enough that hand-pasting YAML into
 `yq` is the actual debugging workflow. Add a generic CRD lister
 to `platform-dash` (uses `KubernetesObjectApi` from
 `@kubernetes/client-node`, RBAC already covers `traefik.io/*`).
-Detailed scope in `~/.claude/projects/-home-roman220/memory/project_platform_dash_backlog.md`.
 
 ## Cosmetic — fix opportunistically
 
@@ -333,10 +290,3 @@ each shift. v5 might use a keyed map. Big upgrade (other resources
 rename: `cloudflare_record` → `cloudflare_dns_record`, etc.) so
 not worth a session of its own; bundle with the next reason to
 touch the provider.
-
-### CRD viewer is the load-bearing dash item
-
-(See platform-dash backlog above.) Other dash work (sparkline
-metrics, real Nodes/Monitoring pages, light theme) is deferred —
-Grafana covers metrics and the operator hasn't asked for the
-others yet.
