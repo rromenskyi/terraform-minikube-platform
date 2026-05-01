@@ -1,0 +1,24 @@
+# mail.<domain> root — routes to Roundcube webmail.
+#
+# Stalwart's bundled WebUI covers `/admin` (admin panel) and `/account`
+# (self-service account settings) — there is NO inbox view, so a
+# separate webmail (Roundcube) sits at the root of the domain. Two
+# extra IngressRoutes are emitted directly by `modules/stalwart` to
+# claim `/admin` and `/account` and forward those to the Stalwart
+# Service with priority above this generic route.
+#
+# Auth flow (browser-only, OIDC end-to-end, no app passwords):
+#   1. user opens https://mail.<domain>/
+#   2. Roundcube oauth2 plugin redirects to Zitadel /authorize (PKCE)
+#   3. Zitadel returns a code → Roundcube exchanges it for a JWT
+#      access_token at /token
+#   4. Roundcube opens IMAP+SMTP to Stalwart with SASL XOAUTH2 +
+#      that access_token
+#   5. Stalwart's Oidc directory validates the token and auto-
+#      provisions the UserAccount on first login (claim_email).
+kind: external
+
+service:
+  name:      roundcube
+  namespace: mail
+  port:      80

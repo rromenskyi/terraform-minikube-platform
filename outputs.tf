@@ -104,6 +104,45 @@ output "zitadel" {
   sensitive = true
 }
 
+output "stalwart_recovery_admin_password" {
+  description = "Plaintext password for the pinned Stalwart recovery admin (username `admin`). Bypasses the OIDC directory entirely — use it whenever Zitadel sign-in is broken or unavailable. Read with `terraform output -raw stalwart_recovery_admin_password`."
+  value       = module.stalwart.recovery_admin_password
+  sensitive   = true
+}
+
+output "stalwart_admin_url" {
+  description = "Operator-facing Stalwart admin URL. Includes a stable random URL prefix so /admin doesn't surface on the public root of mail.<domain> (which serves Roundcube webmail). Sensitive — do not paste publicly. Read with `terraform output -raw stalwart_admin_url`."
+  value       = module.stalwart.admin_url
+  sensitive   = true
+}
+
+output "stalwart_dkim_dns" {
+  description = "DKIM record to publish under the primary mail domain. `name` is relative (`stalwart._domainkey`); paste both into `config/domains/<domain>.yaml`'s `dns:` block as type=TXT."
+  value = {
+    name  = module.stalwart.dkim_dns_name
+    value = module.stalwart.dkim_dns_value
+  }
+}
+
+output "stalwart_spf_dns" {
+  description = "Recommended SPF TXT for the primary mail domain — paste under `name: \"@\"`, type: TXT in the domain yaml."
+  value       = module.stalwart.spf_dns_value
+}
+
+output "stalwart_dmarc_dns" {
+  description = "Recommended DMARC TXT — `name` relative (`_dmarc`), value the policy string."
+  value = {
+    name  = module.stalwart.dmarc_dns_name
+    value = module.stalwart.dmarc_dns_value
+  }
+}
+
+output "stalwart_account_url" {
+  description = "Stalwart self-service account URL. Same random prefix as `stalwart_admin_url`. Mostly empty for OIDC users since password lives in Zitadel. Read with `terraform output -raw stalwart_account_url`."
+  value       = module.stalwart.account_url
+  sensitive   = true
+}
+
 output "zitadel_pat" {
   description = "PAT for the Zitadel TF provider (machine user `tf-platform`, IAM_OWNER, far-future expiry). Lifted from the in-cluster `zitadel-tf-pat` Secret that the FIRSTINSTANCE-bootstrapped pat-broker sidecar populates. Empty when Zitadel is disabled OR the sidecar hasn't run yet (pre-bootstrap clean clone); populated after the first `./tf apply` brings Zitadel up. Fetch with `terraform output -raw zitadel_pat`, then paste into `.env` as `TF_VAR_zitadel_pat=...` so subsequent applies provision kind:app components."
   sensitive   = true
@@ -142,6 +181,25 @@ output "cheatsheet" {
     Redis default-user password (platform-root; tenants use their own
     ACL user, password in the per-namespace `redis-credentials` Secret):
       terraform output -json redis | jq -r '.default_password'
+
+    Stalwart recovery admin (bypasses OIDC; user `admin`):
+      terraform output -raw stalwart_recovery_admin_password
+
+    Mail — Roundcube webmail (Zitadel SSO; auto-provisions Stalwart UserAccount on first login):
+      https://mail.ipsupport.us/
+
+    Mail — Stalwart admin panel (operator-only; URL hidden behind a random prefix
+    so the login screen doesn't surface to drive-by scans — paste from the
+    output, never share):
+      terraform output -raw stalwart_admin_url
+
+    Mail — Stalwart self-service /account (mostly empty for OIDC users):
+      terraform output -raw stalwart_account_url
+
+    Mail — DKIM/SPF/DMARC DNS records to add to config/domains/<domain>.yaml dns:
+      terraform output stalwart_dkim_dns    # name+value (TXT)
+      terraform output -raw stalwart_spf_dns
+      terraform output stalwart_dmarc_dns   # name+value (TXT)
 
     Traefik dashboard login (user: admin):
       terraform output -json basic_auth \
@@ -200,7 +258,7 @@ output "cheatsheet" {
     Plan:       ./tf plan
     Apply:      ./tf apply
     Bootstrap:  ./tf bootstrap-k3s      (or: ./tf bootstrap-minikube)
-    Purge CF:   ./tf cloudflare-purge
+    Purge CF:   ./tf cloudflare-purge   (DESTRUCTIVE: nukes tunnel + DNS)
     Outputs:    terraform output
     Projects:   terraform output -json projects | jq .
 
