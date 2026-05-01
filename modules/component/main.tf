@@ -116,6 +116,12 @@ variable "oidc_secret_name" {
   default     = null
 }
 
+variable "pod_annotations" {
+  description = "Pod-template annotations rendered under `spec.template.metadata.annotations`. Primary use: a `checksum/<name>` entry whose value is a hash of an envFrom-mounted Secret's contents — when the Secret rotates, the annotation flips, and the Deployment rolls out so the pod picks up the new env. K8s does NOT rollout pods on Secret change by itself (envFrom values are read at process start), so anything that drives env from an externally-rotatable Secret (Zitadel OIDC client, etc.) needs this. Caller computes the hash and passes it here."
+  type        = map(string)
+  default     = {}
+}
+
 variable "static_env" {
   description = "Additional static env vars (name → literal value) mounted directly on the container. Use when a component needs a plain env knob that isn't a secret and doesn't come from a shared service."
   type        = map(string)
@@ -458,7 +464,8 @@ resource "kubernetes_deployment_v1" "this" {
 
     template {
       metadata {
-        labels = { app = var.name }
+        labels      = { app = var.name }
+        annotations = var.pod_annotations
       }
 
       spec {
