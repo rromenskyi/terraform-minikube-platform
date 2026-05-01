@@ -60,6 +60,21 @@ locals {
           insecure = false
         }
       }
+      # Defaults for the planned `services.platform_dash` block. Not
+      # consumed yet — the dashboard currently lives as a tenant
+      # component under config/domains/ipsupport.us.yaml. Scaffolding
+      # for a future refactor that promotes the dashboard to
+      # first-class platform infra (its own ns + module).
+      platform_dash = {
+        enabled  = false
+        image    = "ghcr.io/rromenskyi/platform-dash:latest"
+        replicas = 1
+        hostname = ""
+        resources = {
+          requests = { cpu = "100m", memory = "128Mi" }
+          limits   = { cpu = "500m", memory = "512Mi" }
+        }
+      }
     }
   }
   _platform_file     = "${path.module}/config/platform.yaml"
@@ -72,7 +87,8 @@ locals {
       redis     = merge(local._platform_defaults.services.redis, try(local._platform_services.redis, {}))
       ollama    = merge(local._platform_defaults.services.ollama, try(local._platform_services.ollama, {}))
       zitadel   = merge(local._platform_defaults.services.zitadel, try(local._platform_services.zitadel, {}))
-      infisical = merge(local._platform_defaults.services.infisical, try(local._platform_services.infisical, {}))
+      infisical     = merge(local._platform_defaults.services.infisical, try(local._platform_services.infisical, {}))
+      platform_dash = merge(local._platform_defaults.services.platform_dash, try(local._platform_services.platform_dash, {}))
     }
   }
 

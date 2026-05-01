@@ -1,0 +1,317 @@
+terraform {
+  required_providers {
+    kubernetes = {
+      source  = "hashicorp/kubernetes"
+      version = "~> 2.0"
+    }
+  }
+}
+
+# Platform operator dashboard. SvelteKit app from
+# `~/gh/platform-dash` packaged as a self-contained module so the
+# dashboard can be promoted from a tenant-component to first-class
+# platform infra without rewriting any of its k8s resources — only
+# the call site changes.
+#
+# Currently NOT instantiated. Wiring deferred to a follow-up: the
+# dashboard still ships through `modules/component` invoked by the
+# project module against `config/domains/*.yaml`. This module keeps
+# the future shape ready so the eventual call from
+# `platform_dash.tf` (or from a domain-yaml router) is one block.
+#
+# What this module owns:
+#   - ServiceAccount + ClusterRole + ClusterRoleBinding (read-wide,
+#     narrow writes)
+#   - Deployment (single replica by default; SvelteKit is a stateless
+#     Node process)
+#   - Service (ClusterIP, 80 → containerPort 3000)
+#
+# Out of scope here (lives upstream in whichever file calls this):
+#   - OIDC integration via modules/zitadel-app (caller passes the
+#     emitted Secret name + checksum)
+#   - Cloudflare DNS record (root cloudflare.tf via all_hostnames)
+#   - IngressRoute (caller emits the kubectl_manifest)
+#   - DB target ConfigMap + creds Secret (platform_dash_db.tf)
+
+# ── Inputs ───────────────────────────────────────────────────────────────────
+
+variable "enabled" {
+  description = "Whether to deploy the dashboard. Off → all resources count = 0."
+  type        = bool
+}
+
+variable "namespace" {
+  description = "Namespace to deploy into. Conventionally the shared `platform` namespace once promoted to first-class infra."
+  type        = string
+}
+
+variable "image" {
+  description = "Container image, tag included."
+  type        = string
+}
+
+variable "replicas" {
+  description = "Replica count. Defaults to 1; the dashboard is read-mostly so a single pod is enough."
+  type        = number
+  default     = 1
+}
+
+variable "resources" {
+  description = "Pod resource requests/limits."
+  type = object({
+    requests = map(string)
+    limits   = map(string)
+  })
+}
+
+variable "hostname" {
+  description = "Public hostname the dashboard answers on. Embedded as ORIGIN / AUTH_URL so cookie + OIDC redirect generation produces the right scheme + host even when behind cloudflared."
+  type        = string
+}
+
+variable "oidc_secret_name" {
+  description = "Name of the Secret in `namespace` that holds AUTH_ZITADEL_ISSUER / AUTH_ZITADEL_ID / AUTH_ZITADEL_SECRET / AUTH_SECRET. Produced by modules/zitadel-app."
+  type        = string
+}
+
+variable "oidc_secret_checksum" {
+  description = "SHA1 of the OIDC Secret data, mounted as a `checksum/oidc` annotation so a Zitadel app rotation rolls the pod automatically."
+  type        = string
+}
+
+# ── Naming ───────────────────────────────────────────────────────────────────
+
+locals {
+  app_name       = "platform-dash"
+  cluster_role   = "${var.namespace}-${local.app_name}"
+  port_container = 3000
+  port_service   = 80
+  labels = {
+    "app.kubernetes.io/name"       = local.app_name
+    "app.kubernetes.io/managed-by" = "terraform"
+    "app.kubernetes.io/part-of"    = "platform"
+  }
+}
+
+# ── ServiceAccount ───────────────────────────────────────────────────────────
+
+resource "kubernetes_service_account_v1" "this" {
+  count = var.enabled ? 1 : 0
+  metadata {
+    name      = local.app_name
+    namespace = var.namespace
+    labels    = local.labels
+  }
+}
+
+# ── ClusterRole ──────────────────────────────────────────────────────────────
+# Read = wide (the generic CRD viewer fans out to dynamic groups so
+# we can't enumerate every resource the dashboard might touch).
+# Write = narrow: pod delete, deployment / statefulset patch + scale.
+# CRD edit/delete is intentionally left out for now.
+
+resource "kubernetes_cluster_role_v1" "this" {
+  count = var.enabled ? 1 : 0
+  metadata {
+    name   = local.cluster_role
+    labels = local.labels
+  }
+
+  # Wide read across everything — covers the explorer pages, CRD
+  # viewer, events tail, configmap / secret browse, db registry CM.
+  rule {
+    api_groups = ["*"]
+    resources  = ["*"]
+    verbs      = ["get", "list", "watch"]
+  }
+
+  # Narrow writes — what the action buttons actually do.
+  rule {
+    api_groups = [""]
+    resources  = ["pods"]
+    verbs      = ["delete"]
+  }
+  rule {
+    api_groups = ["apps"]
+    resources  = ["deployments", "statefulsets"]
+    verbs      = ["patch", "update"]
+  }
+  rule {
+    api_groups = ["apps"]
+    resources  = ["deployments/scale", "statefulsets/scale"]
+    verbs      = ["patch", "update"]
+  }
+}
+
+resource "kubernetes_cluster_role_binding_v1" "this" {
+  count = var.enabled ? 1 : 0
+  metadata {
+    name   = local.cluster_role
+    labels = local.labels
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "ClusterRole"
+    name      = kubernetes_cluster_role_v1.this[0].metadata[0].name
+  }
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account_v1.this[0].metadata[0].name
+    namespace = var.namespace
+  }
+}
+
+# ── Deployment ───────────────────────────────────────────────────────────────
+
+resource "kubernetes_deployment_v1" "this" {
+  count = var.enabled ? 1 : 0
+
+  metadata {
+    name      = local.app_name
+    namespace = var.namespace
+    labels    = local.labels
+  }
+
+  spec {
+    replicas = var.replicas
+
+    selector {
+      match_labels = {
+        "app.kubernetes.io/name" = local.app_name
+      }
+    }
+
+    template {
+      metadata {
+        labels = local.labels
+        annotations = {
+          # Drives a rollout when the OIDC Secret rotates so the pod
+          # picks up the new client_id/client_secret instead of running
+          # with stale env from its previous start.
+          "checksum/oidc" = var.oidc_secret_checksum
+        }
+      }
+
+      spec {
+        service_account_name = kubernetes_service_account_v1.this[0].metadata[0].name
+
+        container {
+          name              = local.app_name
+          image             = var.image
+          image_pull_policy = "Always"
+
+          port {
+            container_port = local.port_container
+            name           = "http"
+          }
+
+          env_from {
+            secret_ref {
+              name = var.oidc_secret_name
+            }
+          }
+
+          env {
+            name  = "ORIGIN"
+            value = "https://${var.hostname}"
+          }
+          env {
+            name  = "AUTH_URL"
+            value = "https://${var.hostname}"
+          }
+          # SvelteKit auto-detects scheme/host from these forwarded
+          # headers when set — required behind cloudflared + Traefik
+          # so OIDC callback URLs don't end up as http://...
+          env {
+            name  = "PROTOCOL_HEADER"
+            value = "x-forwarded-proto"
+          }
+          env {
+            name  = "HOST_HEADER"
+            value = "x-forwarded-host"
+          }
+
+          resources {
+            requests = var.resources.requests
+            limits   = var.resources.limits
+          }
+
+          # Liveness / readiness both hit /healthz — the cheap endpoint
+          # that doesn't touch the kube API. /readyz exists too (probes
+          # kube API) but we deliberately use the cheap one for both so
+          # transient API blips don't cycle the pod.
+          liveness_probe {
+            http_get {
+              path = "/healthz"
+              port = local.port_container
+            }
+            initial_delay_seconds = 10
+            period_seconds        = 10
+          }
+          readiness_probe {
+            http_get {
+              path = "/healthz"
+              port = local.port_container
+            }
+            initial_delay_seconds = 5
+            period_seconds        = 5
+          }
+          startup_probe {
+            http_get {
+              path = "/healthz"
+              port = local.port_container
+            }
+            period_seconds    = 10
+            failure_threshold = 30
+            timeout_seconds   = 5
+          }
+        }
+      }
+    }
+  }
+}
+
+# ── Service ──────────────────────────────────────────────────────────────────
+
+resource "kubernetes_service_v1" "this" {
+  count = var.enabled ? 1 : 0
+  metadata {
+    name      = local.app_name
+    namespace = var.namespace
+    labels    = local.labels
+  }
+  spec {
+    type = "ClusterIP"
+    selector = {
+      "app.kubernetes.io/name" = local.app_name
+    }
+    port {
+      name        = "http"
+      port        = local.port_service
+      target_port = local.port_container
+      protocol    = "TCP"
+    }
+  }
+}
+
+# ── Outputs ──────────────────────────────────────────────────────────────────
+
+output "namespace" {
+  value       = var.enabled ? var.namespace : null
+  description = "Namespace where the dashboard lives. Null when disabled."
+}
+
+output "service_name" {
+  value       = one([for s in kubernetes_service_v1.this : s.metadata[0].name])
+  description = "ClusterIP Service name (for IngressRoute target). Null when disabled."
+}
+
+output "service_port" {
+  value       = local.port_service
+  description = "Service port the IngressRoute should target."
+}
+
+output "service_account_name" {
+  value       = one([for s in kubernetes_service_account_v1.this : s.metadata[0].name])
+  description = "ServiceAccount name. Null when disabled."
+}
