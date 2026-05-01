@@ -632,108 +632,28 @@ resource "kubernetes_service_v1" "infisical" {
 # -----------------------------------------------------------------------------
 
 # -----------------------------------------------------------------------------
-# Recovery admin signup Job — calls /api/v1/admin/signup once per
-# bootstrap. Idempotent: the endpoint refuses a second call once an
-# admin exists, the curl wrapper treats that response as success.
+# First-admin bootstrap — done MANUALLY via Web UI in Phase 0.
+#
+# Infisical's `/api/v1/admin/signup` endpoint requires SRP (Secure
+# Remote Password) fields — `protectedKey`, `salt`, `verifier`,
+# `publicKey`, `encryptedPrivateKey`, etc. — that are derived
+# client-side in the browser with WebCrypto. There's no straight-
+# through-API way to seed the first admin without re-implementing
+# their key-derivation pipeline (and getting it byte-exact with
+# whatever version we pin).
+#
+# Phase 0 leaves the bootstrap step to the operator: open
+# `https://${var.hostname}/`, the Web UI shows a "Create admin
+# account" form on a fresh instance, paste the recovery_admin_email
+# + recovery_admin_password (`terraform output -raw infisical_recovery_admin_password`),
+# done. Idempotent because Infisical only allows the bootstrap form
+# until the first admin exists.
+#
+# Phase 1 wires Zitadel OIDC SSO via Infisical's API (which doesn't
+# need SRP — OIDC config is server-side material). After Phase 1
+# lands, the recovery admin becomes break-glass and routine login
+# goes through Zitadel.
 # -----------------------------------------------------------------------------
-
-resource "kubernetes_job_v1" "recovery_admin_signup" {
-  for_each = local.instances
-
-  depends_on = [kubernetes_deployment_v1.infisical]
-
-  metadata {
-    # Suffix carries the email so a change to recovery_admin_email
-    # forces a fresh Job. Re-running the signup against an existing
-    # admin email is a no-op via the idempotency check inside the
-    # script.
-    name      = "infisical-recovery-admin-signup"
-    namespace = var.namespace
-    labels = {
-      "app.kubernetes.io/managed-by" = "terraform"
-      "app"                          = "infisical"
-    }
-  }
-
-  spec {
-    backoff_limit = 5
-
-    template {
-      metadata {
-        labels = { job = "infisical-recovery-admin-signup" }
-      }
-
-      spec {
-        restart_policy = "Never"
-
-        container {
-          name  = "signup"
-          image = "curlimages/curl:8.10.1"
-
-          env_from {
-            secret_ref {
-              name = kubernetes_secret_v1.infisical["enabled"].metadata[0].name
-            }
-          }
-
-          resources {
-            requests = { cpu = "10m", memory = "32Mi" }
-            limits   = { cpu = "100m", memory = "64Mi" }
-          }
-
-          # Wait for /api/status; then POST signup. If admin already
-          # exists, Infisical returns 4xx — treat as success so re-
-          # applies are idempotent.
-          command = [
-            "sh", "-c",
-            <<-EOT
-            set -eu
-            URL="http://infisical.${var.namespace}.svc.cluster.local"
-
-            echo "[signup] waiting for $URL/api/status..."
-            until curl -fsS -m 5 "$URL/api/status" >/dev/null 2>&1; do
-              sleep 2
-            done
-            echo "[signup] API ready"
-
-            BODY=$(printf '{"email":"%s","password":"%s","firstName":"Recovery","lastName":"Admin","organizationName":"platform"}' \
-              "$recovery_admin_email" "$recovery_admin_password")
-
-            HTTP_CODE=$(curl -s -o /tmp/resp -w '%%{http_code}' \
-              -X POST -H 'Content-Type: application/json' \
-              -d "$BODY" \
-              "$URL/api/v1/admin/signup")
-
-            echo "[signup] HTTP $HTTP_CODE"
-            cat /tmp/resp || true
-
-            if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "201" ]; then
-              echo "[signup] admin created"
-              exit 0
-            fi
-
-            # Admin already exists — Infisical's response varies by
-            # version; match common bodies and accept.
-            if grep -qE '(already.*exist|already.*set|admin.*created)' /tmp/resp 2>/dev/null; then
-              echo "[signup] admin already exists — treating as success"
-              exit 0
-            fi
-
-            echo "[signup] unexpected response — failing"
-            exit 1
-            EOT
-          ]
-        }
-      }
-    }
-  }
-
-  wait_for_completion = true
-
-  timeouts {
-    create = "5m"
-  }
-}
 
 # -----------------------------------------------------------------------------
 # Outputs
