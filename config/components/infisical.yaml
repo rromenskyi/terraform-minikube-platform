@@ -1,0 +1,24 @@
+# Infisical — platform secrets store routing.
+#
+# `kind: external` because the workload itself is owned by `modules/
+# infisical` (Deployment + Service in the platform namespace,
+# bootstrapped via `infisical.tf` at the root). This component file
+# only describes how the hostname routes through Traefik + Cloudflare
+# Tunnel. Wire by adding a route to your domain yaml — the prefix
+# part of `<prefix>: infisical` MUST match the
+# `services.infisical.hostname` host-prefix you set in
+# `config/platform.yaml` (e.g. `hostname: secrets.example.com` →
+# route `secrets: infisical`).
+#
+# Phase 0 (this) leaves the hostname publicly reachable with only
+# Infisical's built-in auth in the way (recovery admin login until
+# Phase 1 adds Zitadel SSO). Phase 1 (deferred PR) wires Zitadel OIDC
+# inside Infisical's own SSO config — there's no need to bolt on
+# `auth: zitadel` (forward-auth) on top, Infisical handles authn
+# itself.
+kind: external
+
+service:
+  name:      infisical
+  namespace: platform
+  port:      80
