@@ -29,9 +29,12 @@ locals {
         gpu = null
       }
       infisical = {
-        enabled              = false
-        hostname             = ""
-        recovery_admin_email = ""
+        enabled               = false
+        hostname              = ""
+        recovery_admin_email  = ""
+        enable_oidc           = false
+        organization_id       = ""
+        allowed_email_domains = ""
       }
       zitadel = {
         enabled              = false

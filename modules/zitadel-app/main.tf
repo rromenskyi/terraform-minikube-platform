@@ -224,3 +224,9 @@ output "client_id" {
   value     = zitadel_application_oidc.this.client_id
   sensitive = true
 }
+
+output "client_secret" {
+  description = "Zitadel-issued OIDC client secret. Sensitive. Surfaced for direct consumption by callers that pipe credentials elsewhere (e.g. infisical's OIDC-config Job posts this into Infisical's API), in addition to the `secret_name` Secret which existing kind:app components env_from."
+  value       = zitadel_application_oidc.this.client_secret
+  sensitive   = true
+}

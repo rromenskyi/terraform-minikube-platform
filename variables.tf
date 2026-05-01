@@ -127,3 +127,35 @@ variable "zitadel_login_client_pat" {
 # can re-add a sensitive `smarthost_password` variable here and pipe
 # it through `mail.tf`. The home-cluster relay accepts by WG peer-ACL,
 # so no AUTH is needed and the var is unused.
+
+variable "infisical_ua_client_id" {
+  description = <<-EOT
+    Universal Auth client ID for the operator-bootstrapped `tf-platform`
+    Infisical machine identity. Used by the Phase 1 OIDC-config Job to
+    authenticate against `/api/v1/auth/universal-auth/login` before
+    posting Zitadel SSO config to `/api/v1/sso/oidc/config`.
+
+    One-time bootstrap (mirror of `TF_VAR_zitadel_pat`):
+      1. Log into Infisical as recovery admin.
+      2. Org settings → Access Control → Identities → Create.
+         Name = `tf-platform`, role = Admin.
+      3. On the new identity → Authentication → Universal Auth → Create
+         client_secret. Save the generated `Client ID` and `Client Secret`.
+      4. Paste here: `TF_VAR_infisical_ua_client_id=...`,
+         `TF_VAR_infisical_ua_client_secret=...` in `.env`.
+
+    Empty when `services.infisical.enable_oidc = false` — the
+    precondition in `infisical.tf` rejects an enable_oidc apply with
+    empty UA creds rather than silently half-deploying.
+  EOT
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "infisical_ua_client_secret" {
+  description = "Universal Auth client_secret matching `infisical_ua_client_id`. Sensitive — paste via `TF_VAR_infisical_ua_client_secret` in `.env`. Same one-time UI bootstrap as the client_id."
+  type        = string
+  default     = ""
+  sensitive   = true
+}

@@ -128,6 +128,60 @@ variable "cpu_limit" {
   default = "1"
 }
 
+# ── Phase 1 — Zitadel OIDC SSO config ────────────────────────────────────────
+
+variable "enable_oidc" {
+  description = "Configure Zitadel as the OIDC SSO provider. When true, a Job POSTs to `/api/v1/sso/oidc/config` with the Zitadel app's client_id/client_secret, switching login flow to Zitadel SSO. Recovery admin remains as break-glass. Off keeps Phase 0 behaviour (recovery admin only)."
+  type        = bool
+  default     = false
+}
+
+variable "oidc_issuer_url" {
+  description = "Zitadel public issuer URL (e.g. https://id.example.com). Drives the discovery URL `<issuer>/.well-known/openid-configuration` Infisical posts as `discoveryURL`."
+  type        = string
+  default     = ""
+}
+
+variable "oidc_client_id" {
+  description = "Zitadel-issued OIDC client ID for the Infisical app. Sourced from `module.zitadel_app`'s output via the root TF wiring."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "oidc_client_secret" {
+  description = "Zitadel-issued OIDC client secret. Sensitive."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "oidc_organization_id" {
+  description = "Infisical organization ID the OIDC config attaches to. Find via the URL after logging into Infisical — `https://<host>/org/<this-id>/...`. Per-org OIDC because Infisical scopes SSO at org level, not instance level."
+  type        = string
+  default     = ""
+}
+
+variable "oidc_allowed_email_domains" {
+  description = "Comma-separated email domain allowlist enforced at Zitadel-callback time inside Infisical. Empty disables the allowlist (every Zitadel user can log in). Set to e.g. `example.com,corp.example.com` to restrict."
+  type        = string
+  default     = ""
+}
+
+variable "infisical_ua_client_id" {
+  description = "Universal Auth client ID for the operator-bootstrapped `tf-platform` Infisical machine identity. Used by the OIDC-config Job to authenticate against `/api/v1/auth/universal-auth/login` before posting the SSO config. Bootstrap is one-time and lives outside TF: in Infisical UI → Org settings → Access Control → Identities → Create `tf-platform` (role Admin) → Authentication → Universal Auth → Create client_secret. Operator pastes the `client_id` here via `TF_VAR_infisical_ua_client_id`."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "infisical_ua_client_secret" {
+  description = "Universal Auth client_secret matching `infisical_ua_client_id`. Same operator-bootstrap path; pasted via `TF_VAR_infisical_ua_client_secret`. Empty disables the OIDC-config Job (the precondition fails plan to keep the operator from half-deploying)."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
 # -----------------------------------------------------------------------------
 # Locals
 # -----------------------------------------------------------------------------
@@ -654,6 +708,184 @@ resource "kubernetes_service_v1" "infisical" {
 # lands, the recovery admin becomes break-glass and routine login
 # goes through Zitadel.
 # -----------------------------------------------------------------------------
+
+# -----------------------------------------------------------------------------
+# Phase 1 — OIDC SSO config Job.
+#
+# Authenticates as the operator-bootstrapped `tf-platform` Universal-
+# Auth identity via `/api/v1/auth/universal-auth/login`, then POSTs
+# the Zitadel OIDC config to `/api/v1/sso/oidc/config`. The endpoint
+# accepts both JWT (admin user session) and IDENTITY_ACCESS_TOKEN
+# (machine identity bearer); we use the latter so the Job is fully
+# scriptable from curl without re-implementing Infisical's SRP login
+# pipeline.
+#
+# Idempotency: the POST endpoint creates-or-updates the per-org SSO
+# config row in Postgres. Re-running the Job with identical body is
+# effectively a no-op. Body changes (rotating Zitadel client_secret,
+# flipping email-domain allowlist) flow through naturally.
+#
+# Triggers: a sha1 of the body is in the Job name suffix so any
+# meaningful change (issuer URL, client credentials, allowlist) cycles
+# the Job. Pure annotation changes don't.
+# -----------------------------------------------------------------------------
+
+locals {
+  oidc_config_enabled = var.enabled && var.enable_oidc
+
+  oidc_config_set = local.oidc_config_enabled ? toset(["enabled"]) : toset([])
+
+  oidc_body_hash = local.oidc_config_enabled ? substr(sha1(jsonencode({
+    issuer        = var.oidc_issuer_url
+    client_id     = var.oidc_client_id
+    client_secret = var.oidc_client_secret
+    org_id        = var.oidc_organization_id
+    allowed       = var.oidc_allowed_email_domains
+  })), 0, 8) : ""
+}
+
+resource "kubernetes_job_v1" "oidc_config" {
+  for_each = local.oidc_config_set
+
+  depends_on = [kubernetes_deployment_v1.infisical]
+
+  metadata {
+    # Suffix carries an 8-char hash of the OIDC body so any body
+    # change forces a fresh Job (k8s Job names are immutable; a new
+    # hash = a new Job, the old one stays around for one apply
+    # window then gets GC'd).
+    name      = "infisical-oidc-config-${local.oidc_body_hash}"
+    namespace = var.namespace
+    labels = {
+      "app.kubernetes.io/managed-by" = "terraform"
+      "app"                          = "infisical"
+      "phase"                        = "oidc-config"
+    }
+  }
+
+  spec {
+    backoff_limit = 5
+
+    template {
+      metadata {
+        labels = { job = "infisical-oidc-config" }
+      }
+
+      spec {
+        restart_policy = "Never"
+
+        container {
+          name  = "config"
+          image = "curlimages/curl:8.10.1"
+
+          # Universal-auth + OIDC body values mounted via env so the
+          # script never has them in argv (visible in `ps`).
+          env {
+            name  = "UA_CLIENT_ID"
+            value = var.infisical_ua_client_id
+          }
+
+          env {
+            name  = "UA_CLIENT_SECRET"
+            value = var.infisical_ua_client_secret
+          }
+
+          env {
+            name  = "OIDC_ISSUER"
+            value = var.oidc_issuer_url
+          }
+
+          env {
+            name  = "OIDC_CLIENT_ID"
+            value = var.oidc_client_id
+          }
+
+          env {
+            name  = "OIDC_CLIENT_SECRET"
+            value = var.oidc_client_secret
+          }
+
+          env {
+            name  = "OIDC_ORG_ID"
+            value = var.oidc_organization_id
+          }
+
+          env {
+            name  = "OIDC_ALLOWED_DOMAINS"
+            value = var.oidc_allowed_email_domains
+          }
+
+          resources {
+            requests = { cpu = "10m", memory = "32Mi" }
+            limits   = { cpu = "100m", memory = "64Mi" }
+          }
+
+          command = [
+            "sh", "-c",
+            <<-EOT
+            set -eu
+            URL="http://infisical.${var.namespace}.svc.cluster.local"
+
+            echo "[oidc-config] waiting for $URL/api/status..."
+            until curl -fsS -m 5 "$URL/api/status" >/dev/null 2>&1; do
+              sleep 2
+            done
+            echo "[oidc-config] API ready"
+
+            echo "[oidc-config] universal-auth login"
+            LOGIN=$(curl -s -X POST -H 'Content-Type: application/json' \
+              -d "$(printf '{"clientId":"%s","clientSecret":"%s"}' "$UA_CLIENT_ID" "$UA_CLIENT_SECRET")" \
+              "$URL/api/v1/auth/universal-auth/login")
+
+            TOKEN=$(echo "$LOGIN" | sed -n 's/.*"accessToken":"\([^"]*\)".*/\1/p')
+            if [ -z "$TOKEN" ]; then
+              echo "[oidc-config] ERROR: login returned no accessToken"
+              echo "$LOGIN"
+              exit 1
+            fi
+
+            echo "[oidc-config] POST /api/v1/sso/oidc/config"
+            BODY=$(printf '{"configurationType":"discovery-url","discoveryURL":"%s/.well-known/openid-configuration","clientId":"%s","clientSecret":"%s","isActive":true,"organizationId":"%s","allowedEmailDomains":"%s"}' \
+              "$OIDC_ISSUER" "$OIDC_CLIENT_ID" "$OIDC_CLIENT_SECRET" "$OIDC_ORG_ID" "$OIDC_ALLOWED_DOMAINS")
+
+            HTTP_CODE=$(curl -s -o /tmp/resp -w '%%{http_code}' \
+              -X POST -H 'Content-Type: application/json' \
+              -H "Authorization: Bearer $TOKEN" \
+              -d "$BODY" \
+              "$URL/api/v1/sso/oidc/config")
+
+            echo "[oidc-config] HTTP $HTTP_CODE"
+            cat /tmp/resp || true
+            echo
+
+            # 200/201 — created/updated. 400 with "already exists" body
+            # — config row exists; treat as success and let next apply
+            # PATCH it (Phase 1B follow-up). Anything else fails.
+            if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "201" ]; then
+              echo "[oidc-config] success"
+              exit 0
+            fi
+
+            if [ "$HTTP_CODE" = "400" ] && grep -qE '(already.*exist|duplicate)' /tmp/resp 2>/dev/null; then
+              echo "[oidc-config] config already exists — treating as success (PATCH is a Phase 1B follow-up)"
+              exit 0
+            fi
+
+            echo "[oidc-config] unexpected response — failing"
+            exit 1
+            EOT
+          ]
+        }
+      }
+    }
+  }
+
+  wait_for_completion = true
+
+  timeouts {
+    create = "5m"
+  }
+}
 
 # -----------------------------------------------------------------------------
 # Outputs

@@ -170,6 +170,42 @@ Refactor: hoist project creation out of `modules/zitadel-app` and
 pass `project_id` down to the per-app module. Roles still belong to
 the per-app module (they're application-scoped within the project).
 
+### Soft-gate vs hard-fail when `zitadel_pat` / `infisical_ua_*` aren't set
+
+Today every check block tied to a missing operator-bootstrap token
+(Zitadel PAT, Infisical Universal Auth client_id/secret, future
+Infisical machine-identity tokens for Phase 2+ migrations) fails
+`./tf plan` outright. That's loud and clear on a fresh clone, but
+asymmetric with how the rest of the platform handles "this thing
+isn't configured yet" — the matching `services.<name>.enabled`
+flag in `config/platform.yaml` just no-ops the resources.
+
+Question: should missing bootstrap tokens behave the same way? I.e.
+when `TF_VAR_zitadel_pat` is empty, automatically skip every
+`module.zitadel_app` invocation + downstream OIDC wiring rather
+than failing plan. Same for Infisical: empty
+`TF_VAR_infisical_ua_client_id` would skip the OIDC-config Job
+without breaking the rest of the platform.
+
+Trade-offs:
+- Hard-fail today: clean clone immediately tells the operator what's
+  missing. No silent half-deployment. Matches the Zitadel PAT bootstrap
+  flow (provision Zitadel → grab PAT → re-apply with PAT set).
+- Soft-gate: less friction on iteration, plan stays green while the
+  operator works through the bootstrap, but a missing token can mask
+  half-deployments where some kind:app components have OIDC and others
+  don't.
+
+Lean: keep hard-fail at the *check* level for bootstrap tokens, but
+add explicit `enable_oidc: false` / `enable_sso: false` toggles on
+the modules so the operator can deliberately turn OIDC off without
+unsetting the token. The soft-gate path then becomes a config choice,
+not a side effect of an empty env var.
+
+Captured because the same Q resurfaces every time a new bootstrap
+token gets added (Zitadel PAT, login-client PAT, Infisical UA, future
+Phase 2 agent identity).
+
 ### Auto-recovery for `login-client.pat` after pod restart
 
 Today the operator has to extract the FIRSTINSTANCE-generated PAT

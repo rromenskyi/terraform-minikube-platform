@@ -114,9 +114,26 @@ services:
     # IngressRoute Host(...) match. Must match the route you wired
     # in `config/domains/<your-domain>.yaml`.
     hostname: secrets.example.com
-    # Bootstrap admin email for the `/api/v1/admin/signup` flow.
-    # Login password comes from `terraform output -json infisical`.
+    # Bootstrap admin email — used at first signup (Phase 0) and
+    # remains as break-glass after Phase 1 wires Zitadel SSO. Password
+    # comes from `terraform output -json infisical`.
     recovery_admin_email: ops@example.com
+
+    # Phase 1 — Zitadel OIDC SSO. Off until the Phase 0 recovery-admin
+    # signup is done. On flip:
+    #   1. Log into Infisical as recovery admin (the URL becomes
+    #      `https://<host>/org/<id>/...` — copy that id below).
+    #   2. Org settings → Access Control → Identities → Create
+    #      `tf-platform` (Admin role) → Universal Auth → Create
+    #      client_secret. Paste both into .env:
+    #        TF_VAR_infisical_ua_client_id=...
+    #        TF_VAR_infisical_ua_client_secret=...
+    #   3. Set `enable_oidc: true` here.
+    #   4. `./tf apply` provisions the Zitadel app + posts SSO config.
+    #      Login page gets a "Continue with SSO" button.
+    enable_oidc: false
+    organization_id: ""             # UUID from the URL after signup
+    allowed_email_domains: ""       # e.g. "example.com" to restrict; "" = open
 
   zitadel:
     enabled: false
