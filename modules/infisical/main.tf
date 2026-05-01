@@ -426,11 +426,12 @@ resource "kubernetes_deployment_v1" "infisical" {
             }
           }
 
-          env {
-            name  = "DB_CONNECTION_URI"
-            value = "postgres://${local.db_user}:$(DB_PASSWORD)@${var.postgres_host}:5432/${local.db_name}"
-          }
-
+          # K8s `$(VAR)` env substitution only resolves a reference to a
+          # var declared EARLIER in the same env list — declare passwords
+          # first so the URI strings below pick them up. A reference to
+          # a later var falls through as a literal `$(NAME)` string,
+          # which Infisical then sends to Redis verbatim and gets
+          # `WRONGPASS` from the AUTH command.
           env {
             name = "DB_PASSWORD"
             value_from {
@@ -442,11 +443,6 @@ resource "kubernetes_deployment_v1" "infisical" {
           }
 
           env {
-            name  = "REDIS_URL"
-            value = "redis://default:$(REDIS_PASSWORD)@${var.redis_host}:6379"
-          }
-
-          env {
             name = "REDIS_PASSWORD"
             value_from {
               secret_key_ref {
@@ -454,6 +450,16 @@ resource "kubernetes_deployment_v1" "infisical" {
                 key  = "REDIS_PASSWORD"
               }
             }
+          }
+
+          env {
+            name  = "DB_CONNECTION_URI"
+            value = "postgres://${local.db_user}:$(DB_PASSWORD)@${var.postgres_host}:5432/${local.db_name}"
+          }
+
+          env {
+            name  = "REDIS_URL"
+            value = "redis://default:$(REDIS_PASSWORD)@${var.redis_host}:6379"
           }
 
           env {
