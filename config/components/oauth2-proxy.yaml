@@ -1,0 +1,26 @@
+# Auth gate (traefik-forward-auth) — routing only, no Deployment.
+# Points at the Service the root `oauth2_proxy.tf` module emits.
+# Map the `auth` route in any domain yaml (e.g. `auth: oauth2-proxy`)
+# so `auth.<domain>` answers on this Service: traefik-forward-auth's
+# `/_oauth` callback handler lives here, plus the OIDC start endpoint
+# any protected host forwards to.
+#
+# Self-attached to the cluster-wide ForwardAuth middleware (`auth:
+# zitadel`) on purpose: thomseddon/traefik-forward-auth's `RootHandler`
+# rewrites `r.Method`/`r.Host`/`r.URL` from X-Forwarded-* headers
+# before mux dispatch — those headers are only set when the request
+# arrives via a ForwardAuth middleware. Without the middleware here,
+# the `/_oauth` callback request from Zitadel lands in the default
+# AuthHandler instead of AuthCallbackHandler, which redirects the
+# browser straight back to the provider — infinite loop. /_oauth is
+# routed in forward-auth's mux ABOVE the default auth-required path,
+# so self-protection doesn't deadlock; the callback bypasses the
+# auth gate even though everything else on this host wouldn't.
+auth: zitadel
+
+kind: external
+
+service:
+  name:      forward-auth
+  namespace: ingress-controller
+  port:      4181

@@ -138,4 +138,9 @@ module "project" {
   zitadel_org_name               = "ZITADEL"
   zitadel_issuer_url             = local.platform.services.zitadel.enabled ? "https://${local.platform.services.zitadel.external_domain}" : null
   zitadel_provider_authenticated = var.zitadel_pat != ""
+
+  # Cross-namespace ForwardAuth middleware ref. Null when Zitadel is
+  # off — the project-level check rejects `auth: zitadel` on any
+  # component before the IngressRoute generation is reached.
+  oauth2_proxy_middlewares = module.oauth2_proxy.middleware_refs
 }
