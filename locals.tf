@@ -28,11 +28,6 @@ locals {
         # Intel Arc + Vulkan example.
         gpu = null
       }
-      infisical = {
-        enabled              = false
-        hostname             = ""
-        recovery_admin_email = ""
-      }
       zitadel = {
         enabled              = false
         external_domain      = ""
@@ -87,7 +82,6 @@ locals {
       redis         = merge(local._platform_defaults.services.redis, try(local._platform_services.redis, {}))
       ollama        = merge(local._platform_defaults.services.ollama, try(local._platform_services.ollama, {}))
       zitadel       = merge(local._platform_defaults.services.zitadel, try(local._platform_services.zitadel, {}))
-      infisical     = merge(local._platform_defaults.services.infisical, try(local._platform_services.infisical, {}))
       platform_dash = merge(local._platform_defaults.services.platform_dash, try(local._platform_services.platform_dash, {}))
     }
   }
