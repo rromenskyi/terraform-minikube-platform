@@ -16,9 +16,10 @@ locals {
   # Dashboard's namespace = whatever the platform-dash module emits
   # (the shared `platform` namespace). Null when disabled — every
   # resource here gates on that.
-  dash_namespace   = try(module.platform_dash.namespace, null)
-  dash_pg_enabled  = module.postgres.host != null && local.dash_namespace != null
-  dash_red_enabled = module.redis.host != null && local.dash_namespace != null
+  dash_namespace     = try(module.platform_dash.namespace, null)
+  dash_pg_enabled    = module.postgres.host != null && local.dash_namespace != null
+  dash_red_enabled   = module.redis.host != null && local.dash_namespace != null
+  dash_mysql_enabled = module.mysql.host != null && local.dash_namespace != null
 
   # The CM `targets.yaml` content. Kept here as a list of plain maps
   # so a future second instance, or external clusters, can append.
@@ -46,7 +47,19 @@ locals {
     }
   }] : []
 
-  dash_db_targets = concat(local.dash_pg_target, local.dash_redis_target)
+  dash_mysql_target = local.dash_mysql_enabled ? [{
+    name    = "platform-mysql"
+    kind    = "mysql"
+    cluster = "local"
+    label   = "platform / mysql"
+    secret = {
+      name      = "platform-mysql-dashboard"
+      key       = "URI"
+      namespace = local.dash_namespace
+    }
+  }] : []
+
+  dash_db_targets = concat(local.dash_pg_target, local.dash_redis_target, local.dash_mysql_target)
 }
 
 # ── dashboard_ro passwords ───────────────────────────────────────────────────
@@ -60,6 +73,12 @@ resource "random_password" "dashboard_ro_pg" {
 
 resource "random_password" "dashboard_ro_redis" {
   count   = local.dash_red_enabled ? 1 : 0
+  length  = 32
+  special = false
+}
+
+resource "random_password" "dashboard_ro_mysql" {
+  count   = local.dash_mysql_enabled ? 1 : 0
   length  = 32
   special = false
 }
@@ -200,6 +219,72 @@ resource "kubernetes_job_v1" "redis_dashboard_ro_setup" {
   timeouts { create = "2m" }
 }
 
+# ── MySQL: provision dashboard_ro via mysql Job ──────────────────────────────
+# PROCESS = SHOW PROCESSLIST; REPLICATION CLIENT = SHOW MASTER/SLAVE
+# STATUS; SELECT on information_schema/performance_schema for sizes
+# + status counters. No data-table grants — dashboard reads metadata
+# only. dashboard_ro@'%' so the role works from the dashboard pod
+# regardless of source IP.
+resource "kubernetes_job_v1" "mysql_dashboard_ro_setup" {
+  count      = local.dash_mysql_enabled ? 1 : 0
+  depends_on = [module.mysql]
+
+  metadata {
+    name      = "mysql-dashboard-ro-setup"
+    namespace = module.mysql.namespace
+    labels = {
+      "managed-by" = "platform-dash-db-discovery"
+    }
+  }
+
+  spec {
+    backoff_limit = 3
+
+    template {
+      metadata {
+        labels = {
+          job = "mysql-dashboard-ro-setup"
+        }
+      }
+      spec {
+        restart_policy = "Never"
+
+        container {
+          name  = "mysql-dashboard-ro-setup"
+          image = "mysql:8.0"
+
+          env_from {
+            secret_ref {
+              name = "mysql-root"
+            }
+          }
+          env {
+            name  = "RO_PASSWORD"
+            value = random_password.dashboard_ro_mysql[0].result
+          }
+
+          resources {
+            requests = { cpu = "50m", memory = "64Mi" }
+            limits   = { cpu = "200m", memory = "256Mi" }
+          }
+
+          # CREATE USER IF NOT EXISTS + ALTER USER for password sync;
+          # GRANTs are idempotent (re-running is a no-op).
+          # FLUSH PRIVILEGES for safety though MySQL 8 doesn't
+          # require it for most grant changes.
+          command = [
+            "sh", "-c",
+            "mysql -h ${module.mysql.host} -u root -p\"$MYSQL_ROOT_PASSWORD\" -e \"CREATE USER IF NOT EXISTS 'dashboard_ro'@'%' IDENTIFIED BY '$RO_PASSWORD'; ALTER USER 'dashboard_ro'@'%' IDENTIFIED BY '$RO_PASSWORD'; GRANT PROCESS, REPLICATION CLIENT ON *.* TO 'dashboard_ro'@'%'; GRANT SELECT ON performance_schema.* TO 'dashboard_ro'@'%'; GRANT SELECT ON information_schema.* TO 'dashboard_ro'@'%'; FLUSH PRIVILEGES;\""
+          ]
+        }
+      }
+    }
+  }
+
+  wait_for_completion = true
+  timeouts { create = "2m" }
+}
+
 # ── Per-DB cred Secrets in dashboard's namespace ─────────────────────────────
 # Lives in the dashboard's ns so the dashboard SA's existing
 # secrets-read RBAC (cluster-wide via the wildcard rule) covers it
@@ -234,6 +319,22 @@ resource "kubernetes_secret_v1" "platform_redis_dashboard" {
   }
   data = {
     URI = "redis://dashboard_ro:${random_password.dashboard_ro_redis[0].result}@${module.redis.host}:${module.redis.port}/0"
+  }
+}
+
+resource "kubernetes_secret_v1" "platform_mysql_dashboard" {
+  count      = local.dash_mysql_enabled ? 1 : 0
+  depends_on = [kubernetes_job_v1.mysql_dashboard_ro_setup]
+
+  metadata {
+    name      = "platform-mysql-dashboard"
+    namespace = local.dash_namespace
+    labels = {
+      "managed-by" = "platform-dash-db-discovery"
+    }
+  }
+  data = {
+    URI = "mysql://dashboard_ro:${random_password.dashboard_ro_mysql[0].result}@${module.mysql.host}:${module.mysql.port}/mysql"
   }
 }
 
