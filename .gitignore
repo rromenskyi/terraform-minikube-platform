@@ -41,6 +41,7 @@ manifests/**/secret*.yaml
 *.tfstate
 *.tfstate.backup
 *.tfstate.*.backup
+.terraform.tfstate.lock.info
 tfplan
 .terraform/
 .terraform.lock.hcl
