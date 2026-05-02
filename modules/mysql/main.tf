@@ -29,6 +29,24 @@ variable "volume_base_path" {
   default     = "/data/vol"
 }
 
+variable "node_selector" {
+  description = "Node-selector labels the MySQL pod must match. Empty = scheduler picks. Set to pin the pod on the node that owns the hostPath data dir (e.g. `{ workload-tier = stateful }`)."
+  type        = map(string)
+  default     = {}
+}
+
+variable "tolerations" {
+  description = "Taints the MySQL pod tolerates. Empty list = pod cannot land on any tainted node."
+  type = list(object({
+    key                = optional(string)
+    operator           = optional(string)
+    value              = optional(string)
+    effect             = optional(string)
+    toleration_seconds = optional(string)
+  }))
+  default = []
+}
+
 locals {
   # Singleton-ish toggle. All resources below use `for_each =
   # local.instances` — yields one instance keyed "enabled" when the
@@ -132,6 +150,21 @@ resource "kubernetes_stateful_set_v1" "mysql" {
       }
 
       spec {
+        # Pod placement primitives — empty defaults preserve prior
+        # scheduler behaviour.
+        node_selector = length(var.node_selector) > 0 ? var.node_selector : null
+
+        dynamic "toleration" {
+          for_each = var.tolerations
+          content {
+            key                = toleration.value.key
+            operator           = toleration.value.operator
+            value              = toleration.value.value
+            effect             = toleration.value.effect
+            toleration_seconds = toleration.value.toleration_seconds
+          }
+        }
+
         container {
           name  = "mysql"
           image = "mysql:8.0"

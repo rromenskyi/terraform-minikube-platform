@@ -79,6 +79,24 @@ variable "oidc_secret_checksum" {
   type        = string
 }
 
+variable "node_selector" {
+  description = "Node-selector labels the platform-dash pod must match. Empty = scheduler picks. The dash is stateless and can run anywhere; pin via `{ workload-tier = general }` or similar to keep it off the data node."
+  type        = map(string)
+  default     = {}
+}
+
+variable "tolerations" {
+  description = "Taints the platform-dash pod tolerates. Empty list = pod cannot land on any tainted node."
+  type = list(object({
+    key                = optional(string)
+    operator           = optional(string)
+    value              = optional(string)
+    effect             = optional(string)
+    toleration_seconds = optional(string)
+  }))
+  default = []
+}
+
 # ── Naming ───────────────────────────────────────────────────────────────────
 
 locals {
@@ -194,6 +212,21 @@ resource "kubernetes_deployment_v1" "this" {
 
       spec {
         service_account_name = kubernetes_service_account_v1.this[0].metadata[0].name
+
+        # Pod placement primitives — empty defaults preserve prior
+        # scheduler behaviour.
+        node_selector = length(var.node_selector) > 0 ? var.node_selector : null
+
+        dynamic "toleration" {
+          for_each = var.tolerations
+          content {
+            key                = toleration.value.key
+            operator           = toleration.value.operator
+            value              = toleration.value.value
+            effect             = toleration.value.effect
+            toleration_seconds = toleration.value.toleration_seconds
+          }
+        }
 
         container {
           name              = local.app_name
