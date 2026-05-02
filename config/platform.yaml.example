@@ -123,3 +123,33 @@ services:
     #   allow_register:          false
     #   allow_external_idp:      true
     #   allow_username_password: true
+
+# Pod placement (Phase B, optional per service)
+#
+# Every service above accepts `node_selector:` (map) and
+# `tolerations:` (list); ollama also accepts `affinity:`. All default
+# empty so nothing changes until you fill them in. Useful when the
+# cluster has more than one node and you need to pin pods by role:
+#
+#   services:
+#     postgres: { enabled: true, node_selector: { workload-tier: stateful } }
+#     mysql:    { enabled: true, node_selector: { workload-tier: stateful } }
+#     redis:    { enabled: true, node_selector: { workload-tier: stateful } }
+#     zitadel:  { enabled: true, node_selector: { workload-tier: stateful }, ... }
+#
+#     ollama:
+#       enabled: true
+#       node_selector: { gpu: intel }       # pin to the GPU node
+#
+#     platform_dash:
+#       enabled: true
+#       node_selector: { workload-tier: general }
+#
+# Example toleration block (edge node carrying
+# `node-role.kubernetes.io/edge=true:NoSchedule`):
+#
+#     tolerations:
+#       - { key: node-role.kubernetes.io/edge, operator: Exists, effect: NoSchedule }
+#
+# Schema mirrors `pod.spec` (k8s API v1) — see modules/component/main.tf
+# variable docs for the exact accepted fields.

@@ -76,6 +76,9 @@ module "platform_dash" {
   hostname             = local.platform.services.platform_dash.hostname
   oidc_secret_name     = try(module.platform_dash_oidc[0].secret_name, "platform-dash-oidc")
   oidc_secret_checksum = try(module.platform_dash_oidc[0].secret_checksum, "no-oidc")
+
+  node_selector = local.platform.services.platform_dash.node_selector
+  tolerations   = local.platform.services.platform_dash.tolerations
 }
 
 output "platform_dash_url" {

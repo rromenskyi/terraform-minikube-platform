@@ -11,4 +11,7 @@ module "mysql" {
   enabled          = local.platform.services.mysql.enabled
   namespace        = kubernetes_namespace_v1.platform.metadata[0].name
   volume_base_path = var.host_volume_path
+
+  node_selector = local.platform.services.mysql.node_selector
+  tolerations   = local.platform.services.mysql.tolerations
 }
