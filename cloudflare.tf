@@ -38,10 +38,10 @@ resource "cloudflare_zero_trust_tunnel_cloudflared" "main" {
 #
 # Cloudflare's API refuses to delete a tunnel while it sees "active
 # connections" on its side — which lags the actual cloudflared pods by
-# 30-90s after they stop. The v4 provider retries internally with no
+# 30-90s after they stop. The provider retries internally with no
 # user-configurable ceiling and blocks `terraform destroy` for 3-5
-# minutes on every teardown (the `timeouts` block is not on the
-# resource's schema).
+# minutes on every teardown (no `timeouts` / `force_delete` on the
+# resource schema as of v5.19.x).
 #
 # Short-circuit by hitting the Cloudflare API directly with
 # `?force=true` on a 30s curl timeout. The null_resource runs its
@@ -52,13 +52,20 @@ resource "cloudflare_zero_trust_tunnel_cloudflared" "main" {
 # `on_failure = continue` so a missing tunnel (already purged by the
 # wrapper's `cloudflare-purge` subcommand) or a transient network hiccup
 # does not strand the destroy.
+#
+# Credentials and account scope are read from the Cloudflare provider's
+# native env vars (`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`) at
+# exec time rather than threaded through `triggers`. Triggers are
+# stored verbatim in `terraform.tfstate`, so a token in there leaks
+# the secret into B2 state on every teardown that touches this
+# resource. `tunnel_id` stays as the only trigger because it's the
+# value that actually changes when the resource is replaced — the
+# token + account are operator-scope constants.
 resource "null_resource" "cloudflare_tunnel_force_delete" {
   depends_on = [cloudflare_zero_trust_tunnel_cloudflared.main]
 
   triggers = {
-    tunnel_id  = cloudflare_zero_trust_tunnel_cloudflared.main.id
-    account_id = var.cloudflare_account_id
-    api_token  = var.cloudflare_api_token
+    tunnel_id = cloudflare_zero_trust_tunnel_cloudflared.main.id
   }
 
   provisioner "local-exec" {
@@ -66,16 +73,16 @@ resource "null_resource" "cloudflare_tunnel_force_delete" {
     on_failure  = continue
     interpreter = ["bash", "-c"]
     environment = {
-      ACCOUNT_ID = self.triggers.account_id
-      TUNNEL_ID  = self.triggers.tunnel_id
-      API_TOKEN  = self.triggers.api_token
+      TUNNEL_ID = self.triggers.tunnel_id
     }
     command = <<-EOT
       set -euo pipefail
+      : "$${CLOUDFLARE_API_TOKEN:?must be set in process env (./tf wrapper exports it)}"
+      : "$${CLOUDFLARE_ACCOUNT_ID:?must be set in process env (./tf wrapper exports it)}"
       curl -fsS --max-time 30 \
         -X DELETE \
-        -H "Authorization: Bearer $API_TOKEN" \
-        "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/cfd_tunnel/$TUNNEL_ID?force=true" \
+        -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+        "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/cfd_tunnel/$TUNNEL_ID?force=true" \
         > /dev/null
     EOT
   }
