@@ -88,7 +88,7 @@ else
       # backend without forcing the operator to `source .env` by
       # hand.
       case "$key" in
-        AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN|AWS_REGION|B2_BUCKET|B2_ENDPOINT)
+        AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY)
           export "$key"="$value"
           ;;
       esac
