@@ -114,4 +114,7 @@ module "zitadel" {
   first_admin_username      = local.platform.services.zitadel.first_admin_username
   login_policy              = local.platform.services.zitadel.login_policy
   login_client_pat          = var.zitadel_login_client_pat
+
+  node_selector = local.platform.services.zitadel.node_selector
+  tolerations   = local.platform.services.zitadel.tolerations
 }
