@@ -28,10 +28,10 @@ resource "random_password" "cloudflare_tunnel_secret" {
 }
 
 resource "cloudflare_zero_trust_tunnel_cloudflared" "main" {
-  account_id = var.cloudflare_account_id
-  name       = "platform"
-  config_src = "cloudflare"
-  secret     = base64encode(random_password.cloudflare_tunnel_secret.result)
+  account_id    = var.cloudflare_account_id
+  name          = "platform"
+  config_src    = "cloudflare"
+  tunnel_secret = base64encode(random_password.cloudflare_tunnel_secret.result)
 }
 
 # Pre-destroy force-delete for the tunnel above.
@@ -85,45 +85,43 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "main" {
   account_id = var.cloudflare_account_id
   tunnel_id  = cloudflare_zero_trust_tunnel_cloudflared.main.id
 
-  config {
-    dynamic "ingress_rule" {
-      for_each = local.all_hostnames
-      content {
-        hostname = ingress_rule.key
-        service  = ingress_rule.value.service
-
-        # End-to-end TLS to Traefik. `origin_server_name` sets the SNI
-        # cloudflared presents on the upstream TLS handshake — without
-        # it cloudflared would SNI as the service-URL host
-        # (`traefik.ingress-controller.svc.cluster.local`), Traefik
-        # would fall back to its self-signed default cert, and
-        # cloudflared would reject it. Setting SNI to the public
-        # hostname lets Traefik serve the correct Let's Encrypt cert,
-        # which cloudflared validates cleanly.
-        #
-        # `http2_origin` is opt-in via the component yaml — flips
-        # cloudflared from HTTP/1.1 to HTTP/2 cleartext upstream;
-        # required end-to-end for any service that exposes gRPC
-        # alongside HTTP (Zitadel today, anything kind:app backed by
-        # gRPC tomorrow). Traefik's own `scheme: h2c` knob passes the
-        # HTTP/2 framing through to the pod.
-        origin_request {
-          origin_server_name = ingress_rule.key
-          http2_origin       = try(ingress_rule.value.http2_origin, false)
+  # v5 schema: `ingress_rule` is a list-of-objects attribute, not a
+  # block. End-to-end TLS to Traefik is enforced via `origin_request.
+  # origin_server_name` — without it, cloudflared would SNI as the
+  # upstream service URL host, Traefik would fall back to its
+  # self-signed default cert, and cloudflared would reject it. Setting
+  # SNI to the public hostname lets Traefik serve the correct Let's
+  # Encrypt cert, which cloudflared validates cleanly.
+  #
+  # `http2_origin` is opt-in via the component yaml — flips cloudflared
+  # from HTTP/1.1 to HTTP/2 cleartext upstream; required end-to-end for
+  # any service that exposes gRPC alongside HTTP (Zitadel today,
+  # anything kind:app backed by gRPC tomorrow). Traefik's own
+  # `scheme: h2c` knob passes the HTTP/2 framing through to the pod.
+  config = {
+    ingress = concat(
+      [
+        for hostname, cfg in local.all_hostnames : {
+          hostname = hostname
+          service  = cfg.service
+          origin_request = {
+            origin_server_name = hostname
+            http2_origin       = try(cfg.http2_origin, false)
+          }
         }
-      }
-    }
-
-    # Catch-all (required by Cloudflare)
-    ingress_rule {
-      service = "http_status:404"
-    }
+      ],
+      # Catch-all (required by Cloudflare — must be the last entry,
+      # match-anything by omitting `hostname`).
+      [{
+        service = "http_status:404"
+      }]
+    )
   }
 }
 
 # ── DNS CNAME records — one per hostname ─────────────────────────────────────
 
-resource "cloudflare_record" "tunnel" {
+resource "cloudflare_dns_record" "tunnel" {
   for_each = {
     for hostname, cfg in local.all_hostnames : hostname => cfg
     if cfg.zone_id != null
@@ -131,9 +129,13 @@ resource "cloudflare_record" "tunnel" {
 
   zone_id = each.value.zone_id
   name    = each.key
-  content = cloudflare_zero_trust_tunnel_cloudflared.main.cname
+  # v5 dropped the `cname` attribute on the tunnel resource — construct
+  # the cfargotunnel.com host ourselves. Provider docs say the format
+  # is stable: `<tunnel-uuid>.cfargotunnel.com`.
+  content = "${cloudflare_zero_trust_tunnel_cloudflared.main.id}.cfargotunnel.com"
   type    = "CNAME"
   proxied = true
+  ttl     = 1
 }
 
 # ── Manual DNS records — declared per-domain in YAML ─────────────────────────
@@ -149,11 +151,14 @@ resource "cloudflare_record" "tunnel" {
 # `dns:` — see config/domains/example.com.yaml.example for the worked
 # shape. Records are domain-scoped (not env-scoped) — they describe the
 # zone, not a per-env routing decision.
-resource "cloudflare_record" "manual" {
+resource "cloudflare_dns_record" "manual" {
   for_each = local.manual_dns_records
 
-  zone_id  = each.value.zone_id
-  name     = each.value.name
+  zone_id = each.value.zone_id
+  # `name` is the FQDN form for the v5 provider; the YAML-shape short
+  # name lives in `each.value.name` and only enters the for_each key
+  # to keep state stable across the v4→v5 transition.
+  name     = each.value.fqdn
   type     = each.value.type
   ttl      = each.value.ttl
   proxied  = each.value.proxied
@@ -161,24 +166,24 @@ resource "cloudflare_record" "manual" {
   comment  = each.value.comment
 
   # Flat `content` for A/AAAA/CNAME/MX/TXT/NS/PTR. SRV/CAA/LOC use the
-  # structured `data` block instead — the provider rejects co-presence
-  # of both, so each record specifies exactly one in YAML.
+  # structured `data` attribute instead — the provider rejects
+  # co-presence of both, so each record specifies exactly one in YAML.
   content = each.value.data == null ? each.value.content : null
 
-  dynamic "data" {
-    for_each = each.value.data == null ? [] : [each.value.data]
-    content {
-      priority = try(data.value.priority, null)
-      weight   = try(data.value.weight, null)
-      port     = try(data.value.port, null)
-      target   = try(data.value.target, null)
-      service  = try(data.value.service, null)
-      proto    = try(data.value.proto, null)
-      name     = try(data.value.name, null)
-      flags    = try(data.value.flags, null)
-      tag      = try(data.value.tag, null)
-      value    = try(data.value.value, null)
-    }
+  # v5 schema: `data` is now a nested attribute (object), not a
+  # dynamic block. CAA flag is a number in v5 (was string in v4) —
+  # cast on the way in so YAML can keep the friendly form.
+  data = each.value.data == null ? null : {
+    priority = try(each.value.data.priority, null)
+    weight   = try(each.value.data.weight, null)
+    port     = try(each.value.data.port, null)
+    target   = try(each.value.data.target, null)
+    service  = try(each.value.data.service, null)
+    proto    = try(each.value.data.proto, null)
+    name     = try(each.value.data.name, null)
+    flags    = try(tonumber(each.value.data.flags), null)
+    tag      = try(each.value.data.tag, null)
+    value    = try(each.value.data.value, null)
   }
 
   lifecycle {

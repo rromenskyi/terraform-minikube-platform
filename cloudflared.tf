@@ -2,6 +2,16 @@
 # Runs in the ops namespace and connects to the tunnel created in cloudflare.tf.
 # Config is managed from the Cloudflare dashboard (config_src = "cloudflare").
 
+# v5 dropped the `tunnel_token` attribute on the tunnel resource and
+# split it into a dedicated data source. The token is regenerated each
+# time it's read (Cloudflare's behaviour, not Terraform's), but
+# refreshing the data source on every plan keeps the Secret in lockstep
+# with whatever Cloudflare currently considers valid.
+data "cloudflare_zero_trust_tunnel_cloudflared_token" "main" {
+  account_id = var.cloudflare_account_id
+  tunnel_id  = cloudflare_zero_trust_tunnel_cloudflared.main.id
+}
+
 resource "kubernetes_secret_v1" "cloudflared_token" {
   depends_on = [module.k8s]
 
@@ -15,7 +25,7 @@ resource "kubernetes_secret_v1" "cloudflared_token" {
   }
 
   data = {
-    token = cloudflare_zero_trust_tunnel_cloudflared.main.tunnel_token
+    token = data.cloudflare_zero_trust_tunnel_cloudflared_token.main.token
   }
 
   type = "Opaque"
