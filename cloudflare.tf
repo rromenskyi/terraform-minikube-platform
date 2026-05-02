@@ -138,15 +138,6 @@ resource "cloudflare_dns_record" "tunnel" {
   ttl     = 1
 }
 
-# State migration: v4 used `cloudflare_record`, v5 split DNS records
-# into a dedicated `cloudflare_dns_record` resource. The `moved`
-# block lets Terraform rewire state by name without `terraform state
-# mv` calls per for_each key.
-moved {
-  from = cloudflare_record.tunnel
-  to   = cloudflare_dns_record.tunnel
-}
-
 # ── Manual DNS records — declared per-domain in YAML ─────────────────────────
 #
 # The auto-generated CNAMEs above cover everything routed through the
@@ -205,9 +196,4 @@ resource "cloudflare_dns_record" "manual" {
       error_message = "DNS record ${each.key}: domain has no `cloudflare_zone_id` — set it on the domain YAML before declaring `dns:` records."
     }
   }
-}
-
-moved {
-  from = cloudflare_record.manual
-  to   = cloudflare_dns_record.manual
 }

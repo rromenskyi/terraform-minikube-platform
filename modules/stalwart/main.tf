@@ -774,23 +774,6 @@ resource "cloudflare_dns_record" "dmarc" {
   comment = "DMARC — managed by modules/stalwart (terraform-minikube-platform)"
 }
 
-# State migrations from the v4 `cloudflare_record` to v5
-# `cloudflare_dns_record` — same underlying DNS record, just a new
-# resource type. Without these, `terraform plan` would treat the
-# rename as destroy+create and break mail delivery during the apply.
-moved {
-  from = cloudflare_record.spf
-  to   = cloudflare_dns_record.spf
-}
-moved {
-  from = cloudflare_record.dkim
-  to   = cloudflare_dns_record.dkim
-}
-moved {
-  from = cloudflare_record.dmarc
-  to   = cloudflare_dns_record.dmarc
-}
-
 # DKIM RSA key — rendered into the bootstrap plan's DkimSignature.
 # Stable: tls_private_key keeps the same value across applies, so the
 # public key in DNS doesn't churn. Rotation = taint this resource +
