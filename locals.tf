@@ -176,14 +176,24 @@ locals {
         for rec in try(cfg.dns, []) : {
           domain_key = domain_key
           zone_id    = cfg.cloudflare_zone_id
-          name       = rec.name
-          type       = rec.type
-          content    = try(rec.content, null)
-          data       = try(rec.data, null)
-          ttl        = try(rec.ttl, 1)
-          proxied    = try(rec.proxied, false)
-          priority   = try(rec.priority, null)
-          comment    = try(rec.comment, null)
+          # `name` keeps the YAML form (`@`, `_dmarc`, `mail`) so the
+          # for_each key stays stable. The FQDN form lives in `fqdn`
+          # below — Cloudflare provider v5 requires FQDN at the
+          # resource level, but routing the FQDN into for_each would
+          # destroy+recreate every record on the v4→v5 transition.
+          name = rec.name
+          fqdn = (
+            rec.name == "@" ? cfg.name :
+            (rec.name == cfg.name || endswith(rec.name, ".${cfg.name}")) ? rec.name :
+            "${rec.name}.${cfg.name}"
+          )
+          type     = rec.type
+          content  = try(rec.content, null)
+          data     = try(rec.data, null)
+          ttl      = try(rec.ttl, 1)
+          proxied  = try(rec.proxied, false)
+          priority = try(rec.priority, null)
+          comment  = try(rec.comment, null)
         }
       ]
     ]) : "${entry.domain_key}|${entry.type}|${entry.name}|${md5(coalesce(entry.content, jsonencode(entry.data)))}" => entry

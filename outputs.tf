@@ -25,7 +25,9 @@ output "tunnel_id" {
 
 output "tunnel_cname" {
   description = "Cloudflare Tunnel CNAME target"
-  value       = cloudflare_zero_trust_tunnel_cloudflared.main.cname
+  # v5 dropped the `cname` attribute on the tunnel resource; the format
+  # `<tunnel-uuid>.cfargotunnel.com` is documented as stable.
+  value = "${cloudflare_zero_trust_tunnel_cloudflared.main.id}.cfargotunnel.com"
 }
 
 output "grafana_credentials" {
