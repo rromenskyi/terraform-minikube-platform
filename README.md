@@ -525,32 +525,30 @@ sudo rm -rf /data/vol/platform/{mysql,postgres}/*
 
 ## Remote state
 
-Local `terraform.tfstate` is the default. To move to Backblaze B2 (S3-compatible):
+Default backend is local `terraform.tfstate`. Switch to Backblaze B2 (S3-compatible) by filling in `.env` — no edits to committed code, so the bucket name + endpoint + key never leak into a public clone.
 
-1. Create a B2 bucket (private) and an application key
-2. Edit `_backend.tf`:
-   ```hcl
-   terraform {
-     backend "s3" {
-       bucket                      = "myplatform-tfstate"
-       key                         = "platform/terraform.tfstate"
-       region                      = "us-east-005"
-       endpoint                    = "https://s3.us-east-005.backblazeb2.com"
-       skip_credentials_validation = true
-       skip_metadata_api_check     = true
-       skip_region_validation      = true
-       skip_requesting_account_id  = true
-       skip_s3_checksum            = true
-       use_path_style              = true
-     }
-   }
-   ```
-3. Add to `.env`:
+`_backend.tf` ships a partial `backend "s3"` config: only the B2-specific transport quirks (`skip_*` flags, `use_path_style`) are inlined. All operator-specific values come in via `-backend-config` flags injected by `./tf init` from `.env`.
+
+1. Create a B2 bucket (private) and an application key with read/write access. Optionally enable bucket-level versioning ("snapshots") so a bad apply leaves the previous state available for rollback.
+2. Add the five vars to `.env` (see `.env.example`):
    ```bash
-   AWS_ACCESS_KEY_ID=your-b2-key-id
-   AWS_SECRET_ACCESS_KEY=your-b2-application-key
+   AWS_ACCESS_KEY_ID=<b2-key-id>
+   AWS_SECRET_ACCESS_KEY=<b2-application-key>
+   AWS_REGION=us-east-1                         # placeholder — B2 ignores it; AWS provider validates against AWS regions
+   B2_BUCKET=<your-bucket-name>
+   B2_ENDPOINT=https://s3.<region>.backblazeb2.com
    ```
-4. `./tf init -migrate-state`
+   Optional: override the state object key (defaults to `terraform-minikube-platform/state.tfstate`):
+   ```bash
+   TFSTATE_KEY=<path/within/bucket.tfstate>
+   ```
+3. `./tf init -migrate-state` — terraform reads the existing local file, copies its contents to B2 under the configured key, prompts to confirm.
+4. After confirmation: B2 holds the live state. The local file stays as a one-shot backup but is no longer authoritative; renaming it is recommended:
+   ```bash
+   mv terraform.tfstate terraform.tfstate.preremote
+   ```
+
+Rollback is symmetric — flip the backend block back to `local` and `./tf init -migrate-state` pulls the state back down.
 
 ## The `./tf` wrapper
 

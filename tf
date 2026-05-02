@@ -81,9 +81,40 @@ else
       fi
       export "$tf_var_name"="$value"
       echo "  $tf_var_name=*** (hidden)"
+
+      # Backend auth + S3-on-B2 partial config: terraform's S3 backend
+      # reads AWS_* env vars natively, and `./tf init` injects
+      # B2_BUCKET / B2_ENDPOINT below as -backend-config flags. Export
+      # the originals (in addition to the TF_VAR_* mirror above) so
+      # both paths see them.
+      case "$key" in
+        AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN|AWS_REGION|B2_BUCKET|B2_ENDPOINT)
+          export "$key"="$value"
+          ;;
+      esac
     fi
   done < "$ENV_FILE"
 fi
+
+# Default state object key used by `terraform init -backend-config`.
+# Generic / non-leaking — operator-specific values (bucket name, B2
+# endpoint, AWS_REGION) live in `.env`. Override by setting
+# `TFSTATE_KEY=<path>` in `.env` if a different layout is wanted.
+: "${TFSTATE_KEY:=terraform-minikube-platform/state.tfstate}"
+export TFSTATE_KEY
+
+build_backend_config_args() {
+  # Emits one `-backend-config=key=value` per known knob — but only
+  # for vars actually present in env, so a clean clone with no `.env`
+  # entries falls through to the local backend stub without crashing
+  # `terraform init`.
+  local args=()
+  [[ -n "${B2_BUCKET:-}" ]]    && args+=( "-backend-config=bucket=${B2_BUCKET}" )
+  [[ -n "${B2_ENDPOINT:-}" ]]  && args+=( "-backend-config=endpoint=${B2_ENDPOINT}" )
+  [[ -n "${AWS_REGION:-}" ]]   && args+=( "-backend-config=region=${AWS_REGION}" )
+  [[ -n "${TFSTATE_KEY:-}" ]]  && args+=( "-backend-config=key=${TFSTATE_KEY}" )
+  printf '%s\n' "${args[@]}"
+}
 
 resolve_cluster_name() {
   if [[ -n "${TF_VAR_cluster_name:-}" ]]; then
@@ -701,6 +732,19 @@ The generic `./tf bootstrap` subcommand was split by distribution. Pick one:
   ./tf bootstrap-k3s        (Option B in main.tf)
 EOF
     exit 2
+    ;;
+
+  init)
+    # Inject -backend-config flags for the S3-on-B2 partial config in
+    # `_backend.tf`. Operator-specific values (bucket / endpoint /
+    # region / key) come from `.env`, never from committed code, so a
+    # public clone has nothing to leak. When .env is empty the
+    # `build_backend_config_args` helper emits nothing and `init`
+    # falls through to the local backend stub.
+    shift
+    mapfile -t backend_args < <(build_backend_config_args)
+    echo "Running: terraform init ${backend_args[*]} $*"
+    terraform init "${backend_args[@]}" "$@"
     ;;
 
   *)
