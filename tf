@@ -81,6 +81,17 @@ else
       fi
       export "$tf_var_name"="$value"
       echo "  $tf_var_name=*** (hidden)"
+
+      # Backend / cloud-SDK env vars — Terraform's S3 backend, AWS
+      # provider, and similar SDKs read these as their original
+      # names, NOT as TF_VAR_*. Re-export so they're visible to the
+      # backend without forcing the operator to `source .env` by
+      # hand.
+      case "$key" in
+        AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN|AWS_REGION|B2_BUCKET|B2_ENDPOINT)
+          export "$key"="$value"
+          ;;
+      esac
     fi
   done < "$ENV_FILE"
 fi
