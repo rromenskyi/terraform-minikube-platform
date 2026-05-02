@@ -18,7 +18,7 @@ terraform {
     }
     cloudflare = {
       source  = "cloudflare/cloudflare"
-      version = "~> 4.0"
+      version = "~> 5.0"
     }
     zitadel = {
       source  = "zitadel/zitadel"
@@ -737,11 +737,12 @@ resource "zitadel_project_role" "user" {
 # (DKIM body comes from `tls_private_key.dkim`, SPF/DMARC from module
 # vars). Hand-pasting the rendered DKIM body into yaml every key
 # rotation would be busy-work; this keeps the source-of-truth single.
-resource "cloudflare_record" "spf" {
+resource "cloudflare_dns_record" "spf" {
   for_each = local.spf_record_set
 
   zone_id = var.cloudflare_zone_id
-  name    = "@"
+  # v5 requires FQDN — `@` is no longer accepted.
+  name    = var.primary_domain
   type    = "TXT"
   content = local.spf_dns_value
   proxied = false
@@ -749,11 +750,11 @@ resource "cloudflare_record" "spf" {
   comment = "SPF — managed by modules/stalwart (terraform-minikube-platform)"
 }
 
-resource "cloudflare_record" "dkim" {
+resource "cloudflare_dns_record" "dkim" {
   for_each = local.dns_records_set
 
   zone_id = var.cloudflare_zone_id
-  name    = local.dkim_dns_name
+  name    = "${local.dkim_dns_name}.${var.primary_domain}"
   type    = "TXT"
   content = local.dkim_dns_value
   proxied = false
@@ -761,11 +762,11 @@ resource "cloudflare_record" "dkim" {
   comment = "DKIM — managed by modules/stalwart (terraform-minikube-platform)"
 }
 
-resource "cloudflare_record" "dmarc" {
+resource "cloudflare_dns_record" "dmarc" {
   for_each = local.dmarc_record_set
 
   zone_id = var.cloudflare_zone_id
-  name    = "_dmarc"
+  name    = "_dmarc.${var.primary_domain}"
   type    = "TXT"
   content = local.dmarc_dns_value
   proxied = false
