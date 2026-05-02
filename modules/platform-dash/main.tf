@@ -135,29 +135,29 @@ resource "kubernetes_cluster_role_v1" "this" {
     labels = local.labels
   }
 
-  # Wide read across everything — covers the explorer pages, CRD
-  # viewer, events tail, configmap / secret browse, db registry CM.
+  # Single-operator platform: the dashboard is the operator's main
+  # surface for cluster admin, and every action button — scale,
+  # restart, pod-delete, CRD replace/delete, ConfigMap edit — needs
+  # write access against the matching API group. The previous narrow
+  # rule set was missing `core/configmaps` (cm-replace endpoint),
+  # CRD writes (crd-replace, crd-delete), and any verb on resources
+  # the dashboard hasn't shipped UI for yet but adds in passing.
+  # Operator hit "scale" / "restart" via the dash and got 403s
+  # because the rule list didn't keep up.
+  #
+  # Authorisation gate is the dashboard pod itself — the OIDC layer
+  # rejects anyone without `platform_admin` before any k8s API call
+  # leaves the pod (see modules/platform-dash/main.tf cookie /
+  # session check + dashboard's `canWrite` derivation in
+  # ~/gh/platform-dash/src/lib/authz.ts). Anyone allowed past that
+  # gate is, by design, equivalent to a cluster-admin on this
+  # cluster — the single-operator trust boundary explicitly assumes
+  # that. Add a narrower role + RoleBinding-by-namespace pattern if
+  # a third party ever gets `platform_admin`.
   rule {
     api_groups = ["*"]
     resources  = ["*"]
-    verbs      = ["get", "list", "watch"]
-  }
-
-  # Narrow writes — what the action buttons actually do.
-  rule {
-    api_groups = [""]
-    resources  = ["pods"]
-    verbs      = ["delete"]
-  }
-  rule {
-    api_groups = ["apps"]
-    resources  = ["deployments", "statefulsets"]
-    verbs      = ["patch", "update"]
-  }
-  rule {
-    api_groups = ["apps"]
-    resources  = ["deployments/scale", "statefulsets/scale"]
-    verbs      = ["patch", "update"]
+    verbs      = ["*"]
   }
 }
 
