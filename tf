@@ -56,7 +56,7 @@ ENV_FILE="${SCRIPT_DIR}/.env"
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "Warning: $ENV_FILE not found"
 else
-  echo "Loading variables from .env as TF_VAR_*..."
+  echo "Loading variables from .env..."
   while IFS= read -r line || [[ -n "$line" ]]; do
     [[ "$line" =~ ^[[:space:]]*(#|$) ]] && continue
     if [[ "$line" == *"="* ]]; then
@@ -67,20 +67,43 @@ else
       value="${value#\'}"
       value="${value%\'}"
       # Two accepted key styles in .env:
-      #   FOO_BAR=...        (plain)       → exported as TF_VAR_foo_bar
-      #   TF_VAR_foo_bar=... (pre-fixed)   → exported as-is (just lowercased)
-      # Without this branch, pre-fixed keys would double up as
-      # TF_VAR_tf_var_foo_bar and the variable would silently not reach
-      # Terraform. The .env.example uses the pre-fixed style for the k3s SSH
-      # knobs because that is the idiomatic Terraform env-var form.
+      #   FOO_BAR=...        (plain)     → exported under TWO names:
+      #                                       FOO_BAR=... (native, original case)
+      #                                       TF_VAR_foo_bar=...
+      #   TF_VAR_foo_bar=... (pre-fixed) → exported as TF_VAR_foo_bar
+      #                                    (only — there is no native form
+      #                                    for a TF-input-only key)
+      #
+      # Why both forms for plain keys: provider SDKs (Cloudflare, AWS S3
+      # backend, kubectl, GCP, etc.) read native env-var names directly
+      # — `CLOUDFLARE_API_TOKEN`, `AWS_ACCESS_KEY_ID` — and do NOT
+      # understand `TF_VAR_*`. The S3 backend block in particular is
+      # parsed BEFORE Terraform evaluates `var.*`, so a backend
+      # configured to read credentials cannot reference an input
+      # variable; it has to find the SDK env vars under their native
+      # names. Meanwhile, modules that thread a value through a
+      # `variable "foo" {}` block need `TF_VAR_foo`. Exporting both
+      # lets the operator's TF code use whichever path is appropriate
+      # without rewriting `.env` per consumer.
+      #
+      # Why the pre-fixed branch exists at all: without it, a key like
+      # `TF_VAR_ssh_host` in `.env` would double up as
+      # `TF_VAR_tf_var_ssh_host` and silently not reach Terraform.
+      # `.env.example` uses the pre-fixed style for the k3s SSH knobs
+      # because that is the idiomatic Terraform env-var form for inputs
+      # that have no SDK consumer.
       lower_key="$(echo "$key" | tr '[:upper:]' '[:lower:]')"
       if [[ "$lower_key" == tf_var_* ]]; then
         tf_var_name="TF_VAR_${lower_key#tf_var_}"
+        export "$tf_var_name"="$value"
+        echo "  $tf_var_name=*** (hidden)"
       else
+        export "$key"="$value"
         tf_var_name="TF_VAR_${lower_key}"
+        export "$tf_var_name"="$value"
+        echo "  $key=*** (hidden)"
+        echo "  $tf_var_name=*** (hidden)"
       fi
-      export "$tf_var_name"="$value"
-      echo "  $tf_var_name=*** (hidden)"
     fi
   done < "$ENV_FILE"
 fi
