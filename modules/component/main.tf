@@ -243,6 +243,59 @@ variable "env_random_keys" {
   default     = []
 }
 
+# ── Pod placement primitives ─────────────────────────────────────────────────
+# Three orthogonal scheduler hints, all empty by default so existing
+# components see no behaviour change. Map directly onto the matching
+# fields of `pod.spec` (k8s API v1):
+#   * node_selector — simplest pinning ("this label = this value")
+#   * tolerations   — opt-in to scheduling on tainted nodes
+#   * affinity      — richer node / pod (anti-)affinity expressions
+# Per-component yaml exposes all three under the same names; the
+# `modules/project` consumer pipes them through unchanged.
+
+variable "node_selector" {
+  description = <<-EOT
+    Node-selector labels the pod must match. Empty map means the
+    scheduler can place the pod on any node that satisfies the other
+    constraints (resources, taints, affinity). Useful for
+    "stateful → optiplex (workload-tier=stateful)" style pinning.
+  EOT
+  type        = map(string)
+  default     = {}
+}
+
+variable "tolerations" {
+  description = <<-EOT
+    Taints the pod tolerates. Each entry is one toleration block with
+    the standard k8s fields. Effects accepted by the API: NoSchedule /
+    PreferNoSchedule / NoExecute. `operator` defaults to "Equal" on
+    the API side; pass "Exists" to match any value (or omit `value`).
+    Empty list = pod cannot land on any tainted node.
+  EOT
+  type = list(object({
+    key                = optional(string)
+    operator           = optional(string)
+    value              = optional(string)
+    effect             = optional(string)
+    toleration_seconds = optional(string)
+  }))
+  default = []
+}
+
+variable "affinity" {
+  description = <<-EOT
+    Pod affinity rules. Mirrors `pod.spec.affinity` — supported
+    sub-blocks: `node_affinity`, `pod_affinity`, `pod_anti_affinity`,
+    each with `required_during_scheduling_ignored_during_execution`
+    and `preferred_during_scheduling_ignored_during_execution`. Empty
+    object = no affinity. Type is `any` because the schema is deeply
+    nested with optional branches at every level; the dynamic blocks
+    below extract via `try()` and only emit fields the caller set.
+  EOT
+  type        = any
+  default     = {}
+}
+
 # ── Locals ────────────────────────────────────────────────────────────────────
 
 locals {
@@ -473,6 +526,120 @@ resource "kubernetes_deployment_v1" "this" {
         # otherwise. K8s defaults to "default" SA in the namespace —
         # leaving service_account_name unset preserves that.
         service_account_name = length(var.cluster_role_rules) > 0 ? kubernetes_service_account_v1.this["enabled"].metadata[0].name : null
+
+        # Pod placement: node_selector, tolerations, affinity. All
+        # default to empty so this block is a no-op for existing
+        # components. Wired identically into the StatefulSet path
+        # below (when one is added) and into shared service modules.
+        node_selector = length(var.node_selector) > 0 ? var.node_selector : null
+
+        dynamic "toleration" {
+          for_each = var.tolerations
+          content {
+            key                = toleration.value.key
+            operator           = toleration.value.operator
+            value              = toleration.value.value
+            effect             = toleration.value.effect
+            toleration_seconds = toleration.value.toleration_seconds
+          }
+        }
+
+        dynamic "affinity" {
+          for_each = length(keys(var.affinity)) > 0 ? [var.affinity] : []
+          content {
+            dynamic "node_affinity" {
+              for_each = try(affinity.value.node_affinity, null) != null ? [affinity.value.node_affinity] : []
+              content {
+                dynamic "required_during_scheduling_ignored_during_execution" {
+                  for_each = try(node_affinity.value.required_during_scheduling_ignored_during_execution, null) != null ? [node_affinity.value.required_during_scheduling_ignored_during_execution] : []
+                  content {
+                    dynamic "node_selector_term" {
+                      for_each = try(required_during_scheduling_ignored_during_execution.value.node_selector_terms, [])
+                      content {
+                        dynamic "match_expressions" {
+                          for_each = try(node_selector_term.value.match_expressions, [])
+                          content {
+                            key      = match_expressions.value.key
+                            operator = match_expressions.value.operator
+                            values   = try(match_expressions.value.values, null)
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+                dynamic "preferred_during_scheduling_ignored_during_execution" {
+                  for_each = try(node_affinity.value.preferred_during_scheduling_ignored_during_execution, [])
+                  content {
+                    weight = preferred_during_scheduling_ignored_during_execution.value.weight
+                    preference {
+                      dynamic "match_expressions" {
+                        for_each = try(preferred_during_scheduling_ignored_during_execution.value.preference.match_expressions, [])
+                        content {
+                          key      = match_expressions.value.key
+                          operator = match_expressions.value.operator
+                          values   = try(match_expressions.value.values, null)
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            dynamic "pod_affinity" {
+              for_each = try(affinity.value.pod_affinity, null) != null ? [affinity.value.pod_affinity] : []
+              content {
+                dynamic "required_during_scheduling_ignored_during_execution" {
+                  for_each = try(pod_affinity.value.required_during_scheduling_ignored_during_execution, [])
+                  content {
+                    topology_key = required_during_scheduling_ignored_during_execution.value.topology_key
+                    namespaces   = try(required_during_scheduling_ignored_during_execution.value.namespaces, null)
+                    dynamic "label_selector" {
+                      for_each = try(required_during_scheduling_ignored_during_execution.value.label_selector, null) != null ? [required_during_scheduling_ignored_during_execution.value.label_selector] : []
+                      content {
+                        match_labels = try(label_selector.value.match_labels, null)
+                        dynamic "match_expressions" {
+                          for_each = try(label_selector.value.match_expressions, [])
+                          content {
+                            key      = match_expressions.value.key
+                            operator = match_expressions.value.operator
+                            values   = try(match_expressions.value.values, null)
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            dynamic "pod_anti_affinity" {
+              for_each = try(affinity.value.pod_anti_affinity, null) != null ? [affinity.value.pod_anti_affinity] : []
+              content {
+                dynamic "required_during_scheduling_ignored_during_execution" {
+                  for_each = try(pod_anti_affinity.value.required_during_scheduling_ignored_during_execution, [])
+                  content {
+                    topology_key = required_during_scheduling_ignored_during_execution.value.topology_key
+                    namespaces   = try(required_during_scheduling_ignored_during_execution.value.namespaces, null)
+                    dynamic "label_selector" {
+                      for_each = try(required_during_scheduling_ignored_during_execution.value.label_selector, null) != null ? [required_during_scheduling_ignored_during_execution.value.label_selector] : []
+                      content {
+                        match_labels = try(label_selector.value.match_labels, null)
+                        dynamic "match_expressions" {
+                          for_each = try(label_selector.value.match_expressions, [])
+                          content {
+                            key      = match_expressions.value.key
+                            operator = match_expressions.value.operator
+                            values   = try(match_expressions.value.values, null)
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
 
         dynamic "security_context" {
           for_each = (

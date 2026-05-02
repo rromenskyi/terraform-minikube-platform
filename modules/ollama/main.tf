@@ -176,6 +176,47 @@ variable "gpu" {
 # tmpfs /dev — Mesa Anv then enumerates ONLY the projected device
 # instead of probing every renderD* node it finds).
 
+variable "node_selector" {
+  description = <<-EOT
+    Node-selector labels the Ollama pod must match. Empty map means
+    the scheduler can place the pod on any node. Set this to pin
+    Ollama on the node that owns the host GPU device referenced in
+    `var.gpu.device_path` (e.g. `{ gpu = "intel" }` on a multi-node
+    cluster where one box has the Arc card). Without pinning, the
+    pod will land on any node and the gpu hostPath will fail
+    `MountVolume.SetUp failed: not a character device`.
+  EOT
+  type        = map(string)
+  default     = {}
+}
+
+variable "tolerations" {
+  description = <<-EOT
+    Taints the Ollama pod tolerates. Each entry is one toleration
+    block with the standard k8s fields. Empty list = pod cannot
+    land on any tainted node.
+  EOT
+  type = list(object({
+    key                = optional(string)
+    operator           = optional(string)
+    value              = optional(string)
+    effect             = optional(string)
+    toleration_seconds = optional(string)
+  }))
+  default = []
+}
+
+variable "affinity" {
+  description = <<-EOT
+    Pod affinity rules for the Ollama pod (node_affinity /
+    pod_affinity / pod_anti_affinity). Empty object = no affinity.
+    Type is `any` because the schema is deeply nested with optional
+    branches at every level.
+  EOT
+  type        = any
+  default     = {}
+}
+
 locals {
   instances = var.enabled ? toset(["enabled"]) : toset([])
   # Reused as the iteration list for every GPU-only `dynamic` block —
@@ -260,6 +301,68 @@ resource "kubernetes_stateful_set_v1" "ollama" {
       }
 
       spec {
+        # Pod placement primitives. All default empty so existing
+        # deployments are unaffected. Set `var.node_selector =
+        # { gpu = "intel" }` to pin the pod onto the node that owns
+        # the device referenced in `var.gpu.device_path`.
+        node_selector = length(var.node_selector) > 0 ? var.node_selector : null
+
+        dynamic "toleration" {
+          for_each = var.tolerations
+          content {
+            key                = toleration.value.key
+            operator           = toleration.value.operator
+            value              = toleration.value.value
+            effect             = toleration.value.effect
+            toleration_seconds = toleration.value.toleration_seconds
+          }
+        }
+
+        dynamic "affinity" {
+          for_each = length(keys(var.affinity)) > 0 ? [var.affinity] : []
+          content {
+            dynamic "node_affinity" {
+              for_each = try(affinity.value.node_affinity, null) != null ? [affinity.value.node_affinity] : []
+              content {
+                dynamic "required_during_scheduling_ignored_during_execution" {
+                  for_each = try(node_affinity.value.required_during_scheduling_ignored_during_execution, null) != null ? [node_affinity.value.required_during_scheduling_ignored_during_execution] : []
+                  content {
+                    dynamic "node_selector_term" {
+                      for_each = try(required_during_scheduling_ignored_during_execution.value.node_selector_terms, [])
+                      content {
+                        dynamic "match_expressions" {
+                          for_each = try(node_selector_term.value.match_expressions, [])
+                          content {
+                            key      = match_expressions.value.key
+                            operator = match_expressions.value.operator
+                            values   = try(match_expressions.value.values, null)
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+                dynamic "preferred_during_scheduling_ignored_during_execution" {
+                  for_each = try(node_affinity.value.preferred_during_scheduling_ignored_during_execution, [])
+                  content {
+                    weight = preferred_during_scheduling_ignored_during_execution.value.weight
+                    preference {
+                      dynamic "match_expressions" {
+                        for_each = try(preferred_during_scheduling_ignored_during_execution.value.preference.match_expressions, [])
+                        content {
+                          key      = match_expressions.value.key
+                          operator = match_expressions.value.operator
+                          values   = try(match_expressions.value.values, null)
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+
         # Pod-level securityContext only emitted when GPU offload is
         # configured. `run_as_non_root = false` lets the root-running
         # Ollama image through PSS-restricted namespaces;

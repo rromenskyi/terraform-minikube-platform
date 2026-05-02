@@ -358,6 +358,43 @@ resources:
 # project exposed via `terraform output basic_auth`.
 basic_auth: true
 
+# Pod placement — three orthogonal scheduler hints, all optional. All
+# three default to empty so existing components see no behaviour
+# change. Each maps directly onto the matching field of `pod.spec`
+# (k8s API v1) — see Kubernetes docs for the exact semantics.
+node_selector:                                # simplest pinning ("this label = this value")
+  workload-tier: stateful                     # land on nodes labelled workload-tier=stateful
+
+tolerations:                                  # opt-in to scheduling on tainted nodes
+  - key: node-role.kubernetes.io/edge
+    operator: Equal
+    value:    "true"
+    effect:   NoSchedule
+  - key: nvidia.com/gpu
+    operator: Exists                          # match any value (omit `value:`)
+    effect:   NoSchedule
+
+affinity:                                     # richer node / pod (anti-)affinity
+  node_affinity:
+    required_during_scheduling_ignored_during_execution:
+      node_selector_terms:
+        - match_expressions:
+            - key:      gpu
+              operator: In
+              values:    [intel, amd]
+    preferred_during_scheduling_ignored_during_execution:
+      - weight: 50
+        preference:
+          match_expressions:
+            - key:      topology.kubernetes.io/zone
+              operator: In
+              values:    [home]
+  # pod_affinity / pod_anti_affinity follow the same shape with
+  # required_during_scheduling_ignored_during_execution accepting a
+  # list of {topology_key, namespaces?, label_selector{match_labels?,
+  # match_expressions?}} entries. See modules/component/main.tf for
+  # the full dynamic-block schema.
+
 # Helper containers co-located in the same Pod. Use for loopback-only
 # tool servers the main container talks to on 127.0.0.1 (MCP, terminal,
 # code interpreter) where a CNI boundary + Service + token would be pure
