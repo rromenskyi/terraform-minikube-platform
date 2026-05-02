@@ -1,6 +1,10 @@
-provider "cloudflare" {
-  api_token = var.cloudflare_api_token
-}
+# Cloudflare provider reads `CLOUDFLARE_API_TOKEN` from the process
+# environment when `api_token` is not set explicitly. The `./tf`
+# wrapper exports the value under both the native name and
+# `TF_VAR_cloudflare_api_token`; passing it via a `variable` block
+# would just round-trip the same value and pin a copy of the token
+# into Terraform state.
+provider "cloudflare" {}
 
 # Consume the kubeconfig emitted by the chosen cluster module. Both sibling
 # modules (`terraform-minikube-k8s` and `terraform-k3s-k8s`) export a
