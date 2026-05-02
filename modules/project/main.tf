@@ -933,6 +933,15 @@ module "component" {
   sidecars     = try(each.value.sidecars, {})
 
   cluster_role_rules = try(each.value.cluster_role_rules, [])
+
+  # Pod placement: passed through verbatim from per-component yaml.
+  # Empty defaults preserve prior scheduling behaviour. See README
+  # "Pod placement" for the supported keys (`node_selector:`,
+  # `tolerations:`, `affinity:`) and the documented k8s schema each
+  # mirrors.
+  node_selector = try(each.value.node_selector, {})
+  tolerations   = try(each.value.tolerations, [])
+  affinity      = try(each.value.affinity, {})
 }
 
 # ── BasicAuth (per-component) ─────────────────────────────────────────────────
