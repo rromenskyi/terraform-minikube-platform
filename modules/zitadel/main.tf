@@ -60,6 +60,24 @@ variable "external_domain" {
   type        = string
 }
 
+variable "node_selector" {
+  description = "Node-selector labels every Zitadel pod (main + login + Jobs) must match. Empty = scheduler picks. Set to pin onto the node carrying the platform's stateful tier."
+  type        = map(string)
+  default     = {}
+}
+
+variable "tolerations" {
+  description = "Taints every Zitadel pod tolerates. Empty list = pod cannot land on any tainted node."
+  type = list(object({
+    key                = optional(string)
+    operator           = optional(string)
+    value              = optional(string)
+    effect             = optional(string)
+    toleration_seconds = optional(string)
+  }))
+  default = []
+}
+
 variable "first_admin_email" {
   description = "Email address of the bootstrap human admin (lands on the master instance). Pre-verified so login works without SMTP."
   type        = string
@@ -206,6 +224,19 @@ resource "kubernetes_job_v1" "postgres_setup" {
       spec {
         restart_policy = "Never"
 
+        node_selector = length(var.node_selector) > 0 ? var.node_selector : null
+
+        dynamic "toleration" {
+          for_each = var.tolerations
+          content {
+            key                = toleration.value.key
+            operator           = toleration.value.operator
+            value              = toleration.value.value
+            effect             = toleration.value.effect
+            toleration_seconds = toleration.value.toleration_seconds
+          }
+        }
+
         container {
           name  = "postgres-setup"
           image = "postgres:16-alpine"
@@ -285,6 +316,21 @@ resource "kubernetes_deployment_v1" "zitadel" {
       }
 
       spec {
+        # Pod placement primitives — empty defaults preserve prior
+        # scheduler behaviour.
+        node_selector = length(var.node_selector) > 0 ? var.node_selector : null
+
+        dynamic "toleration" {
+          for_each = var.tolerations
+          content {
+            key                = toleration.value.key
+            operator           = toleration.value.operator
+            value              = toleration.value.value
+            effect             = toleration.value.effect
+            toleration_seconds = toleration.value.toleration_seconds
+          }
+        }
+
         # k8s otherwise injects `ZITADEL_PORT=tcp://<svc-ip>:8080`
         # (legacy docker-link compatibility env vars for every Service
         # in the same namespace). Zitadel reads `ZITADEL_PORT` as its
