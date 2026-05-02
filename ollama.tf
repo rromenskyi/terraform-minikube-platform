@@ -31,4 +31,8 @@ module "ollama" {
   # operator-supplied keys (image, device_path, supplemental_groups,
   # env). Module bakes in nothing vendor- or hardware-specific.
   gpu = local.platform.services.ollama.gpu
+
+  node_selector = local.platform.services.ollama.node_selector
+  tolerations   = local.platform.services.ollama.tolerations
+  affinity      = local.platform.services.ollama.affinity
 }

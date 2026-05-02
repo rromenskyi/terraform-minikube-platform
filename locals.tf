@@ -5,14 +5,26 @@ locals {
   # to the default below. Missing file = full defaults.
   _platform_defaults = {
     services = {
+      # Pod-placement defaults — each shared service accepts
+      # `node_selector` (map<string,string>) and `tolerations`
+      # (list<toleration>) as optional yaml keys. Both empty by
+      # default so the scheduler keeps current behaviour. See README
+      # "Pod placement" for the shape; consumed by every service's
+      # *.tf wiring file via `local.platform.services.X.<key>`.
       mysql = {
-        enabled = false
+        enabled       = false
+        node_selector = {}
+        tolerations   = []
       }
       postgres = {
-        enabled = false
+        enabled       = false
+        node_selector = {}
+        tolerations   = []
       }
       redis = {
-        enabled = false
+        enabled       = false
+        node_selector = {}
+        tolerations   = []
       }
       ollama = {
         enabled        = false
@@ -26,7 +38,10 @@ locals {
         # (image, device_path, supplemental_groups, env) — see
         # platform.yaml.example for the expected keys and a worked
         # Intel Arc + Vulkan example.
-        gpu = null
+        gpu           = null
+        node_selector = {}
+        tolerations   = []
+        affinity      = {}
       }
       zitadel = {
         enabled              = false
@@ -54,6 +69,8 @@ locals {
           port     = 443
           insecure = false
         }
+        node_selector = {}
+        tolerations   = []
       }
       # Defaults for the planned `services.platform_dash` block. Not
       # consumed yet — the dashboard currently lives as a tenant
@@ -69,6 +86,8 @@ locals {
           requests = { cpu = "100m", memory = "128Mi" }
           limits   = { cpu = "500m", memory = "512Mi" }
         }
+        node_selector = {}
+        tolerations   = []
       }
     }
   }
