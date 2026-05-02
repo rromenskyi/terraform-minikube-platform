@@ -66,7 +66,7 @@ phost-<domain-slug>-<env>
   └─ IngressRoute (per component, Host(a) || Host(b) || ...)
 ```
 
-Naming: `phost-ipsupport-us-prod`, `phost-jagdterrier-club-prod`, etc.
+Naming: `phost-<slug>-<env>`, e.g. `phost-example-com-prod`.
 
 ## Route model
 
