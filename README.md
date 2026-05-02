@@ -558,7 +558,16 @@ Local `terraform.tfstate` is the default. To move to Backblaze B2 (S3-compatible
 ## The `./tf` wrapper
 
 `tf` is a thin shell wrapper that:
-1. Loads `.env` variables as `TF_VAR_*` exports
+1. Loads `.env` variables and exports them in two complementary forms:
+   - **Plain keys** (`FOO_BAR=...`) get exported under their original
+     name AND as `TF_VAR_foo_bar`. This means SDK-native env vars
+     (`CLOUDFLARE_API_TOKEN`, `AWS_ACCESS_KEY_ID`, `KUBECONFIG`, etc.)
+     are visible to providers and backends under the names those SDKs
+     actually read, while `variable "foo_bar" {}` declarations still
+     receive the value via the `TF_VAR_*` form.
+   - **Pre-prefixed keys** (`TF_VAR_foo_bar=...`) are exported as-is
+     (just lowercased). Use this for inputs that have no SDK consumer —
+     the k3s SSH knobs are the canonical example.
 2. Provides `bootstrap-minikube` / `bootstrap-k3s` / `cloudflare-purge` subcommands
 
 ```bash

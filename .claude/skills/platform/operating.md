@@ -31,7 +31,18 @@ Loads `.env` and either delegates to `terraform` or runs an orchestration subcom
 
 `bootstrap-*` stops on an interactive confirmation listing what gets destroyed and what's preserved. `-y` / `--yes` skips for CI. Host volume data under `$HOST_VOLUME_PATH` is NEVER deleted by bootstrap. Cloudflare-side: bootstrap fails preflight if a tunnel with the same name already exists — operator decides purge vs `terraform import`.
 
-The wrapper double-wraps `TF_VAR_` keys correctly (a key already prefixed `TF_VAR_` is NOT prefixed again — this used to silently turn `TF_VAR_ssh_host` into `TF_VAR_tf_var_ssh_host`).
+`.env` keys are loaded in one of two shapes, on purpose:
+- **Plain key** (e.g. `CLOUDFLARE_API_TOKEN`, `AWS_ACCESS_KEY_ID`,
+  `LETSENCRYPT_EMAIL`, `HOST_VOLUME_PATH`): exported under both the
+  native name AND as `TF_VAR_<lowercase>`. SDKs (Cloudflare provider,
+  S3 backend, kubectl) read the native name; modules that thread the
+  value through a `variable "foo" {}` block read the `TF_VAR_` form.
+  Both forms see the same value, the operator picks per consumer.
+- **Pre-prefixed key** (e.g. `TF_VAR_ssh_host`, `TF_VAR_zitadel_pat`):
+  exported only as the `TF_VAR_*` form. Use this when the value has
+  no SDK consumer — Terraform inputs only. (Without the dedicated
+  branch, a pre-prefixed key would double up as
+  `TF_VAR_tf_var_ssh_host` and silently never reach Terraform.)
 
 ## `.env` shape (current values, sanitised)
 
