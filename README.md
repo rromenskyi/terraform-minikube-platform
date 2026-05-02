@@ -527,15 +527,18 @@ sudo rm -rf /data/vol/platform/{mysql,postgres}/*
 
 Local `terraform.tfstate` is the default. To move to Backblaze B2 (S3-compatible):
 
-1. Create a B2 bucket (private) and an application key
-2. Edit `_backend.tf`:
+1. Create a B2 bucket (private) and an application key. Note your
+   bucket's B2 region — it appears in the S3-compatible endpoint host
+   as `s3.<region>.backblazeb2.com` (e.g. `us-east-005`, `us-west-004`).
+2. Edit `_backend.tf` (replace `<your-bucket>` and `<your-b2-region>`
+   with the values from step 1):
    ```hcl
    terraform {
      backend "s3" {
-       bucket                      = "myplatform-tfstate"
+       bucket                      = "<your-bucket>"
        key                         = "platform/terraform.tfstate"
-       region                      = "us-east-005"
-       endpoint                    = "https://s3.us-east-005.backblazeb2.com"
+       region                      = "<your-b2-region>"
+       endpoint                    = "https://s3.<your-b2-region>.backblazeb2.com"
        skip_credentials_validation = true
        skip_metadata_api_check     = true
        skip_region_validation      = true
