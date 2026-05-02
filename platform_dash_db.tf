@@ -206,9 +206,19 @@ resource "kubernetes_job_v1" "redis_dashboard_ro_setup" {
           # ACL SETUSER is idempotent — re-applying is a no-op when
           # the user already matches. -a uses the `default` (root)
           # password from the env_from Secret.
+          #
+          # The trailing `ACL SAVE` persists `dashboard_ro` to Redis's
+          # aclfile (/data/users.acl on the shared PV). Without it the
+          # user lives only in-memory and vanishes on the next redis-0
+          # restart — the dashboard then fails with `WRONGPASS invalid
+          # username-password pair or user is disabled` until the next
+          # `terraform apply` re-runs this Job. SETUSER and SAVE run as
+          # two separate redis-cli invocations so the shell `&&`
+          # short-circuits SAVE if SETUSER fails. Matches the per-tenant
+          # ACL provisioner in modules/project.
           command = [
             "sh", "-c",
-            "redis-cli -h ${module.redis.host} -a \"$REDIS_PASSWORD\" --no-auth-warning ACL SETUSER dashboard_ro on \">$RO_PASSWORD\" \"~*\" \"&*\" +@read +info"
+            "redis-cli -h ${module.redis.host} -a \"$REDIS_PASSWORD\" --no-auth-warning ACL SETUSER dashboard_ro on \">$RO_PASSWORD\" \"~*\" \"&*\" +@read +info && redis-cli -h ${module.redis.host} -a \"$REDIS_PASSWORD\" --no-auth-warning ACL SAVE"
           ]
         }
       }
