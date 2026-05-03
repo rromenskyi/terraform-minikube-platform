@@ -902,6 +902,16 @@ module "component" {
   storage          = try(each.value.storage, [])
   volume_base_path = var.volume_base_path
 
+  # Optional git-sync sidecar — see modules/component variable
+  # for the schema. Component yaml shape:
+  #   git_sync:
+  #     repo:                  git@github.com:org/repo.git
+  #     branch:                main
+  #     period_seconds:        60
+  #     ssh_key_secret_name:   <pre-created Secret in this ns>
+  #     mount:                 /usr/share/nginx/html
+  git_sync = try(each.value.git_sync, null)
+
   db_env_mapping = try(each.value.env, {})
   db_secret_name = try(each.value.db, false) && local.needs_db ? (
     kubernetes_secret_v1.db_credentials[0].metadata[0].name
