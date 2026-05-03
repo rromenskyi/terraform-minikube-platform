@@ -122,6 +122,18 @@ locals {
     }
 
     configs = {
+      # `server.insecure = true` runs argocd-server with `--insecure`
+      # — TLS termination happens upstream (cloudflared → Traefik),
+      # the in-cluster hop is plain HTTP. Without this, argocd-server
+      # marks its session cookies `Secure` while seeing each request
+      # as HTTP and the browser then refuses to send the cookie
+      # back, producing an infinite OIDC redirect loop on first
+      # sign-in. The chart wires this key into `argocd-cmd-params-cm`
+      # which the server reads as `--insecure` at start.
+      params = {
+        "server.insecure" = "true"
+      }
+
       cm = merge(
         {
           url = "https://${var.hostname}"
