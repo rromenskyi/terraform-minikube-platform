@@ -51,11 +51,11 @@ resource "kubernetes_secret_v1" "git_deploy_key" {
 
   data = {
     "ssh-privatekey" = each.value.ssh_privatekey
-    "known_hosts" = lookup(
+    "known_hosts" = "${lookup(
       local._known_hosts,
       each.value.host,
       "${each.value.host} ssh-rsa <unknown — add this host to local._known_hosts in git_deploy_keys.tf>"
-    )
+    )}\n"
   }
 
   type = "kubernetes.io/ssh-auth"

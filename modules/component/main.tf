@@ -658,10 +658,22 @@ resource "kubernetes_deployment_v1" "this" {
           for_each = (
             try(var.security.run_as_user, null) != null
             || try(var.security.fs_group, null) != null
+            || var.git_sync != null
           ) ? [1] : []
           content {
             run_as_user = try(var.security.run_as_user, null)
-            fs_group    = try(var.security.fs_group, null)
+            # git-sync sidecar / init container run as uid 65533 and
+            # mount the SSH-key Secret with default_mode = 0400. Without
+            # an fsGroup the files end up owned by root:root mode 0400,
+            # uid 65533 cannot read them, and ssh silently treats the
+            # known_hosts file as empty → "No ED25519 host key is known
+            # for github.com" host-key verification failure. Default to
+            # 65533 when git_sync is enabled and the operator did not
+            # set fs_group explicitly.
+            fs_group = coalesce(
+              try(var.security.fs_group, null),
+              var.git_sync != null ? 65533 : null,
+            )
           }
         }
 
