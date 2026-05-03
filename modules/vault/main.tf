@@ -114,6 +114,14 @@ locals {
   # Single-node raft + UI + listener on :8200. `disable_mlock = true`
   # because the pod runs without IPC_LOCK by default — securing memory
   # pages from being swapped is an OS-level concern, not Vault's.
+  #
+  # `api_addr` and `cluster_addr` are NOT in this HCL on purpose —
+  # they're passed as `VAULT_API_ADDR` / `VAULT_CLUSTER_ADDR` env
+  # vars on the StatefulSet container, populated from the downward
+  # API so they resolve to the pod's actual IP at runtime. Raft
+  # storage rejects unspecified addresses (`0.0.0.0`) at unseal time
+  # with `cannot use unspecified IP with raft storage`, so a
+  # config-baked `0.0.0.0:8201` would deadlock the cluster.
   config_hcl = <<-HCL
     ui = true
     disable_mlock = true
@@ -127,9 +135,6 @@ locals {
       address     = "0.0.0.0:8200"
       tls_disable = "true"
     }
-
-    api_addr     = "http://0.0.0.0:8200"
-    cluster_addr = "https://0.0.0.0:8201"
   HCL
 }
 
@@ -333,12 +338,55 @@ resource "kubernetes_stateful_set_v1" "vault" {
         # we use for Zitadel/Stalwart/Roundcube.
         enable_service_links = false
 
+        # The hostPath PV starts owned by root:root (kubelet creates
+        # the directory via `DirectoryOrCreate` without setting
+        # ownership), but the vault container runs as 100:1000 with
+        # all capabilities dropped — bolt's `open /vault/data/vault.db`
+        # fails with `permission denied` on a fresh PV. fs_group at
+        # the pod level isn't honored by hostPath. Run a one-shot
+        # init container as root to chown the data dir before the
+        # main container starts.
+        init_container {
+          name  = "chown-data"
+          image = "busybox:stable-musl"
+
+          security_context {
+            run_as_user = 0
+          }
+
+          resources {
+            requests = { cpu = "10m", memory = "16Mi" }
+            limits   = { cpu = "50m", memory = "32Mi" }
+          }
+
+          command = ["sh", "-c", "chown -R 100:1000 /vault/data"]
+
+          volume_mount {
+            name       = "data"
+            mount_path = "/vault/data"
+          }
+        }
+
         container {
           name              = "vault"
           image             = var.image
           image_pull_policy = "IfNotPresent"
 
-          args = ["server", "-config=/vault/config/config.hcl"]
+          # The vault image's `docker-entrypoint.sh`, when invoked
+          # with `server`, rewrites the command to:
+          #   vault server -config=/vault/config -dev-root-token-id=... \
+          #                -dev-listen-address=0.0.0.0:8200 "$@"
+          # If we add our own `-config=/vault/config/config.hcl` as a
+          # positional arg, the entrypoint's `-config=/vault/config`
+          # (DIR) is kept AND ours is appended — vault then loads the
+          # same config file twice and tries to bind two listeners on
+          # `0.0.0.0:8200`, erroring out with
+          # `bind: address already in use`. Passing only `server`
+          # lets the entrypoint resolve `-config` once against the
+          # `/vault/config` directory; the ConfigMap projects
+          # `config.hcl` into that directory and vault loads it
+          # normally.
+          args = ["server"]
 
           # IPC_LOCK is dropped by `disable_mlock = true` in
           # config.hcl. SETFCAP is dropped because we don't ship
@@ -367,25 +415,88 @@ resource "kubernetes_stateful_set_v1" "vault" {
             value = "http://127.0.0.1:8200"
           }
 
+          # Raft requires concrete (non-`0.0.0.0`) cluster_addr —
+          # populate from the pod's IP via downward API. `api_addr`
+          # could stay loopback but using POD_IP keeps both addresses
+          # consistent and lets a future multi-node config drop in
+          # without rewiring.
+          env {
+            name = "POD_IP"
+            value_from {
+              field_ref {
+                field_path = "status.podIP"
+              }
+            }
+          }
+          env {
+            name  = "VAULT_API_ADDR"
+            value = "http://$(POD_IP):8200"
+          }
+          env {
+            name  = "VAULT_CLUSTER_ADDR"
+            value = "https://$(POD_IP):8201"
+          }
+
+          # Vault image's docker-entrypoint.sh tries to `chown -R
+          # vault:vault /vault/{config,file}` and `setcap cap_ipc_lock
+          # +ep` on the binary before starting the server. Both fail
+          # under the security_context above (capabilities dropped to
+          # ALL, config volume read-only ConfigMap projection) and the
+          # entrypoint exits non-zero before vault server boots.
+          # Skipping both is safe: the chown is cosmetic when the user
+          # already matches `run_as_user`, and IPC_LOCK is moot
+          # because `disable_mlock = true` in config.hcl.
+          env {
+            name  = "SKIP_CHOWN"
+            value = "true"
+          }
+          env {
+            name  = "SKIP_SETCAP"
+            value = "true"
+          }
+
           # postStart polls the bootstrap-Secret-mounted file for up
           # to ~5min and runs `vault operator unseal` once the key
           # appears. Kubelet projects updated Secret data into running
           # pods within ~60s of the Secret PATCH, so this loop
           # converges without a pod restart on the first apply, and
           # immediately on every subsequent restart.
+          #
+          # The actual loop runs in a backgrounded subshell — the
+          # foreground command exits 0 immediately so kubelet's
+          # postStart deadline (implementation-defined, observed
+          # ~2-4 min on this k3s build) cannot kill the container
+          # before the loop converges. The subshell is detached via
+          # `setsid` and writes its progress to a file under
+          # `/vault/data/.unsealer.log` so operator can `kubectl exec
+          # cat` it for debugging without needing the parent's
+          # stdout. Trade-off: if the loop fails silently, kubelet
+          # never knows — but the readiness probe catches it (a
+          # sealed pod fails `/v1/sys/health` without query
+          # overrides) and Vault stays NotReady until manual
+          # intervention or the next pod restart.
           lifecycle {
             post_start {
               exec {
                 command = [
                   "/bin/sh", "-c",
                   <<-EOT
+                  setsid /bin/sh -c '
+                  exec >>/vault/data/.unsealer.log 2>&1
+                  echo "[unsealer $(date -Iseconds)] starting"
                   for i in $(seq 1 60); do
                     KEY=$(cat /vault/bootstrap/unseal-key 2>/dev/null || true)
                     if [ -n "$KEY" ]; then
-                      vault operator unseal "$KEY" >/dev/null 2>&1 && exit 0
+                      if vault operator unseal "$KEY" >/dev/null 2>&1; then
+                        echo "[unsealer $(date -Iseconds)] unsealed on iteration $i"
+                        exit 0
+                      fi
                     fi
                     sleep 5
                   done
+                  echo "[unsealer $(date -Iseconds)] gave up after 60 iterations"
+                  exit 0
+                  ' </dev/null >/dev/null 2>&1 &
                   exit 0
                   EOT
                 ]

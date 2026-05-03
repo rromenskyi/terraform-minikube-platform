@@ -202,11 +202,16 @@ output "cheatsheet" {
     Stalwart recovery admin (bypasses OIDC; user `admin`):
       terraform output -raw stalwart_recovery_admin_password
 
-    Vault root token (Phase 0 primary login; break-glass after Phase 1):
-      terraform output -raw vault | jq -r '.root_token'
+    Vault root token (Phase 0 primary login; break-glass after Phase 1).
+    The `./tf` wrapper writes its `Loading variables…` banner to stdout
+    so `terraform output -json … | jq` always trips on `Invalid numeric
+    literal`. Pull the value from the underlying Secret directly — no
+    wrapper, no jq, no parse errors:
+      kubectl -n platform get secret vault-bootstrap \
+        -o jsonpath='{.data.root-token}' | base64 -d
 
-    Vault URL:
-      terraform output -json vault | jq -r '.url'
+    Vault URL (paste in browser, sign in with the token above):
+      https://${try(local.platform.services.vault.hostname, "<vault disabled>")}
 
 
     Mail — Roundcube webmail (Zitadel SSO; auto-provisions Stalwart UserAccount on first login):
