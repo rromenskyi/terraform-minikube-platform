@@ -173,6 +173,16 @@ services:
     # regional routing, so any non-empty string works; matching
     # the actual B2 region in the bucket name keeps it readable.
     backup_b2_region: us-east-005
+    # `tolerations` — standard k8s toleration shape, applied to
+    # both chart-level Longhorn pods (manager DS, CSI components,
+    # UI) AND dynamic instance-manager pods. Required if any
+    # cluster nodes carry taints and those nodes should also host
+    # volume replicas. Empty = un-tainted nodes only,
+    # `replica_count` capacity collapses to the un-tainted node
+    # count.
+    # tolerations:
+    #   - { key: tier, operator: Equal, value: edge, effect: NoSchedule }
+    tolerations: []
 
   # Backups → Backblaze B2 via restic.
   #

@@ -61,6 +61,7 @@ locals {
         enabled          = false
         replica_count    = 3
         backup_b2_region = "us-east-005"
+        tolerations      = []
       }
       backup = {
         enabled                = false
