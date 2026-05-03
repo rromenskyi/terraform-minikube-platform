@@ -63,10 +63,9 @@ variable "cookie_domain" {
   type        = string
 }
 
-variable "zitadel_org_name" {
-  description = "Zitadel org the project + app live under. Default matches the bootstrap ZITADEL org."
+variable "zitadel_org_id" {
+  description = "Zitadel org id the project + app live under. Caller resolves this at root via `data \"zitadel_orgs\" \"platform_org\"` and passes the value down — keeping the data source out of this module avoids the apply-time defer that consumer modules with `depends_on = [module.zitadel]` would otherwise hit and which cascades into `must be replaced` on every downstream resource."
   type        = string
-  default     = "ZITADEL"
 }
 
 variable "zitadel_provider_authenticated" {
@@ -104,19 +103,10 @@ locals {
 
 # ── Zitadel project + application ─────────────────────────────────────────────
 
-# Always read — counting on `var.enabled` would make `org_id` resolve
-# only at apply time and TF would mark every dependent resource as
-# "must replace" on every plan. Querying Zitadel with no resources to
-# create costs one round-trip on plan, that's the smaller evil.
-data "zitadel_orgs" "this" {
-  name        = var.zitadel_org_name
-  name_method = "TEXT_QUERY_METHOD_EQUALS"
-}
-
 resource "zitadel_project" "this" {
   for_each = local.instances
 
-  org_id                   = data.zitadel_orgs.this.ids[0]
+  org_id                   = var.zitadel_org_id
   name                     = local.app_name
   project_role_assertion   = false
   project_role_check       = false
@@ -134,7 +124,7 @@ resource "zitadel_project" "this" {
 resource "zitadel_application_oidc" "this" {
   for_each = local.instances
 
-  org_id     = data.zitadel_orgs.this.ids[0]
+  org_id     = var.zitadel_org_id
   project_id = zitadel_project.this["enabled"].id
 
   name = local.app_name
