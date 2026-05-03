@@ -103,8 +103,10 @@ variable "login_policy" {
 
     NOTE: FIRSTINSTANCE config takes effect only on the very first boot
     against an empty database. Tweaking these values on an existing
-    instance won't propagate without a DB drop OR the (deferred)
-    TF-driven `zitadel_default_login_policy` resource.
+    instance is what the root `zitadel_default_login_policy.main`
+    resource (in `zitadel.tf`) is for — it reads this same struct via
+    `local.platform.services.zitadel.login_policy` and reconciles
+    against the live instance every apply.
   EOT
   type = object({
     allow_register          = optional(bool, false)
