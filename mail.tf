@@ -106,6 +106,15 @@ module "stalwart" {
   smarthost_implicit_tls        = try(local.mail.smarthost.implicit_tls, false)
   smarthost_allow_invalid_certs = try(local.mail.smarthost.allow_invalid_certs, false)
   smarthost_username            = try(local.mail.smarthost.username, "")
+
+  # Pin both Stalwart pods (main + smtp-relay) to the data-bearing
+  # node. Main pod owns a hostPath PV that only lives on one node;
+  # smtp-relay sidecar binds `smtp_relay_listen_ip` literally and
+  # that address only exists on one node either. Empty on a
+  # single-node cluster; multi-node operators set this in
+  # `mail.node_selector` of their domain yaml.
+  node_selector = try(local.mail.node_selector, {})
+  tolerations   = try(local.mail.tolerations, [])
 }
 
 # Roundcube webmail — fronts the actual mailbox UI at the root of
