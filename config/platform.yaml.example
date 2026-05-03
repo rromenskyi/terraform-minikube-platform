@@ -133,6 +133,18 @@ services:
     enabled: false
     hostname: argocd.example.com
 
+  # kured — Kubernetes Reboot Daemon. Drains and reboots a node when
+  # `/var/run/reboot-required` appears (Ubuntu's unattended-upgrades
+  # drops it for kernel/glibc/systemd updates). Default off so a fresh
+  # clone doesn't get an opinionated workload without consent. Flip on
+  # when the cluster nodes run unattended-upgrades and the operator
+  # wants the reboots automated. Maintenance-window knobs
+  # (`kured_reboot_days` / `kured_start_time` / `kured_end_time` /
+  # `kured_time_zone`) live on the addons module call in `main.tf` —
+  # add them there if a tighter window is needed.
+  kured:
+    enabled: false
+
   zitadel:
     enabled: false
     # Public hostname Zitadel issues OIDC tokens for. Must equal the
