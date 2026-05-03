@@ -80,6 +80,19 @@ variable "storage" {
   default = []
 }
 
+variable "git_sync" {
+  description = "Optional git-sync sidecar pulling content from a private repo into an emptyDir mounted at `mount` inside the main container. When set, the deployment gets (a) a one-shot init container that clones the repo before the main container starts, (b) a long-running sidecar that re-pulls on `period_seconds`, and (c) an SSH key Secret mounted at `/etc/git-secret/ssh` for both. Repo content lives in an emptyDir, NOT a PV — pod is free to schedule on any node, content rebuilds from git on every restart. Operator pre-creates the k8s Secret named in `ssh_key_secret_name` with two keys: `ssh-privatekey` (the GitHub deploy key) and `known_hosts` (output of `ssh-keyscan github.com`)."
+  type = object({
+    repo                = string
+    branch              = optional(string, "main")
+    period_seconds      = optional(number, 60)
+    ssh_key_secret_name = string
+    mount               = string
+    image               = optional(string, "registry.k8s.io/git-sync/git-sync:v4.4.0")
+  })
+  default = null
+}
+
 variable "db_secret_name" {
   description = "Name of the db-credentials Secret to expose as env vars. Null = no db."
   type        = string
@@ -652,6 +665,56 @@ resource "kubernetes_deployment_v1" "this" {
           }
         }
 
+        # git-sync one-shot clone before the main container starts.
+        # Without this, the main container can race the sidecar and
+        # see an empty mount on first boot. `--one-time` exits 0
+        # after the initial sync, so the init phase converges
+        # quickly. Same image + key shape as the long-running
+        # sidecar below — keep them in sync.
+        dynamic "init_container" {
+          for_each = var.git_sync == null ? [] : [var.git_sync]
+          content {
+            name              = "git-sync-init"
+            image             = init_container.value.image
+            image_pull_policy = "IfNotPresent"
+
+            args = [
+              "--repo=${init_container.value.repo}",
+              "--ref=${init_container.value.branch}",
+              "--root=/git",
+              "--link=current",
+              "--depth=1",
+              "--one-time",
+              "--ssh-key-file=/etc/git-secret/ssh-privatekey",
+              "--ssh-known-hosts-file=/etc/git-secret/known_hosts",
+            ]
+
+            resources {
+              requests = { cpu = "10m", memory = "32Mi" }
+              limits   = { cpu = "200m", memory = "128Mi" }
+            }
+
+            security_context {
+              run_as_user                = 65533
+              run_as_non_root            = true
+              allow_privilege_escalation = false
+              capabilities {
+                drop = ["ALL"]
+              }
+            }
+
+            volume_mount {
+              name       = "git-content"
+              mount_path = "/git"
+            }
+            volume_mount {
+              name       = "git-secret"
+              mount_path = "/etc/git-secret"
+              read_only  = true
+            }
+          }
+        }
+
         # hostPath volumes ignore the pod-level `fsGroup` — the kubelet
         # refuses to recursively chown something on the host filesystem
         # it didn't create. Without this init container, a non-root main
@@ -867,6 +930,73 @@ resource "kubernetes_deployment_v1" "this" {
               read_only  = true
             }
           }
+
+          # git-sync content. emptyDir is shared with the
+          # `git-sync-init` and `git-sync` containers; they write
+          # the worktree to `/git/<sha>` and a symlink at
+          # `/git/current` always points at the latest. Mounting
+          # the SAME emptyDir at `var.git_sync.mount` here with
+          # `subPath = "current"` resolves the symlink at mount
+          # time, so the main container sees the live content
+          # under its expected path.
+          dynamic "volume_mount" {
+            for_each = var.git_sync == null ? [] : [var.git_sync]
+            content {
+              name       = "git-content"
+              mount_path = volume_mount.value.mount
+              sub_path   = "current"
+              read_only  = true
+            }
+          }
+        }
+
+        # git-sync long-running sidecar — periodic re-pull every
+        # `period_seconds`. Same image + key shape as the init
+        # container above. Atomic worktree swap via the `current`
+        # symlink: the main container mounts `subPath = "current"`,
+        # so a swap propagates immediately on the next syscall.
+        dynamic "container" {
+          for_each = var.git_sync == null ? [] : [var.git_sync]
+          content {
+            name              = "git-sync"
+            image             = container.value.image
+            image_pull_policy = "IfNotPresent"
+
+            args = [
+              "--repo=${container.value.repo}",
+              "--ref=${container.value.branch}",
+              "--root=/git",
+              "--link=current",
+              "--depth=1",
+              "--period=${container.value.period_seconds}s",
+              "--ssh-key-file=/etc/git-secret/ssh-privatekey",
+              "--ssh-known-hosts-file=/etc/git-secret/known_hosts",
+            ]
+
+            resources {
+              requests = { cpu = "10m", memory = "32Mi" }
+              limits   = { cpu = "200m", memory = "128Mi" }
+            }
+
+            security_context {
+              run_as_user                = 65533
+              run_as_non_root            = true
+              allow_privilege_escalation = false
+              capabilities {
+                drop = ["ALL"]
+              }
+            }
+
+            volume_mount {
+              name       = "git-content"
+              mount_path = "/git"
+            }
+            volume_mount {
+              name       = "git-secret"
+              mount_path = "/etc/git-secret"
+              read_only  = true
+            }
+          }
         }
 
         # Helper containers co-located with the main one. Declared in the
@@ -959,6 +1089,30 @@ resource "kubernetes_deployment_v1" "this" {
             name = "config-files"
             config_map {
               name = kubernetes_config_map_v1.files[0].metadata[0].name
+            }
+          }
+        }
+
+        # git-sync emptyDir shared between init container, sidecar,
+        # and the main container's mount.
+        dynamic "volume" {
+          for_each = var.git_sync == null ? [] : [1]
+          content {
+            name = "git-content"
+            empty_dir {}
+          }
+        }
+
+        # SSH deploy key + known_hosts. Operator pre-creates the
+        # Secret; the module just projects it read-only into both
+        # git-sync containers.
+        dynamic "volume" {
+          for_each = var.git_sync == null ? [] : [var.git_sync]
+          content {
+            name = "git-secret"
+            secret {
+              secret_name  = volume.value.ssh_key_secret_name
+              default_mode = "0400"
             }
           }
         }
