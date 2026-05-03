@@ -181,4 +181,11 @@ resource "zitadel_default_login_policy" "main" {
   disable_login_with_phone = false
 
   default_redirect_uri = ""
+
+  # MFA factors. Zitadel ships these enabled out of the box and the
+  # operator hasn't disabled them; an empty `multi_factors` / `second_factors`
+  # in the resource definition would clear them on apply, silently
+  # dropping U2F + TOTP from the login form. Pin to the defaults.
+  multi_factors  = ["MULTI_FACTOR_TYPE_U2F_WITH_VERIFICATION"]
+  second_factors = ["SECOND_FACTOR_TYPE_OTP", "SECOND_FACTOR_TYPE_U2F"]
 }
