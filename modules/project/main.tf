@@ -94,10 +94,10 @@ variable "ollama_url" {
   default     = null
 }
 
-variable "zitadel_org_name" {
-  description = "Zitadel org name where `kind: app` components auto-provision projects + applications. Defaults to the bootstrap `ZITADEL` org. Per-org tenancy lands in a follow-up PR."
+variable "zitadel_org_id" {
+  description = "Zitadel org id where `kind: app` components auto-provision projects + applications. Caller resolves at root via `data \"zitadel_orgs\" \"platform_org\"` and passes the value down. Owning the data source at root rather than inside this module avoids the apply-time defer that propagates as `must be replaced` on every downstream resource whenever any consumer module declares `depends_on = [module.zitadel]`."
   type        = string
-  default     = "ZITADEL"
+  default     = ""
 }
 
 variable "zitadel_issuer_url" {
@@ -833,7 +833,7 @@ module "zitadel_app" {
 
   source = "../zitadel-app"
 
-  org_name     = try(each.value.oidc.org, var.zitadel_org_name)
+  org_id       = var.zitadel_org_id
   project_name = try(each.value.oidc.project, each.key)
   app_name     = each.key
 

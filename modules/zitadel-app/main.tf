@@ -17,10 +17,9 @@ terraform {
 
 # ── Inputs ────────────────────────────────────────────────────────────────────
 
-variable "org_name" {
-  description = "Zitadel org the project + app live under. Defaults to the bootstrap `ZITADEL` org which the platform-zitadel module creates as the master org. Override per app once multi-tenant orgs land."
+variable "org_id" {
+  description = "Zitadel org id the project + app live under. Caller resolves at root via `data \"zitadel_orgs\" \"platform_org\"` and passes the value down. Owning the data source at root rather than inside this module avoids the apply-time defer that propagates as `must be replaced` on every downstream resource whenever any consumer module declares `depends_on = [module.zitadel]`."
   type        = string
-  default     = "ZITADEL"
 }
 
 variable "project_name" {
@@ -100,27 +99,10 @@ variable "secret_name" {
   type        = string
 }
 
-# ── Lookups + resources ───────────────────────────────────────────────────────
-
-# Look up the org by name. The bootstrap `ZITADEL` org is created by
-# the platform-zitadel module as part of FIRSTINSTANCE; subsequent
-# tenant orgs would be created out-of-band (UI today, dedicated module
-# in a future PR) and referenced by name here.
-#
-# `zitadel_org` data source requires id (which we don't know up front),
-# so we go through `zitadel_orgs` plural with an EQUALS filter and pull
-# the first match.
-data "zitadel_orgs" "this" {
-  name        = var.org_name
-  name_method = "TEXT_QUERY_METHOD_EQUALS"
-}
-
-locals {
-  org_id = data.zitadel_orgs.this.ids[0]
-}
+# ── Resources ─────────────────────────────────────────────────────────────────
 
 resource "zitadel_project" "this" {
-  org_id = local.org_id
+  org_id = var.org_id
   name   = var.project_name
 
   # Standard production defaults. project_role_assertion = put roles
@@ -135,7 +117,7 @@ resource "zitadel_project" "this" {
 resource "zitadel_project_role" "roles" {
   for_each = { for r in var.roles : r.key => r }
 
-  org_id       = local.org_id
+  org_id       = var.org_id
   project_id   = zitadel_project.this.id
   role_key     = each.value.key
   display_name = each.value.display_name
@@ -143,7 +125,7 @@ resource "zitadel_project_role" "roles" {
 }
 
 resource "zitadel_application_oidc" "this" {
-  org_id     = local.org_id
+  org_id     = var.org_id
   project_id = zitadel_project.this.id
   name       = var.app_name
 
