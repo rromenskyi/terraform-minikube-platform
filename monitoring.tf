@@ -52,3 +52,36 @@ resource "kubernetes_resource_quota_v1" "monitoring" {
     }
   }
 }
+
+# Default requests for any container that doesn't declare them. The
+# kube-prometheus-stack chart's main containers all set `requests`
+# explicitly, but its pre-upgrade hook Jobs (admission-create /
+# admission-patch from `kube-webhook-certgen`) do not — and the quota
+# above makes `requests.cpu` / `requests.memory` mandatory at
+# admission. Without this LimitRange the hook Job loops on
+# "must specify requests.cpu" and the helm upgrade times out waiting
+# for the hook to complete (revisions 2 + 4 in this release's history
+# both died this way). Defaults are deliberately small — these are
+# short-lived hook Jobs, not steady-state workloads — and don't push
+# the quota math meaningfully.
+resource "kubernetes_limit_range_v1" "monitoring" {
+  depends_on = [module.addons]
+
+  metadata {
+    name      = "monitoring-defaults"
+    namespace = "monitoring"
+    labels = {
+      "app.kubernetes.io/managed-by" = "terraform"
+    }
+  }
+
+  spec {
+    limit {
+      type = "Container"
+      default_request = {
+        cpu    = "10m"
+        memory = "32Mi"
+      }
+    }
+  }
+}
