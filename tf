@@ -527,6 +527,45 @@ case "${SUBCOMMAND}" in
     purge_cloudflare_tunnel "${CLOUDFLARE_TUNNEL_NAME}"
     ;;
 
+  backup-config)
+    # Push the operator's gitignored configuration (.env, the
+    # config/ directory) to the same restic repository the
+    # in-cluster CronJobs use, under tag `operator-config`. The
+    # repo URL + passphrase + B2 credentials are sourced from
+    # `terraform output` (which already has them after the first
+    # apply that brought the backup module up). Idempotent —
+    # restic dedup makes a no-op push when nothing changed.
+    set +x
+    : "${TF_VAR_backup_b2_access_key_id:?TF_VAR_backup_b2_access_key_id must be set in .env}"
+    : "${TF_VAR_backup_b2_secret_access_key:?TF_VAR_backup_b2_secret_access_key must be set in .env}"
+    if ! command -v restic >/dev/null 2>&1; then
+      echo "tf: restic CLI not found — install via your distro's package manager (apt-get install restic / brew install restic)" >&2
+      exit 1
+    fi
+    REPO_URL="$(terraform output -raw backup_repository_url 2>/dev/null)"
+    PASSPHRASE="$(terraform output -raw backup_passphrase 2>/dev/null)"
+    if [[ -z "${REPO_URL}" || -z "${PASSPHRASE}" ]]; then
+      echo "tf: backup outputs not populated — run ./tf apply with services.backup.enabled = true first" >&2
+      exit 1
+    fi
+    export RESTIC_REPOSITORY="${REPO_URL}"
+    export RESTIC_PASSWORD="${PASSPHRASE}"
+    export AWS_ACCESS_KEY_ID="${TF_VAR_backup_b2_access_key_id}"
+    export AWS_SECRET_ACCESS_KEY="${TF_VAR_backup_b2_secret_access_key}"
+    cd "${SCRIPT_DIR}"
+    TARGETS=(.env config)
+    EXISTING=()
+    for t in "${TARGETS[@]}"; do
+      if [[ -e "$t" ]]; then EXISTING+=("$t"); fi
+    done
+    if [[ ${#EXISTING[@]} -eq 0 ]]; then
+      echo "tf: nothing to back up (.env / config absent)" >&2
+      exit 1
+    fi
+    echo "tf: restic backup --tag operator-config ${EXISTING[*]}"
+    restic backup --tag operator-config --host platform-operator-config "${EXISTING[@]}"
+    ;;
+
   bootstrap-minikube)
     shift
     preflight_config_files
