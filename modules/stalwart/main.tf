@@ -1227,6 +1227,10 @@ resource "kubernetes_deployment_v1" "stalwart" {
               }
             }
           }
+          env {
+            name  = "PRIMARY_DOMAIN"
+            value = var.primary_domain
+          }
 
           command = ["bash", "-eu", "-c", <<-EOT
             for i in $(seq 1 180); do
@@ -1259,12 +1263,44 @@ resource "kubernetes_deployment_v1" "stalwart" {
                 || echo "[applier] smarthost delete returned non-zero — proceeding anyway"
             fi
 
+            # Domain idempotency. The plan declares
+            # `create Domain dom-primary` with name=$PRIMARY_DOMAIN, but
+            # Stalwart enforces uniqueness on Domain.name. On every
+            # re-apply after the very first one, the create returns
+            # `primaryKeyViolation` and the friendly id `dom-primary`
+            # never resolves — which then cascades onto every plan
+            # entry that references `#dom-primary`
+            # (DkimSignature.dom-primary, SystemSettings.defaultDomainId).
+            # Three ops fail loudly on every Stalwart pod start.
+            #
+            # Pre-step: query the existing Domain by name. If found,
+            # rewrite the plan ndjson on the fly:
+            #   - drop the `create Domain dom-primary` line entirely
+            #   - replace every `#dom-primary` reference with the
+            #     existing internal id
+            # The remaining creates and updates resolve cleanly,
+            # converging without the noisy 3-op failure.
+            #
+            # Plan file is mounted from a Secret (read-only); copy to
+            # tmpfs first so sed -i can rewrite it.
+            cp /seed/plan.ndjson /tmp/plan.ndjson
+            echo "[applier] checking for existing Domain named '$PRIMARY_DOMAIN'"
+            DOM_ID=$(/shared/bin/stalwart-cli query Domain 2>/dev/null \
+              | awk -v name="$PRIMARY_DOMAIN" '$2==name {print $1; exit}') || true
+            if [ -n "$${DOM_ID:-}" ]; then
+              echo "[applier] Domain '$PRIMARY_DOMAIN' already exists as id '$DOM_ID' — rewriting plan to skip its create + resolve refs"
+              # Drop the create-Domain line for friendly id `dom-primary`.
+              sed -i '/"@type":"create","object":"Domain","value":{"dom-primary"/d' /tmp/plan.ndjson
+              # Resolve every `#dom-primary` reference to the existing id.
+              sed -i "s/#dom-primary/$DOM_ID/g" /tmp/plan.ndjson
+            fi
+
             # `--continue-on-error` so a JMAP filter rejection on
             # one destroy doesn't block the rest of the plan.
             # Updates are idempotent; creates may fail with
             # `alreadyExists` on a re-apply with no preceding destroy
             # — that's fine, the converged state is still right.
-            if /shared/bin/stalwart-cli apply --file /seed/plan.ndjson --continue-on-error; then
+            if /shared/bin/stalwart-cli apply --file /tmp/plan.ndjson --continue-on-error; then
               echo "[applier] plan applied OK"
             else
               echo "[applier] apply finished with errors — see above; main server stays up"
