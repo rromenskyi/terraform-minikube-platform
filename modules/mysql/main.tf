@@ -303,3 +303,8 @@ output "root_password" {
   sensitive   = true
   description = "MySQL root password (also in the mysql-root Secret), or null if the module is disabled."
 }
+
+output "root_secret_name" {
+  value       = one([for s in kubernetes_secret_v1.mysql_root : s.metadata[0].name])
+  description = "Name of the Secret carrying MYSQL_ROOT_PASSWORD. Consumed by the backup module's cross-namespace mirror Secret. Null when disabled."
+}

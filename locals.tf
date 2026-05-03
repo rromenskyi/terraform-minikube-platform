@@ -57,6 +57,23 @@ locals {
       kured = {
         enabled = false
       }
+      backup = {
+        enabled                = false
+        postgres_databases     = []
+        mysql_databases        = []
+        pv_paths               = []
+        pv_node_selector       = {}
+        pv_tolerations         = []
+        schedule_postgres      = "0 3 * * *"
+        schedule_mysql         = "15 3 * * *"
+        schedule_redis         = "30 3 * * *"
+        schedule_vault         = "45 3 * * *"
+        schedule_pv            = "0 4 * * 0"
+        schedule_prune         = "0 5 * * 0"
+        retention_keep_daily   = 7
+        retention_keep_weekly  = 4
+        retention_keep_monthly = 6
+      }
       zitadel = {
         enabled              = false
         external_domain      = ""
@@ -118,6 +135,7 @@ locals {
       vault         = merge(local._platform_defaults.services.vault, try(local._platform_services.vault, {}))
       argocd        = merge(local._platform_defaults.services.argocd, try(local._platform_services.argocd, {}))
       kured         = merge(local._platform_defaults.services.kured, try(local._platform_services.kured, {}))
+      backup        = merge(local._platform_defaults.services.backup, try(local._platform_services.backup, {}))
       platform_dash = merge(local._platform_defaults.services.platform_dash, try(local._platform_services.platform_dash, {}))
     }
   }
