@@ -145,6 +145,45 @@ services:
   kured:
     enabled: false
 
+  # Longhorn — distributed block storage. Provides a `longhorn`
+  # StorageClass that PVCs can use instead of the per-node
+  # hostPath default. Volumes get replicated across cluster
+  # nodes (default 3 replicas) so the consuming pod can schedule
+  # on any node and Longhorn attaches the right replica locally.
+  #
+  # Native B2 backup target is configured automatically when the
+  # `services.backup` block above is enabled — the same bucket
+  # is reused with a dedicated `longhorn-volumes/` prefix so the
+  # restic and Longhorn backup pipelines stay isolated.
+  #
+  # Pre-reqs on cluster nodes (k3s default packages NOT enough):
+  #   apt-get install -y open-iscsi nfs-common
+  #   systemctl enable --now iscsid
+  # Without these, Longhorn instance-managers crash at startup
+  # and no PVC ever binds.
+  longhorn:
+    enabled: false
+    # `replica_count` — how many copies of each volume Longhorn
+    # maintains. 3 = one per node on a 3-node cluster (max
+    # durability). 1 = single-node (dev cluster only — no
+    # durability guarantee). Anything between is fine.
+    replica_count: 3
+    # `backup_b2_region` — token Longhorn embeds in the
+    # `s3://<bucket>@<region>/` URL. B2 doesn't enforce AWS
+    # regional routing, so any non-empty string works; matching
+    # the actual B2 region in the bucket name keeps it readable.
+    backup_b2_region: us-east-005
+    # `tolerations` — standard k8s toleration shape, applied to
+    # both chart-level Longhorn pods (manager DS, CSI components,
+    # UI) AND dynamic instance-manager pods. Required if any
+    # cluster nodes carry taints and those nodes should also host
+    # volume replicas. Empty = un-tainted nodes only,
+    # `replica_count` capacity collapses to the un-tainted node
+    # count.
+    # tolerations:
+    #   - { key: tier, operator: Equal, value: edge, effect: NoSchedule }
+    tolerations: []
+
   # Backups → Backblaze B2 via restic.
   #
   # CronJobs in the `backups` namespace dump every stateful target
