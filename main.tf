@@ -96,6 +96,14 @@ module "addons" {
   enable_monitoring   = true
   enable_ops_workload = true
 
+  # kured: drains and reboots a node when it observes
+  # `/var/run/reboot-required` (the sentinel Ubuntu's
+  # unattended-upgrades drops when a kernel/glibc/systemd update
+  # needs a reboot). Default OFF — operators flip on via
+  # `services.kured.enabled: true` in their gitignored
+  # `config/platform.yaml`.
+  enable_kured = local.platform.services.kured.enabled
+
   # Traefik's chart-side dashboard IngressRoute at `traefik.<base_domain>`
   # stays off — this platform owns dashboard routing through the tenant
   # YAML layer (see `config/components/traefik.yaml`), so leaving the
