@@ -605,8 +605,15 @@ resource "kubernetes_cron_job_v1" "mysql" {
             restart_policy = "OnFailure"
 
             container {
-              name  = "dump"
-              image = var.image_alpine
+              name = "dump"
+              # MariaDB 11 client speaks `caching_sha2_password` as
+              # of 10.6 — the plugin lives in
+              # /usr/lib/mysql/plugin/ in the official mariadb
+              # image and mariadb-dump auto-discovers it.
+              # Alpine's standalone mariadb-client package strips
+              # plugins, so the full mariadb:11 image is what we
+              # want. Debian-based, apt-get installs restic.
+              image = "mariadb:11"
 
               env_from {
                 secret_ref {
@@ -632,22 +639,29 @@ resource "kubernetes_cron_job_v1" "mysql" {
                 value = join(" ", var.mysql_databases)
               }
 
-              command = ["sh", "-c"]
+              command = ["bash", "-c"]
               args = [<<-EOT
-                set -e
-                apk add --no-cache restic mariadb-client >/dev/null
+                set -eo pipefail
+                apt-get update -qq
+                apt-get install -y --no-install-recommends restic >/dev/null
 
                 STAGE=$(mktemp -d)
                 trap 'rm -rf "$STAGE"' EXIT
 
+                # `mariadb-dump` (not `mysqldump`) — MariaDB 11
+                # dropped the `mysqldump` symlink. Same flags,
+                # same semantics. `--ssl=0` because in-cluster
+                # MySQL ships a self-signed cert and the client
+                # rejects untrusted chains by default; traffic
+                # stays in the pod network so plain is fine.
                 if [ -z "$DATABASES" ]; then
-                  echo "[mysql] DATABASES empty — mysqldump --all-databases"
-                  mysqldump -h "$MYSQL_HOST" -u root --single-transaction \
+                  echo "[mysql] DATABASES empty — dump --all-databases"
+                  mariadb-dump --ssl=0 -h "$MYSQL_HOST" -u root --single-transaction \
                     --quick --all-databases | gzip -9 >"$STAGE/all.sql.gz"
                 else
                   for db in $DATABASES; do
-                    echo "[mysql] mysqldump $db"
-                    mysqldump -h "$MYSQL_HOST" -u root --single-transaction \
+                    echo "[mysql] mariadb-dump $db"
+                    mariadb-dump --ssl=0 -h "$MYSQL_HOST" -u root --single-transaction \
                       --quick "$db" | gzip -9 >"$STAGE/$db.sql.gz"
                   done
                 fi
@@ -902,13 +916,12 @@ resource "kubernetes_cron_job_v1" "pv" {
                 }
               }
 
+              # `<name>:<path>` pairs joined by comma. Iterated by
+              # POSIX `sh` in the loop below (bash arrays aren't
+              # available — alpine's /bin/sh is busybox).
               env {
-                name  = "PV_NAMES"
-                value = join(",", [for p in var.pv_paths : p.name])
-              }
-              env {
-                name  = "PV_PATHS"
-                value = join(",", [for p in var.pv_paths : p.path])
+                name  = "PV_PAIRS"
+                value = join(",", [for p in var.pv_paths : "${p.name}:${p.path}"])
               }
 
               security_context {
@@ -930,20 +943,19 @@ resource "kubernetes_cron_job_v1" "pv" {
                 STAGE=$(mktemp -d)
                 trap 'rm -rf "$STAGE"' EXIT
 
-                IFS=','; set -- $PV_NAMES
-                NAMES=("$@")
-                set -- $PV_PATHS
-                PATHS=("$@")
-                IFS=' '
-
-                i=0
-                while [ $i -lt $${#NAMES[@]} ]; do
-                  name="$${NAMES[$i]}"
-                  path="$${PATHS[$i]}"
+                # POSIX iteration over comma-separated `name:path`
+                # pairs. busybox sh doesn't have bash arrays.
+                old_ifs="$IFS"
+                IFS=','
+                for entry in $PV_PAIRS; do
+                  IFS="$old_ifs"
+                  name="$${entry%%:*}"
+                  path="$${entry#*:}"
                   echo "[pv] tar $name from $path"
                   tar -czf "$STAGE/$name.tar.gz" -C "$path" .
-                  i=$((i+1))
+                  IFS=','
                 done
+                IFS="$old_ifs"
 
                 echo "[pv] restic backup"
                 restic backup --host platform-pv --tag pv "$STAGE"
