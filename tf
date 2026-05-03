@@ -527,6 +527,67 @@ case "${SUBCOMMAND}" in
     purge_cloudflare_tunnel "${CLOUDFLARE_TUNNEL_NAME}"
     ;;
 
+  backup-config)
+    # Push the operator's gitignored configuration (.env, the
+    # config/ directory) to the same restic repository the
+    # in-cluster CronJobs use, under tag `operator-config`. The
+    # repo URL + passphrase + B2 credentials are sourced from
+    # `terraform output` (which already has them after the first
+    # apply that brought the backup module up). Idempotent —
+    # restic dedup makes a no-op push when nothing changed.
+    set +x
+    : "${TF_VAR_backup_b2_access_key_id:?TF_VAR_backup_b2_access_key_id must be set in .env}"
+    : "${TF_VAR_backup_b2_secret_access_key:?TF_VAR_backup_b2_secret_access_key must be set in .env}"
+    if ! command -v restic >/dev/null 2>&1; then
+      echo "tf: restic CLI not found — install via your distro's package manager (apt-get install restic / brew install restic)" >&2
+      exit 1
+    fi
+    cd "${SCRIPT_DIR}"
+    # Step 1: pull TF state with the existing tfstate-bucket
+    # credentials (whichever AWS_ACCESS_KEY_ID / SECRET the
+    # operator's `.env` is loading for the S3 backend). The state
+    # already lives in the B2 tfstate bucket, but backing the JSON
+    # dump up via restic into the *backup* bucket gives a third
+    # copy under a separate B2 key — full disaster recovery
+    # doesn't have to assume the tfstate key/bucket survived.
+    SNAPSHOT="${SCRIPT_DIR}/terraform.tfstate.snapshot.json"
+    cleanup_snapshot() { rm -f "${SNAPSHOT}"; }
+    trap cleanup_snapshot EXIT
+    echo "tf: terraform state pull -> $(basename "${SNAPSHOT}")"
+    terraform state pull > "${SNAPSHOT}"
+
+    # Step 2: pull restic repo URL + passphrase from outputs.
+    REPO_URL="$(terraform output -raw backup_repository_url 2>/dev/null)"
+    PASSPHRASE="$(terraform output -raw backup_passphrase 2>/dev/null)"
+    if [[ -z "${REPO_URL}" || -z "${PASSPHRASE}" ]]; then
+      echo "tf: backup outputs not populated — run ./tf apply with services.backup.enabled = true first" >&2
+      exit 1
+    fi
+
+    # Step 3: switch AWS_* env to the backup-bucket key for the
+    # restic push. Done AFTER `terraform state pull` so the state
+    # call still uses the tfstate-bucket key. Per the
+    # `services.backup` design, the two keys are intentionally
+    # separate — a tfstate-key compromise must not delete or
+    # overwrite encrypted backups.
+    export RESTIC_REPOSITORY="${REPO_URL}"
+    export RESTIC_PASSWORD="${PASSPHRASE}"
+    export AWS_ACCESS_KEY_ID="${TF_VAR_backup_b2_access_key_id}"
+    export AWS_SECRET_ACCESS_KEY="${TF_VAR_backup_b2_secret_access_key}"
+
+    TARGETS=(.env config "$(basename "${SNAPSHOT}")")
+    EXISTING=()
+    for t in "${TARGETS[@]}"; do
+      if [[ -e "$t" ]]; then EXISTING+=("$t"); fi
+    done
+    if [[ ${#EXISTING[@]} -eq 0 ]]; then
+      echo "tf: nothing to back up (.env / config / state absent)" >&2
+      exit 1
+    fi
+    echo "tf: restic backup --tag operator-config ${EXISTING[*]}"
+    restic backup --tag operator-config --host platform-operator-config "${EXISTING[@]}"
+    ;;
+
   bootstrap-minikube)
     shift
     preflight_config_files

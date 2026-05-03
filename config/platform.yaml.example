@@ -145,6 +145,54 @@ services:
   kured:
     enabled: false
 
+  # Backups → Backblaze B2 via restic.
+  #
+  # CronJobs in the `backups` namespace dump every stateful target
+  # (Postgres / MySQL / Redis / Vault / hostPath PVs) on schedule
+  # and push to a single restic-encrypted repository. Operator's
+  # gitignored config (.env, config/platform.yaml, config/domains/*)
+  # backs up off-cluster via the `./tf backup-config` wrapper.
+  #
+  # Hard requirements when `enabled: true`:
+  #   - separate B2 application key from the tfstate-bucket key
+  #     (blast radius isolation)
+  #   - matching `.env` keys: TF_VAR_backup_b2_bucket /
+  #     TF_VAR_backup_b2_endpoint / TF_VAR_backup_b2_access_key_id /
+  #     TF_VAR_backup_b2_secret_access_key
+  #   - the restic passphrase (sensitive output `backup_passphrase`)
+  #     stashed in a password manager — losing it bricks every
+  #     encrypted snapshot forever
+  #
+  # Per-target lists (`postgres_databases` / `mysql_databases` /
+  # `pv_paths`) are operator-managed. Empty `postgres_databases`
+  # falls back to `pg_dumpall`; empty `pv_paths` skips the PV
+  # CronJob entirely.
+  backup:
+    enabled: false
+    postgres_databases:
+      # - platform_zitadel
+      # - platform_dash
+    mysql_databases:
+      # - tenant_a
+      # - tenant_b
+    pv_paths:
+      # - { name: stalwart-data, path: /data/vol/mail/stalwart/data }
+      # - { name: web-html,      path: /data/vol/phost-example-prod/web/usr-share-nginx-html }
+    pv_node_selector:
+      # workload-tier: stateful
+    # Schedules in UTC. Defaults stagger DB targets through 03:00–
+    # 03:45 then PV at 04:00 Sun, prune at 05:00 Sun. Override only
+    # if there's a maintenance window that conflicts.
+    # schedule_postgres: "0 3 * * *"
+    # schedule_mysql:    "15 3 * * *"
+    # schedule_redis:    "30 3 * * *"
+    # schedule_vault:    "45 3 * * *"
+    # schedule_pv:       "0 4 * * 0"
+    # schedule_prune:    "0 5 * * 0"
+    # retention_keep_daily:   7
+    # retention_keep_weekly:  4
+    # retention_keep_monthly: 6
+
   zitadel:
     enabled: false
     # Public hostname Zitadel issues OIDC tokens for. Must equal the
