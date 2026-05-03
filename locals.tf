@@ -57,6 +57,11 @@ locals {
       kured = {
         enabled = false
       }
+      longhorn = {
+        enabled          = false
+        replica_count    = 3
+        backup_b2_region = "us-east-005"
+      }
       backup = {
         enabled                = false
         postgres_databases     = []
@@ -135,6 +140,7 @@ locals {
       vault         = merge(local._platform_defaults.services.vault, try(local._platform_services.vault, {}))
       argocd        = merge(local._platform_defaults.services.argocd, try(local._platform_services.argocd, {}))
       kured         = merge(local._platform_defaults.services.kured, try(local._platform_services.kured, {}))
+      longhorn      = merge(local._platform_defaults.services.longhorn, try(local._platform_services.longhorn, {}))
       backup        = merge(local._platform_defaults.services.backup, try(local._platform_services.backup, {}))
       platform_dash = merge(local._platform_defaults.services.platform_dash, try(local._platform_services.platform_dash, {}))
     }
