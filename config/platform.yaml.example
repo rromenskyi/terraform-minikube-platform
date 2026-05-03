@@ -115,6 +115,23 @@ services:
     enabled: false
     hostname: vault.example.com
 
+  # Argo CD — GitOps controller for application-layer deploys.
+  # Phase 0 ships the upstream chart with Zitadel OIDC SSO wired
+  # through Dex. Login lands users on the UI; users carrying the
+  # `argocd_admin` role on the auto-provisioned `argocd` Zitadel
+  # project get full RBAC, others have no permissions until the
+  # operator hand-edits the in-cluster RBAC ConfigMap.
+  #
+  # The chart-side Ingress stays off — routing happens through the
+  # platform's existing Cloudflare Tunnel + Traefik IngressRoute
+  # pipeline. Match the `services.argocd.hostname` prefix to the
+  # `<prefix>: argocd` entry in your domain yaml's routes map (e.g.
+  # `argocd.example.com` → `argocd: argocd`). The
+  # `config/components/argocd.yaml` file already declares the
+  # `kind: external` mapping at the platform side.
+  argocd:
+    enabled: false
+    hostname: argocd.example.com
 
   zitadel:
     enabled: false

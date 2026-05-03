@@ -1,0 +1,19 @@
+# Argo CD — application-layer GitOps controller routing.
+#
+# `kind: external` because the workload itself is owned by
+# `modules/argocd` (Helm chart in the `argocd` namespace, wired
+# through `argocd.tf` at the root). This component file only
+# describes how the hostname routes through Traefik + Cloudflare
+# Tunnel. Wire by adding a route to your domain yaml — the prefix
+# part of `<prefix>: argocd` MUST match the
+# `services.argocd.hostname` host-prefix you set in
+# `config/platform.yaml` (e.g. `hostname: argocd.example.com` →
+# `argocd: argocd` in the routes map of the matching domain yaml).
+
+kind: external
+service:
+  name: argocd-server
+  namespace: argocd
+  port: 80
+auth: zitadel
+http2_origin: false

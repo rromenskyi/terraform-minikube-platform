@@ -47,6 +47,13 @@ locals {
         enabled  = false
         hostname = ""
       }
+      argocd = {
+        enabled       = false
+        hostname      = ""
+        namespace     = "argocd"
+        node_selector = {}
+        tolerations   = []
+      }
       zitadel = {
         enabled              = false
         external_domain      = ""
@@ -106,6 +113,7 @@ locals {
       ollama        = merge(local._platform_defaults.services.ollama, try(local._platform_services.ollama, {}))
       zitadel       = merge(local._platform_defaults.services.zitadel, try(local._platform_services.zitadel, {}))
       vault         = merge(local._platform_defaults.services.vault, try(local._platform_services.vault, {}))
+      argocd        = merge(local._platform_defaults.services.argocd, try(local._platform_services.argocd, {}))
       platform_dash = merge(local._platform_defaults.services.platform_dash, try(local._platform_services.platform_dash, {}))
     }
   }
