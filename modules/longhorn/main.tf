@@ -63,6 +63,18 @@ variable "default_data_path" {
   default     = "/var/lib/longhorn/"
 }
 
+variable "tolerations" {
+  description = "Tolerations propagated to every Longhorn pod (manager DaemonSet, CSI components, UI, instance-managers). Empty = Longhorn pods land only on un-tainted nodes; on a tainted-edge or tainted-control-plane setup the storage layer must tolerate the same taints workloads do, otherwise replicas can't bind to those nodes and `replicaCount` can't be satisfied. Standard k8s toleration shape — passed both to the chart's `longhornManager` / `longhornUI` / `longhornDriver` values AND rendered into the Longhorn-format `taintToleration` setting for dynamic instance-managers."
+  type = list(object({
+    key                = optional(string)
+    operator           = optional(string, "Exists")
+    value              = optional(string)
+    effect             = optional(string)
+    toleration_seconds = optional(string)
+  }))
+  default = []
+}
+
 variable "backup_b2_bucket" {
   description = "B2 bucket for Longhorn native backups. May share the bucket with the restic backup pipeline; Longhorn's data lands under a separate `longhorn-volumes/` prefix automatically. Empty disables backup-target configuration; volumes still work, just can't be backed up via Longhorn's `BackupTarget` API."
   type        = string
@@ -127,6 +139,26 @@ locals {
   # without it Longhorn rejects the URL at startup.
   backup_target_url = local.backup_configured ? "s3://${var.backup_b2_bucket}@${var.backup_b2_region}/longhorn-volumes/" : ""
 
+  # Render `var.tolerations` into Longhorn's
+  # `<key>=<value>:<effect>;<key>:<effect>` setting string. Used
+  # for dynamic instance-manager pods (chart-level pods get the
+  # raw list via `longhornManager.tolerations` etc. below).
+  taint_toleration_setting = join(";", [
+    for t in var.tolerations :
+    "${t.key}${t.value == null ? "" : "=${t.value}"}:${t.effect}"
+  ])
+
+  # K8s tolerations shape — passed verbatim to chart-level pods.
+  chart_tolerations = [
+    for t in var.tolerations : {
+      key               = t.key
+      operator          = t.operator
+      value             = t.value
+      effect            = t.effect
+      tolerationSeconds = try(tonumber(t.toleration_seconds), null)
+    }
+  ]
+
   # Helm values rendered conditionally on whether B2 backup
   # config is complete. Without it, the chart still installs and
   # provisions volumes — operators just can't back them up via
@@ -137,6 +169,15 @@ locals {
       defaultClass             = false
       defaultClassReplicaCount = var.default_replica_count
       reclaimPolicy            = "Retain"
+    }
+    longhornManager = {
+      tolerations = local.chart_tolerations
+    }
+    longhornDriver = {
+      tolerations = local.chart_tolerations
+    }
+    longhornUI = {
+      tolerations = local.chart_tolerations
     }
     defaultSettings = merge(
       {
@@ -158,6 +199,10 @@ locals {
         # / package issues (`open-iscsi`, `nfs-common`) up front
         # rather than during the first volume mount.
         guaranteedInstanceManagerCPU = 12
+        # Tolerations for dynamic Longhorn-managed pods (instance-
+        # managers, share-managers, system-managed jobs). Same
+        # taints as chart-level components — keep them in sync.
+        taintToleration = local.taint_toleration_setting
       },
       local.backup_configured ? {
         backupTarget                 = local.backup_target_url

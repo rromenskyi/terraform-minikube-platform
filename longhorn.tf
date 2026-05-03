@@ -19,6 +19,7 @@ module "longhorn" {
 
   enabled               = local.platform.services.longhorn.enabled
   default_replica_count = local.platform.services.longhorn.replica_count
+  tolerations           = local.platform.services.longhorn.tolerations
 
   # B2 backup target. Re-uses the same bucket and credentials
   # the restic pipeline writes to (under a different prefix —
