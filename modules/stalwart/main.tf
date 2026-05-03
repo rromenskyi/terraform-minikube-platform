@@ -225,6 +225,24 @@ variable "cpu_limit" {
   default     = "500m"
 }
 
+variable "node_selector" {
+  description = "Node-selector applied to BOTH the main Stalwart Deployment and the smtp-relay sidecar Deployment. Two reasons both pods need pinning when this is set: (1) the main pod owns a hostPath PV under `volume_base_path/<namespace>/stalwart/data` and that data only lives on the original node — if the pod relocates, the new node has an empty dir; (2) the smtp-relay sidecar runs in hostNetwork mode and binds `smtp_relay_listen_ip` literally, so when that address exists on only one node the pod must land there or socat fails at start with 'Cannot assign requested address'. Empty = scheduler picks any node, fine for single-node clusters."
+  type        = map(string)
+  default     = {}
+}
+
+variable "tolerations" {
+  description = "Taints both Stalwart pods tolerate. Empty list = pods cannot land on any tainted node. Applied to both the main Deployment and the smtp-relay sidecar Deployment so neither pod is evicted by node-level taint drains."
+  type = list(object({
+    key                = optional(string)
+    operator           = optional(string)
+    value              = optional(string)
+    effect             = optional(string)
+    toleration_seconds = optional(string)
+  }))
+  default = []
+}
+
 locals {
   instances = var.enabled ? toset(["enabled"]) : toset([])
 
@@ -1068,6 +1086,23 @@ resource "kubernetes_deployment_v1" "stalwart" {
       }
 
       spec {
+        # Pin to the data-bearing node — the hostPath PV under
+        # `var.volume_base_path` only lives on the original
+        # bootstrap node; an unpinned pod can land elsewhere and
+        # come up against an empty data dir.
+        node_selector = length(var.node_selector) > 0 ? var.node_selector : null
+
+        dynamic "toleration" {
+          for_each = var.tolerations
+          content {
+            key                = toleration.value.key
+            operator           = toleration.value.operator
+            value              = toleration.value.value
+            effect             = toleration.value.effect
+            toleration_seconds = toleration.value.toleration_seconds
+          }
+        }
+
         # ── Init containers ─────────────────────────────────────
         #
         # 1) bootstrap: writes config.json into the data PV (idempotent
@@ -1481,6 +1516,26 @@ resource "kubernetes_deployment_v1" "stalwart_smtp_relay" {
       spec {
         host_network = true
         dns_policy   = "ClusterFirstWithHostNet"
+
+        # `var.smtp_relay_listen_ip` may resolve only on a specific
+        # node (e.g. when the operator's deployment binds the inbound
+        # forwarder to an interface that lives on one host). Pin
+        # there via `var.node_selector`; without the selector and on
+        # a multi-node cluster, the scheduler can land this pod
+        # where the bind address doesn't exist and socat fails at
+        # start with "Cannot assign requested address".
+        node_selector = length(var.node_selector) > 0 ? var.node_selector : null
+
+        dynamic "toleration" {
+          for_each = var.tolerations
+          content {
+            key                = toleration.value.key
+            operator           = toleration.value.operator
+            value              = toleration.value.value
+            effect             = toleration.value.effect
+            toleration_seconds = toleration.value.toleration_seconds
+          }
+        }
 
         container {
           name  = "socat"
