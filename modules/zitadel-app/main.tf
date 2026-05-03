@@ -206,3 +206,9 @@ output "client_id" {
   value     = zitadel_application_oidc.this.client_id
   sensitive = true
 }
+
+output "client_secret" {
+  value       = zitadel_application_oidc.this.client_secret
+  sensitive   = true
+  description = "Generated client secret for the OIDC application. Consumed directly when the downstream module renders Helm values that need the secret inline (e.g. Argo CD's Dex connector). Most kind:app components mount the AUTH_ZITADEL_SECRET key from the emitted k8s Secret instead — this output is for the rare case where Helm-time interpolation is needed."
+}
