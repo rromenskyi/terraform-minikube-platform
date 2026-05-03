@@ -201,6 +201,20 @@ resource "kubernetes_stateful_set_v1" "postgres" {
           name  = "postgres"
           image = "postgres:16-alpine"
 
+          # Override the image's default `CMD ["postgres"]` to inject
+          # `shared_preload_libraries=pg_stat_statements`. The
+          # extension's stats-collection hooks have to load at server
+          # start, not via `CREATE EXTENSION` (which only registers
+          # the SQL view). Without this, the view exists but every
+          # `pg_stat_statements` row is empty. `track=all` includes
+          # statements inside functions/procedures, useful for the
+          # platform-dash slow-queries panel.
+          args = [
+            "postgres",
+            "-c", "shared_preload_libraries=pg_stat_statements",
+            "-c", "pg_stat_statements.track=all",
+          ]
+
           port {
             container_port = 5432
           }
@@ -272,6 +286,97 @@ resource "kubernetes_stateful_set_v1" "postgres" {
 }
 
 # ── Service ───────────────────────────────────────────────────────────────────
+
+# pg_stat_statements extension creator. The shared_preload_libraries
+# load (in the StatefulSet container `args` above) is necessary but
+# not sufficient — Postgres also needs `CREATE EXTENSION` to register
+# the SQL view per database. Run it against the default `postgres`
+# database so the platform-dash slow-queries panel finds the view
+# when it connects to this instance. Tenant databases get their own
+# `CREATE EXTENSION` from the per-tenant provisioner Job in
+# modules/project (separate change once that path lands).
+#
+# The Job uses `for_each = local.instances` to disappear cleanly when
+# `var.enabled = false`, mirrors the rest of the module. The pod
+# image is `postgres:16-alpine` so `psql` is in PATH; password comes
+# from the same superuser Secret the StatefulSet's `env_from` uses.
+# `IF NOT EXISTS` keeps the Job idempotent across restarts; there's
+# no spec change after the first successful apply unless the extension
+# list itself changes.
+resource "kubernetes_job_v1" "pg_extensions" {
+  for_each = local.instances
+
+  metadata {
+    name      = "postgres-pg-extensions"
+    namespace = var.namespace
+    labels    = { app = "postgres" }
+  }
+
+  spec {
+    backoff_limit              = 6
+    ttl_seconds_after_finished = 300
+
+    template {
+      metadata {
+        labels = { app = "postgres", job = "pg-extensions" }
+      }
+
+      spec {
+        restart_policy = "OnFailure"
+
+        container {
+          name  = "psql"
+          image = "postgres:16-alpine"
+
+          # `psql` reads `PGPASSWORD`, not `POSTGRES_PASSWORD` (which is
+          # what the Postgres image's docker-entrypoint.sh consumes).
+          # Pull the same Secret value out into the right env name.
+          env {
+            name = "PGPASSWORD"
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret_v1.superuser["enabled"].metadata[0].name
+                key  = "POSTGRES_PASSWORD"
+              }
+            }
+          }
+
+          env {
+            name  = "PGHOST"
+            value = "postgres.${var.namespace}.svc.cluster.local"
+          }
+          env {
+            name  = "PGUSER"
+            value = "postgres"
+          }
+          env {
+            name  = "PGDATABASE"
+            value = "postgres"
+          }
+
+          command = ["sh", "-c"]
+          args = [
+            "until pg_isready -h \"$PGHOST\" -U \"$PGUSER\"; do sleep 2; done; psql -v ON_ERROR_STOP=1 -c 'CREATE EXTENSION IF NOT EXISTS pg_stat_statements;'",
+          ]
+
+          resources {
+            requests = { cpu = "10m", memory = "32Mi" }
+            limits   = { cpu = "100m", memory = "64Mi" }
+          }
+        }
+      }
+    }
+
+  }
+
+  wait_for_completion = true
+  timeouts {
+    create = "3m"
+    update = "3m"
+  }
+
+  depends_on = [kubernetes_stateful_set_v1.postgres]
+}
 
 resource "kubernetes_service_v1" "postgres" {
   for_each = local.instances
