@@ -23,7 +23,9 @@ provider "kubectl" {
 }
 
 provider "helm" {
-  kubernetes {
+  # v3 schema: `kubernetes` is a nested attribute (`= {}`), not a
+  # block. Same `config_path` semantics flow through.
+  kubernetes = {
     config_path = module.k8s.kubeconfig_path
   }
 }
