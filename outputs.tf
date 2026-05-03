@@ -145,6 +145,21 @@ output "stalwart_account_url" {
   sensitive   = true
 }
 
+output "vault" {
+  description = "Vault community platform secrets store — public hostname, in-cluster Service, root token, and unseal key. Phase 0 outputs: root token is the primary auth path until Phase 1 lands Zitadel JWT auth method; after that, root becomes break-glass only. Unseal key is consumed by the StatefulSet's postStart hook automatically — exposed here for manual recovery only."
+  value = {
+    hostname   = module.vault.hostname
+    url        = module.vault.url
+    namespace  = module.vault.namespace
+    service    = module.vault.service_name
+    port       = module.vault.port
+    root_token = module.vault.root_token
+    unseal_key = module.vault.unseal_key
+  }
+  sensitive = true
+}
+
+
 output "zitadel_pat" {
   description = "PAT for the Zitadel TF provider (machine user `tf-platform`, IAM_OWNER, far-future expiry). Lifted from the in-cluster `zitadel-tf-pat` Secret that the FIRSTINSTANCE-bootstrapped pat-broker sidecar populates. Empty when Zitadel is disabled OR the sidecar hasn't run yet (pre-bootstrap clean clone); populated after the first `./tf apply` brings Zitadel up. Fetch with `terraform output -raw zitadel_pat`, then paste into `.env` as `TF_VAR_zitadel_pat=...` so subsequent applies provision kind:app components."
   sensitive   = true
@@ -186,6 +201,18 @@ output "cheatsheet" {
 
     Stalwart recovery admin (bypasses OIDC; user `admin`):
       terraform output -raw stalwart_recovery_admin_password
+
+    Vault root token (Phase 0 primary login; break-glass after Phase 1).
+    The `./tf` wrapper writes its `Loading variables…` banner to stdout
+    so `terraform output -json … | jq` always trips on `Invalid numeric
+    literal`. Pull the value from the underlying Secret directly — no
+    wrapper, no jq, no parse errors:
+      kubectl -n platform get secret vault-bootstrap \
+        -o jsonpath='{.data.root-token}' | base64 -d
+
+    Vault URL (paste in browser, sign in with the token above):
+      https://${try(local.platform.services.vault.hostname, "<vault disabled>")}
+
 
     Mail — Roundcube webmail (Zitadel SSO; auto-provisions Stalwart UserAccount on first login):
       https://${try(local.mail.hostname, "<configure mail in a domain yaml>")}/

@@ -98,6 +98,24 @@ services:
   # add an `id: zitadel` route to your operator-domain yaml under
   # `config/domains/<your-domain>.yaml` (the matching `kind: external`
   # component already lives at `config/components/zitadel.yaml`).
+  # Vault community — platform secrets store. Phase 0 brings up the
+  # server with raft single-node storage, an init Job seeds the root
+  # token + unseal key into a `vault-bootstrap` k8s Secret, and the
+  # pod's postStart lifecycle hook auto-unseals on every restart.
+  # Phase 1 (deferred) wires Zitadel JWT auth method — UI gets a
+  # "Sign in with OIDC" button alongside the root-token fallback.
+  # Phase 2 introduces the Vault Secrets Operator + first migrated
+  # tenant secret (Traefik dashboard BasicAuth).
+  #
+  # No external store dep — Vault's bundled raft backend is the
+  # canonical k8s self-host pattern. hostPath PV at
+  # `<host_volume_path>/<namespace>/vault/data/` survives `./tf
+  # bootstrap-k3s` (losing this dir wipes the secret store entirely).
+  vault:
+    enabled: false
+    hostname: vault.example.com
+
+
   zitadel:
     enabled: false
     # Public hostname Zitadel issues OIDC tokens for. Must equal the
