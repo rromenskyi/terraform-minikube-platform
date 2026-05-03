@@ -118,3 +118,67 @@ module "zitadel" {
   node_selector = local.platform.services.zitadel.node_selector
   tolerations   = local.platform.services.zitadel.tolerations
 }
+
+# Default Login Policy reconciler.
+#
+# Zitadel's v4 FirstInstance steps schema dropped LoginPolicy — without
+# this resource the instance boots with Zitadel's built-in defaults
+# (registration ON, etc.) regardless of `services.zitadel.login_policy`
+# in `config/platform.yaml`. The native zitadel provider talks to the
+# kubectl-port-forward bypass started by `./tf` (see `provider "zitadel"`
+# config above), so what used to be a bash + curl null_resource inside
+# `modules/zitadel` becomes a direct provider call here.
+#
+# Two reasons to host this at root instead of inside `modules/zitadel`:
+#
+#   1. Sequencing. `module.oauth2_proxy` and `module.platform_dash_oidc`
+#      declare `depends_on = [module.zitadel]`. Terraform defers every
+#      data source inside a depends_on'd module to apply-time whenever
+#      the depended-on module has any pending changes. The `data
+#      "zitadel_orgs" "this"` lookups in those consumer modules then
+#      hand back `(known after apply)`, which propagates as a "must
+#      be replaced" diff on every downstream `zitadel_project` /
+#      `zitadel_application_oidc` / `zitadel_project_role` and rotates
+#      forward-auth + dash login on every apply that touches the policy.
+#
+#   2. The legacy `null_resource.default_login_policy` inside
+#      `modules/zitadel` is intentionally kept in place for now — even
+#      with `removed { destroy = false }` Terraform still treats the
+#      removal as a state-changing event in `module.zitadel`, which
+#      re-triggers the cascade above. Adding this provider-native
+#      resource here lets the cluster get a real `zitadel_default_login_policy`
+#      managed object without disturbing module state. The legacy
+#      bash/curl reconciler runs alongside; both PUT the same values
+#      from `services.zitadel.login_policy`, so the duplication is
+#      idempotent. A future cleanup pass can drop the null_resource
+#      via a coordinated `terraform state rm` + `git rm` once the
+#      depends_on chains in oauth2-proxy / platform-dash-oidc are
+#      reworked to not block on the whole module.
+resource "zitadel_default_login_policy" "main" {
+  count      = local.platform.services.zitadel.enabled ? 1 : 0
+  depends_on = [module.zitadel]
+
+  allow_register     = local.platform.services.zitadel.login_policy.allow_register
+  allow_external_idp = local.platform.services.zitadel.login_policy.allow_external_idp
+  # `user_login` is the v2 gRPC equivalent of the v1 REST
+  # `allowUsernamePassword` field — both gate the username+password
+  # form on the login page.
+  user_login               = local.platform.services.zitadel.login_policy.allow_username_password
+  passwordless_type        = "PASSWORDLESS_TYPE_ALLOWED"
+  ignore_unknown_usernames = true
+
+  password_check_lifetime       = "864000s"
+  external_login_check_lifetime = "864000s"
+  mfa_init_skip_lifetime        = "2592000s"
+  second_factor_check_lifetime  = "64800s"
+  multi_factor_check_lifetime   = "43200s"
+
+  force_mfa                = false
+  force_mfa_local_only     = false
+  hide_password_reset      = false
+  allow_domain_discovery   = false
+  disable_login_with_email = false
+  disable_login_with_phone = false
+
+  default_redirect_uri = ""
+}
