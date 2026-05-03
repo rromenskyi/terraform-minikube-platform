@@ -32,9 +32,15 @@ check "platform_dash_hostname_set" {
 # AUTH_ZITADEL_ISSUER / AUTH_ZITADEL_ID / AUTH_ZITADEL_SECRET /
 # AUTH_SECRET — the module's Deployment mounts it via env_from.
 module "platform_dash_oidc" {
-  source     = "./modules/zitadel-app"
-  count      = local.platform.services.platform_dash.enabled && local.platform.services.zitadel.enabled ? 1 : 0
-  depends_on = [module.zitadel, kubernetes_namespace_v1.platform]
+  source = "./modules/zitadel-app"
+  count  = local.platform.services.platform_dash.enabled && local.platform.services.zitadel.enabled ? 1 : 0
+  # `depends_on = [module.zitadel]` is intentionally absent. With
+  # `org_id` flowing in from `data.zitadel_orgs.platform_org` at root
+  # the module no longer queries Zitadel itself, so the module-level
+  # depends_on that previously deferred its data sources to apply-time
+  # (and cascaded "must be replaced" onto every downstream resource on
+  # any plan that touched module.zitadel) is no longer needed.
+  depends_on = [kubernetes_namespace_v1.platform]
 
   providers = {
     zitadel    = zitadel
@@ -42,6 +48,7 @@ module "platform_dash_oidc" {
     random     = random
   }
 
+  org_id       = local.platform.services.zitadel.enabled ? data.zitadel_orgs.platform_org[0].ids[0] : ""
   project_name = "platform-dash"
   app_name     = "platform-dash"
   issuer_url   = "https://${local.platform.services.zitadel.external_domain}"

@@ -8,10 +8,6 @@ terraform {
       source  = "gavinbunney/kubectl"
       version = "~> 1.14"
     }
-    null = {
-      source  = "hashicorp/null"
-      version = "~> 3.0"
-    }
     random = {
       source  = "hashicorp/random"
       version = "~> 3.0"
@@ -816,90 +812,13 @@ resource "kubernetes_config_map_v1" "steps" {
   }
 }
 
-# ── Default Login Policy reconciler ───────────────────────────────────────────
-#
-# v4 dropped LoginPolicy from FirstInstance steps schema, so seeding
-# the policy at bootstrap doesn't work — the instance comes up with
-# Zitadel's built-in defaults (registration ON). The official TF
-# provider's zitadel_default_login_policy resource WOULD be the right
-# answer, but it speaks gRPC over HTTP/2 and our cloudflared → Traefik
-# path is HTTP/1.1 by default — provider hits 403/HTML on every call
-# (zitadel/terraform-provider-zitadel#242). Until we wire end-to-end
-# h2c (separate PR), reconcile the policy via a TF-managed PUT to
-# /admin/v1/policies/login. PAT comes from the FIRSTINSTANCE-bootstrapped
-# `zitadel-tf-pat` Secret. Idempotent (PUT), re-runs whenever any of
-# the triggers change.
-
-resource "null_resource" "default_login_policy" {
-  for_each = local.instances
-
-  depends_on = [kubernetes_deployment_v1.zitadel]
-
-  triggers = {
-    allow_register          = tostring(var.login_policy.allow_register)
-    allow_external_idp      = tostring(var.login_policy.allow_external_idp)
-    allow_username_password = tostring(var.login_policy.allow_username_password)
-    external_domain         = var.external_domain
-    namespace               = var.namespace
-  }
-
-  provisioner "local-exec" {
-    interpreter = ["bash", "-c"]
-    environment = {
-      ALLOW_REGISTER  = self.triggers.allow_register
-      ALLOW_EXTERNAL  = self.triggers.allow_external_idp
-      ALLOW_USERPW    = self.triggers.allow_username_password
-      EXTERNAL_DOMAIN = self.triggers.external_domain
-      NAMESPACE       = self.triggers.namespace
-    }
-    command = <<-EOT
-      set -euo pipefail
-
-      # Wait up to ~3min for the FIRSTINSTANCE-bootstrapped PAT Secret.
-      # On a fresh apply the sidecar needs Zitadel main to boot before
-      # it can write the Secret, so kubectl get may miss it the first
-      # second or three.
-      PAT=""
-      for i in $(seq 1 90); do
-        PAT="$(kubectl get secret zitadel-tf-pat -n "$NAMESPACE" -o jsonpath='{.data.access_token}' 2>/dev/null | base64 -d || true)"
-        [[ -n "$PAT" ]] && break
-        sleep 2
-      done
-      if [[ -z "$PAT" ]]; then
-        echo "default_login_policy: zitadel-tf-pat Secret never appeared, giving up" >&2
-        exit 1
-      fi
-
-      # Wait for the issuer URL to actually answer (Zitadel migrations
-      # can take a minute on a fresh DB).
-      for i in $(seq 1 90); do
-        if curl -fsS -o /dev/null "https://$EXTERNAL_DOMAIN/.well-known/openid-configuration"; then
-          break
-        fi
-        sleep 2
-      done
-
-      # PUT the policy. Zitadel returns 400 with code 9 + body
-      # "Default Login Policy has not been changed" when the request
-      # matches current state — treat that as a successful no-op.
-      RESP=$(curl -sS -w "\n%%{http_code}" -X PUT \
-        -H "Authorization: Bearer $PAT" \
-        -H "Content-Type: application/json" \
-        -d "{\"allowRegister\":$ALLOW_REGISTER,\"allowExternalIdp\":$ALLOW_EXTERNAL,\"allowUsernamePassword\":$ALLOW_USERPW,\"passwordlessType\":\"PASSWORDLESS_TYPE_ALLOWED\",\"ignoreUnknownUsernames\":true,\"passwordCheckLifetime\":\"864000s\",\"externalLoginCheckLifetime\":\"864000s\",\"mfaInitSkipLifetime\":\"2592000s\",\"secondFactorCheckLifetime\":\"64800s\",\"multiFactorCheckLifetime\":\"43200s\",\"forceMfa\":false,\"forceMfaLocalOnly\":false,\"hidePasswordReset\":false,\"allowDomainDiscovery\":false,\"disableLoginWithEmail\":false,\"disableLoginWithPhone\":false}" \
-        "https://$EXTERNAL_DOMAIN/admin/v1/policies/login")
-      CODE=$(echo "$RESP" | tail -n1)
-      BODY=$(echo "$RESP" | head -n -1)
-      if [[ "$CODE" == "200" ]]; then
-        echo "default_login_policy: updated (allowRegister=$ALLOW_REGISTER allowExternalIdp=$ALLOW_EXTERNAL allowUsernamePassword=$ALLOW_USERPW)"
-      elif echo "$BODY" | grep -q "has not been changed"; then
-        echo "default_login_policy: already matches (allowRegister=$ALLOW_REGISTER allowExternalIdp=$ALLOW_EXTERNAL allowUsernamePassword=$ALLOW_USERPW)"
-      else
-        echo "default_login_policy: PUT failed with HTTP $CODE: $BODY" >&2
-        exit 1
-      fi
-    EOT
-  }
-}
+# Default Login Policy lives at root (`zitadel.tf`) as a native
+# `zitadel_default_login_policy` resource. The previous bash + curl
+# null_resource that lived here was kept around as a "this module
+# stays state-pure" workaround for the cascade described in the
+# root file's comment block — that workaround is no longer needed
+# now that consumer modules pass `org_id` in via input variables and
+# don't declare `depends_on = [module.zitadel]`.
 
 # ── PAT broker RBAC ───────────────────────────────────────────────────────────
 #

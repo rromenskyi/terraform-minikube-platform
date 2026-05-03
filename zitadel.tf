@@ -129,31 +129,20 @@ module "zitadel" {
 # config above), so what used to be a bash + curl null_resource inside
 # `modules/zitadel` becomes a direct provider call here.
 #
-# Two reasons to host this at root instead of inside `modules/zitadel`:
-#
-#   1. Sequencing. `module.oauth2_proxy` and `module.platform_dash_oidc`
-#      declare `depends_on = [module.zitadel]`. Terraform defers every
-#      data source inside a depends_on'd module to apply-time whenever
-#      the depended-on module has any pending changes. The `data
-#      "zitadel_orgs" "this"` lookups in those consumer modules then
-#      hand back `(known after apply)`, which propagates as a "must
-#      be replaced" diff on every downstream `zitadel_project` /
-#      `zitadel_application_oidc` / `zitadel_project_role` and rotates
-#      forward-auth + dash login on every apply that touches the policy.
-#
-#   2. The legacy `null_resource.default_login_policy` inside
-#      `modules/zitadel` is intentionally kept in place for now — even
-#      with `removed { destroy = false }` Terraform still treats the
-#      removal as a state-changing event in `module.zitadel`, which
-#      re-triggers the cascade above. Adding this provider-native
-#      resource here lets the cluster get a real `zitadel_default_login_policy`
-#      managed object without disturbing module state. The legacy
-#      bash/curl reconciler runs alongside; both PUT the same values
-#      from `services.zitadel.login_policy`, so the duplication is
-#      idempotent. A future cleanup pass can drop the null_resource
-#      via a coordinated `terraform state rm` + `git rm` once the
-#      depends_on chains in oauth2-proxy / platform-dash-oidc are
-#      reworked to not block on the whole module.
+# Hosted at root rather than inside `modules/zitadel` because consumer
+# modules used to declare `depends_on = [module.zitadel]` plus their own
+# `data "zitadel_orgs" "this"` lookup. Terraform defers data sources
+# inside a depends_on'd module to apply-time whenever the depended-on
+# module has any pending changes, which would propagate as
+# `(known after apply)` on `org_id` and force "must be replaced" on
+# every downstream `zitadel_project` / `zitadel_application_oidc` /
+# `zitadel_project_role` (and rotate forward-auth + dash login + the
+# Stalwart OIDC chain on every apply that touched the policy). The
+# accompanying refactor in this same change moves `data "zitadel_orgs"`
+# to root and threads `org_id` into oauth2-proxy / zitadel-app via
+# input variables, dropping the module-level depends_on entirely. The
+# data-source-defer condition can no longer fire, so this resource
+# lives at the level that owns the lookup.
 resource "zitadel_default_login_policy" "main" {
   count      = local.platform.services.zitadel.enabled ? 1 : 0
   depends_on = [module.zitadel]

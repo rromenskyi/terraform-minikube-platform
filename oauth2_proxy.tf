@@ -31,12 +31,19 @@ locals {
 }
 
 module "oauth2_proxy" {
-  source     = "./modules/oauth2-proxy"
-  depends_on = [module.addons, module.zitadel]
+  source = "./modules/oauth2-proxy"
+  # `module.zitadel` is no longer in depends_on. With `zitadel_org_id`
+  # flowing in from the root-owned `data.zitadel_orgs.platform_org`,
+  # the module no longer reads Zitadel itself, so the module-level
+  # depends_on that previously deferred its data sources to apply-time
+  # (and cascaded "must be replaced" onto every downstream resource on
+  # any plan that touched module.zitadel) is no longer needed.
+  depends_on = [module.addons]
 
   enabled                        = local.platform.services.zitadel.enabled
   namespace                      = "ingress-controller"
   zitadel_provider_authenticated = var.zitadel_pat != ""
+  zitadel_org_id                 = local.platform.services.zitadel.enabled ? data.zitadel_orgs.platform_org[0].ids[0] : ""
 
   issuer_url    = local.platform.services.zitadel.enabled ? "https://${local.platform.services.zitadel.external_domain}" : ""
   auth_hostname = local._oauth2_parent_domain == "" ? "" : "auth.${local._oauth2_parent_domain}"
