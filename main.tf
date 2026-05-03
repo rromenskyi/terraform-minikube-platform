@@ -147,4 +147,13 @@ module "project" {
   # off — the project-level check rejects `auth: zitadel` on any
   # component before the IngressRoute generation is reached.
   oauth2_proxy_middlewares = module.oauth2_proxy.middleware_refs
+
+  # Platform-wide `errors` middleware (root-owned) that swaps
+  # Traefik's default `no available server` body for the branded
+  # fallback page on 502/503/504. Appended to every tenant
+  # IngressRoute's middleware chain.
+  fallback_errors_middleware = {
+    name      = "traefik-fallback-errors"
+    namespace = "ingress-controller"
+  }
 }

@@ -121,6 +121,15 @@ variable "oauth2_proxy_middlewares" {
   default = null
 }
 
+variable "fallback_errors_middleware" {
+  description = "Cross-namespace Traefik `errors` Middleware ref appended to every IngressRoute's middleware chain. Replaces Traefik's default `no available server` body for 502/503/504 with the platform's branded fallback page when an IngressRoute's backend has zero ready endpoints (pod restart, deploy mid-roll, eviction). Null skips the wiring — useful when the fallback isn't deployed yet."
+  type = object({
+    name      = string
+    namespace = string
+  })
+  default = null
+}
+
 variable "volume_base_path" {
   description = "Parent path used verbatim by hostPath PersistentVolumes for every component in this project. Must resolve to a real writable directory from the kubelet's point of view. Forwarded unchanged to modules/component."
   type        = string
@@ -1069,19 +1078,26 @@ resource "kubectl_manifest" "ingressroute" {
             kind     = "Rule"
             services = [local.ir_service_refs[each.key]]
           },
-          # Compose the middleware list from two opt-in sources:
-          # `basic_auth: true` (per-component, in-namespace middleware)
-          # and `auth: zitadel` (cross-namespace forward-auth → oauth2-
-          # proxy in `ingress-controller`). They can stack in principle,
-          # though the typical case is one or the other.
+          # Compose the middleware list from three sources:
+          #   - `basic_auth: true` (per-component, in-namespace middleware)
+          #   - `auth: zitadel` (cross-namespace forward-auth → oauth2-
+          #     proxy in `ingress-controller`)
+          #   - the platform-wide `errors` middleware that swaps
+          #     Traefik's default `no available server` body for the
+          #     branded fallback page when an IngressRoute's backend
+          #     has zero ready endpoints. Always last in the chain so
+          #     it only fires for upstream errors after auth has run.
+          # Order matters — Traefik applies middlewares head-first.
           length(concat(
             contains(keys(local.basic_auth_components), each.key) ? [{ name = "${each.key}-basic-auth" }] : [],
             contains(keys(local.zitadel_auth_components), each.key) ? var.oauth2_proxy_middlewares : [],
+            var.fallback_errors_middleware == null ? [] : [var.fallback_errors_middleware],
           )) > 0
           ? {
             middlewares = concat(
               contains(keys(local.basic_auth_components), each.key) ? [{ name = "${each.key}-basic-auth" }] : [],
               contains(keys(local.zitadel_auth_components), each.key) ? var.oauth2_proxy_middlewares : [],
+              var.fallback_errors_middleware == null ? [] : [var.fallback_errors_middleware],
             )
           }
           : {}
