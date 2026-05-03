@@ -54,6 +54,9 @@ locals {
         node_selector = {}
         tolerations   = []
       }
+      kured = {
+        enabled = false
+      }
       zitadel = {
         enabled              = false
         external_domain      = ""
@@ -114,6 +117,7 @@ locals {
       zitadel       = merge(local._platform_defaults.services.zitadel, try(local._platform_services.zitadel, {}))
       vault         = merge(local._platform_defaults.services.vault, try(local._platform_services.vault, {}))
       argocd        = merge(local._platform_defaults.services.argocd, try(local._platform_services.argocd, {}))
+      kured         = merge(local._platform_defaults.services.kured, try(local._platform_services.kured, {}))
       platform_dash = merge(local._platform_defaults.services.platform_dash, try(local._platform_services.platform_dash, {}))
     }
   }
