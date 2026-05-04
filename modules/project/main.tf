@@ -160,9 +160,16 @@ variable "shared_services" {
 }
 
 variable "secrets" {
-  description = "Per-env `secrets:` map from the domain yaml — operator-defined random-value Secrets emitted in the project namespace. Each entry: `keys` (list of data-key names — every listed key receives the same random value, lets a chart's `envFrom` pull every variable from one Secret), `length` (optional, default 48). Use when an Argo CD-managed chart's `existingSecret` references an operator-named Secret that platform engine should pre-create with a random value the chart consumes via env. Engine creates `kubernetes_secret_v1` per entry; rotation = `tf taint random_password.<...>` + apply."
+  description = "Per-env `secrets:` map from the domain yaml — operator-defined Secrets emitted in the project namespace. Each entry: `keys` (list of data-key names), `length` (optional, default 48; ignored in literal mode). Two modes per entry, picked by whether the same name is also a key in `var.operator_secret_values`: (1) random-shared — every listed key receives the SAME random value, lets a chart's `envFrom` pull every variable from one Secret, fits app-key style use cases; (2) literal — engine reads values from `var.operator_secret_values[<name>]`, every yaml-listed key MUST be present there or plan-time check fails, fits operator-supplied credentials (third-party storage, OIDC client, vendor API keys) the engine cannot synthesize. Rotation: random mode → `tf taint random_password.<…>` + apply; literal mode → edit the value in `terraform.tfvars` + apply."
   type        = any
   default     = {}
+}
+
+variable "operator_secret_values" {
+  description = "Literal data values, keyed by `secrets:<name>`, for entries declared under `var.secrets`. Top-level key matches the Secret name; inner map carries `<data-key>` => `<literal value>`. Presence here switches the matching `var.secrets` entry into literal mode (random shared value path skipped). Plumbed unchanged from the root `var.operator_secret_values` — module filters per-project by entry name. Empty map = every project Secret stays in random-shared mode."
+  type        = map(map(string))
+  default     = {}
+  sensitive   = true
 }
 
 # ── Locals ────────────────────────────────────────────────────────────────────
@@ -862,20 +869,41 @@ resource "kubernetes_secret_v1" "ollama_endpoint" {
 
 # ── Operator-defined Secrets (per-env `secrets:` block) ───────────────────────
 #
-# Generic Secret-emission machinery: operator declares a map of
-# `<secret-name>` → `{ keys: [...], length: 48 }` in the domain
-# yaml's per-env block; engine generates one random value per
-# entry and emits a `kubernetes_secret_v1` in the project
-# namespace with every listed `keys` populated by that same
-# random value. Lets an Argo CD-managed chart's `existingSecret`
-# pin reference an operator-named Secret that platform pre-creates
-# without involving any per-app TF code.
+# Two modes per entry, picked by whether the same name shows up as a
+# top-level key in `var.operator_secret_values`:
 #
-# Same value across keys is intentional — most charts that emit
-# multi-key Secrets (chart proxy + chart server pulling from the
-# same Secret via different env-var names) want one shared secret
-# bytes. If an operator needs different randoms per key, declare
-# multiple top-level entries.
+#   1. Random shared (default — `var.operator_secret_values[<name>]`
+#      not set). Engine generates ONE `random_password` per entry
+#      and writes it to every listed key. Fits app-key style use
+#      cases where a chart's `envFrom` exposes the same shared
+#      bytes under multiple env names.
+#
+#   2. Literal (`var.operator_secret_values[<name>]` present). Engine
+#      writes the supplied k:v map straight into the Secret's data.
+#      Plan-time check below rejects partial coverage so a forgotten
+#      key surfaces before apply, not at first pod boot. Fits
+#      operator-supplied credentials the engine cannot synthesize:
+#      third-party storage / OIDC client / vendor API keys.
+#
+# `random_password.operator_secret` is generated for every entry
+# regardless of mode — cheap, kept in state, and lets an operator
+# flip an entry from literal to random by deleting its
+# `var.operator_secret_values` key without re-planning the random.
+
+check "operator_secret_values_cover_yaml_keys" {
+  assert {
+    condition = alltrue([
+      for name, vals in var.operator_secret_values :
+      !contains(keys(var.secrets), name)
+      || alltrue([
+        for k in try(var.secrets[name].keys, []) :
+        contains(keys(vals), k)
+      ])
+    ])
+    error_message = "var.operator_secret_values supplies an entry whose inner map is missing a key declared under `secrets.<name>.keys` in the domain yaml. Project '${local.namespace}'. Each literal-mode Secret must cover every yaml-listed key. Add the missing key to terraform.tfvars or remove it from the domain yaml."
+  }
+}
+
 resource "random_password" "operator_secret" {
   for_each = var.secrets
 
@@ -895,10 +923,17 @@ resource "kubernetes_secret_v1" "operator_secret" {
     }
   }
 
-  data = {
-    for k in try(each.value.keys, []) :
-    k => random_password.operator_secret[each.key].result
-  }
+  data = (
+    contains(keys(var.operator_secret_values), each.key)
+    ? {
+      for k in try(each.value.keys, []) :
+      k => var.operator_secret_values[each.key][k]
+    }
+    : {
+      for k in try(each.value.keys, []) :
+      k => random_password.operator_secret[each.key].result
+    }
+  )
 }
 
 # ── Zitadel auto-provisioning for `kind: app` components ─────────────────────

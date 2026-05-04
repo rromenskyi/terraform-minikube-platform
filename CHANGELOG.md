@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- New root variable `operator_secret_values` (sensitive `map(map(string))`) carries operator-supplied literal data for entries declared under a project's `secrets:` map in the domain yaml. When a `secrets:<name>` entry's name appears as a key in `operator_secret_values`, the engine writes the supplied k:v straight into the resulting `kubernetes_secret_v1`. When the name is absent, the existing random-shared behavior continues unchanged. Plan-time check rejects partial coverage (every yaml-listed `secrets.<name>.keys` must be present in the inner map). Fits credentials the engine cannot synthesize — third-party storage credentials, OIDC client secrets, vendor API keys — without leaving them committed in plain text or kubectl-create'd outside Terraform.
+
 ### Changed
 - **BREAKING** `modules/project` input renamed `argocd_bootstrap` (single object) → `argocd_bootstraps` (map of objects keyed by short name). Engine emits one root Application per entry as `<namespace>-<key>-bootstrap`; AppProject `sourceRepos` aggregates every entry's `repo_url` so sub-Applications cross-referencing peer repos pass the allowlist. Domain-yaml input renamed under `envs.<env>.argocd_bootstrap:` → `envs.<env>.argocd_bootstraps:`. **Migration:** wrap the old singular block as a map under any key — the key becomes the Application-name suffix, so the first apply destroys the legacy `<ns>-bootstrap` and re-creates `<ns>-<key>-bootstrap`. Apply requires operator OK because the bootstrap Application is destroy-replaced; sub-Applications themselves keep their own names and re-attach automatically once the new bootstrap App syncs.
   ```yaml
