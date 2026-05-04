@@ -121,10 +121,27 @@ module "project" {
   source     = "./modules/project"
   depends_on = [module.addons, kubernetes_namespace_v1.platform, module.mysql, module.postgres, module.redis, module.ollama]
 
+  providers = {
+    kubernetes = kubernetes
+    kubectl    = kubectl
+    random     = random
+    zitadel    = zitadel
+  }
+
   project_config   = each.value
   components       = local.components
   default_limits   = local.default_limits
   volume_base_path = var.host_volume_path
+
+  # Argo CD wiring — the project module emits an AppProject + bootstrap
+  # Application when `argocd_bootstrap:` is declared in the domain yaml,
+  # plus DNS+tunnel records per `argocd_hostnames:` entry. All three
+  # propagate from the per-env block in the domain yaml; null/empty
+  # values short-circuit the resources.
+  argocd_namespace = local.platform.services.argocd.enabled ? local.platform.services.argocd.namespace : ""
+  argocd_hostnames = try(each.value.argocd_hostnames, {})
+  argocd_bootstrap = try(each.value.argocd_bootstrap, null)
+  shared_services  = try(each.value.shared_services, {})
 
   # Shared-service endpoints. Each module's outputs collapse to null
   # when its own `enabled` flag is off, so the preconditions in

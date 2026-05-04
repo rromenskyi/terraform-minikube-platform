@@ -135,6 +135,30 @@ variable "volume_base_path" {
   type        = string
 }
 
+variable "argocd_namespace" {
+  description = "Namespace where the Argo CD chart is installed. Argo CD AppProject + bootstrap Application CRDs land here when this project's domain yaml declares an `argocd_bootstrap:` block. Empty disables Argo CD wiring entirely in this project (caller fails the precondition below if anything Argo-related is declared)."
+  type        = string
+  default     = ""
+}
+
+variable "argocd_hostnames" {
+  description = "Map of Argo-managed hostnames declared under `envs.<env>.argocd_hostnames:` in the domain yaml. Keyed by host prefix (resolves to `<prefix>.<domain>`); value carries `cf_tunnel` (bool, default true — emit a Cloudflare Tunnel ingress rule routing the hostname through cloudflared → Traefik) and optional `node_ip` (string, required when `cf_tunnel = false` — TF emits an unproxied A record pointing at the node's real public IP, bypassing Cloudflare entirely). The IngressRoute itself for these hostnames is owned by the operator's deploy repo via Argo CD — TF only plumbs DNS + tunnel rule. Consumed by the root `cloudflare.tf` / `cloudflared.tf` for hostname registration."
+  type        = any
+  default     = {}
+}
+
+variable "argocd_bootstrap" {
+  description = "Optional `argocd_bootstrap:` block declared under `envs.<env>:` in the domain yaml. Carries `repo_url`, `path`, `target_revision`, and optional `repo_ssh_key_id` (looked up in the root `argocd_repo_ssh_keys` map). When set, TF emits one root Application in the Argo CD namespace pointing at this repo+path; sub-Application manifests living there are recursively synced by Argo CD (App-of-Apps pattern). Application + workload manifests are operator-owned; TF only stands up the bootstrap entrypoint + the AppProject scoping it. Null disables Argo CD wiring for this project/env."
+  type        = any
+  default     = null
+}
+
+variable "shared_services" {
+  description = "Per-env `shared_services:` map from the domain yaml — flags telling the engine to provision per-namespace shared-service credentials (Postgres DB + role + Secret, Redis ACL user + Secret, Ollama Service URL Secret) WITHOUT requiring a `kind: deployment/app` component to opt in. Use for Argo CD-managed apps whose pods aren't TF-emitted but still need platform-shared backing services. Keys: `db` / `postgres` / `redis` / `ollama` (bool, default false). Provisioned credentials end up in standard Secret names the chart can consume via `envFrom` — `db-credentials`, `postgres-credentials`, `redis-credentials`, `ollama-endpoint`."
+  type        = any
+  default     = {}
+}
+
 # ── Locals ────────────────────────────────────────────────────────────────────
 
 locals {
@@ -324,19 +348,19 @@ locals {
 
   needs_db = anytrue([
     for _, c in local.normalized_components : try(c.db, false)
-  ])
+  ]) || try(var.shared_services.db, false)
 
   needs_postgres = anytrue([
     for _, c in local.normalized_components : try(c.postgres, false)
-  ])
+  ]) || try(var.shared_services.postgres, false)
 
   needs_redis = anytrue([
     for _, c in local.normalized_components : try(c.redis, false)
-  ])
+  ]) || try(var.shared_services.redis, false)
 
   needs_ollama = anytrue([
     for _, c in local.normalized_components : try(c.ollama, false)
-  ])
+  ]) || try(var.shared_services.ollama, false)
 
   db_name = replace(local.namespace, "-", "_")
   db_user = replace(local.namespace, "-", "_")
@@ -820,8 +844,8 @@ resource "kubernetes_secret_v1" "ollama_endpoint" {
 # Project name defaults to the component name (v1: one project per
 # app); roles default to `[platform_admin, tenant_admin, user]` so a
 # bare `oidc.enabled: true` already buys a usable role tree. Override
-# both via the component yaml — see config/components/sipmesh-frontend.yaml
-# for the worked shape.
+# both via the component yaml — see any `kind: app` example for the
+# worked shape.
 
 check "zitadel_issuer_set_when_app_oidc_used" {
   assert {
@@ -1059,6 +1083,164 @@ resource "kubernetes_secret_v1" "env_random" {
   }
 }
 
+# ── ArgoCD wiring (per project) ──────────────────────────────────────────────
+#
+# Two ways the project intersects with Argo CD:
+#
+#   1. `argocd_hostnames:` map in the domain yaml — hostnames the
+#      operator wants Argo CD-managed services reachable on. TF only
+#      plumbs DNS + (optional) Cloudflare Tunnel ingress rule. The
+#      IngressRoute itself + the Service it targets live in the
+#      operator's deploy repo (chart-rendered, Argo CD-applied).
+#
+#   2. `argocd_bootstrap:` block in the domain yaml — repo URL +
+#      path + branch the operator's deploy repo lives at. TF emits
+#      ONE root Application in the Argo CD namespace + an AppProject
+#      scoping every Application synced under it to this project's
+#      namespace. Sub-Applications and AppProject overrides land in
+#      the deploy repo itself, not here.
+#
+# When neither is declared, the project has zero Argo CD footprint.
+
+check "argocd_bootstrap_requires_argocd_ns" {
+  assert {
+    condition     = var.argocd_bootstrap == null || var.argocd_namespace != ""
+    error_message = "project '${local.namespace}' declares an `argocd_bootstrap:` block but `argocd_namespace` is empty. Enable `services.argocd.enabled = true` in `config/platform.yaml` and re-apply."
+  }
+}
+
+check "argocd_hostnames_node_ip_set_when_no_tunnel" {
+  assert {
+    condition = alltrue([
+      for _, h in var.argocd_hostnames :
+      try(h.cf_tunnel, true) || try(h.node_ip, "") != ""
+    ])
+    error_message = "every `argocd_hostnames` entry with `cf_tunnel: false` must set `node_ip:` to the node's real public IP — TF emits an unproxied A record there, bypassing the Cloudflare Tunnel. Project '${local.namespace}'."
+  }
+}
+
+# AppProject — RBAC scope. One per (project, env) when the project
+# has any Argo CD wiring (bootstrap declared OR argocd_hostnames
+# non-empty). Destinations pin strictly to this project's namespace;
+# sourceRepos pin to the bootstrap deploy repo (sub-Applications
+# inherit via `spec.project = <project-name>`). Cluster-scoped
+# resources are entirely denied — the platform owns CRDs, ClusterRoles,
+# Namespaces.
+resource "kubectl_manifest" "argocd_app_project" {
+  count = (var.argocd_bootstrap != null || length(var.argocd_hostnames) > 0) ? 1 : 0
+
+  yaml_body = yamlencode({
+    apiVersion = "argoproj.io/v1alpha1"
+    kind       = "AppProject"
+    metadata = {
+      name      = local.namespace
+      namespace = var.argocd_namespace
+      labels = {
+        "app.kubernetes.io/managed-by" = "terraform"
+        "platform.tenant"              = local.namespace
+      }
+    }
+    spec = {
+      description = "Auto-managed AppProject for TF project ${local.namespace}. Pins Application destinations to this namespace and source repos to the operator's deploy repo declared in `argocd_bootstrap:`."
+
+      sourceRepos = compact([
+        try(var.argocd_bootstrap.repo_url, ""),
+      ])
+
+      destinations = [
+        # Workload destination — every chart-rendered resource the
+        # sub-Applications spawn lands here.
+        {
+          server    = "https://kubernetes.default.svc"
+          namespace = local.namespace
+        },
+        # Argo CD's own namespace — App-of-Apps materialises sub-
+        # Application CRDs here. Without this entry the bootstrap
+        # Application fails its own destination check ("destination
+        # server ... and namespace 'argocd' do not match allowed
+        # destinations") and never even reaches sync.
+        {
+          server    = "https://kubernetes.default.svc"
+          namespace = var.argocd_namespace
+        },
+      ]
+
+      namespaceResourceWhitelist = [
+        { group = "*", kind = "*" },
+      ]
+      clusterResourceWhitelist = []
+    }
+  })
+}
+
+# Bootstrap Application — App-of-Apps root. Points at the operator's
+# deploy repo path; Argo CD recursively syncs every Application
+# manifest found there. Sub-Applications must declare
+# `spec.project: <project-name>` to land workloads (AppProject above
+# refuses anything else).
+resource "kubectl_manifest" "argocd_bootstrap" {
+  count = var.argocd_bootstrap == null ? 0 : 1
+
+  depends_on = [kubectl_manifest.argocd_app_project]
+
+  yaml_body = yamlencode({
+    apiVersion = "argoproj.io/v1alpha1"
+    kind       = "Application"
+    metadata = {
+      name      = "${local.namespace}-bootstrap"
+      namespace = var.argocd_namespace
+      finalizers = [
+        "resources-finalizer.argocd.argoproj.io",
+      ]
+      labels = {
+        "app.kubernetes.io/managed-by" = "terraform"
+        "platform.tenant"              = local.namespace
+        "platform.role"                = "bootstrap"
+      }
+    }
+    spec = {
+      project = local.namespace
+
+      source = {
+        repoURL        = var.argocd_bootstrap.repo_url
+        path           = try(var.argocd_bootstrap.path, ".")
+        targetRevision = try(var.argocd_bootstrap.target_revision, "HEAD")
+        # Bootstrap directory contains plain Application yaml manifests —
+        # no Helm rendering at the bootstrap layer. directory.recurse
+        # picks up nested folders so the operator can group apps
+        # however they like.
+        directory = {
+          recurse = true
+        }
+      }
+
+      destination = {
+        server    = "https://kubernetes.default.svc"
+        namespace = var.argocd_namespace
+      }
+
+      syncPolicy = {
+        automated = {
+          prune    = true
+          selfHeal = true
+        }
+        syncOptions = [
+          "CreateNamespace=false",
+          "ServerSideApply=true",
+        ]
+        retry = {
+          limit = 3
+          backoff = {
+            duration    = "30s"
+            factor      = 2
+            maxDuration = "5m"
+          }
+        }
+      }
+    }
+  })
+}
+
 # ── IngressRoutes ─────────────────────────────────────────────────────────────
 #
 # One IngressRoute per component, carrying every route that points at it.
@@ -1158,6 +1340,30 @@ output "hostnames" {
 
 output "components" {
   value = keys(local.normalized_components)
+}
+
+# Argo CD-managed hostnames for this project. Resolved per-prefix
+# against the project's domain. Each entry carries the cf_tunnel
+# toggle + (when toggle is false) the node_ip the operator wants the
+# A record pointing at. Consumed by the root `cloudflare.tf` to emit
+# either a tunnel-routed CNAME + ingress rule (cf_tunnel=true) or an
+# unproxied A record bypassing CF entirely (cf_tunnel=false).
+output "argocd_hostnames" {
+  value = {
+    for prefix, h in var.argocd_hostnames :
+    (prefix == "" ? local.domain : "${prefix}.${local.domain}") => {
+      cf_tunnel = try(h.cf_tunnel, true)
+      node_ip   = try(h.node_ip, "")
+      zone_id   = try(var.project_config.cloudflare_zone_id, null)
+      # Tunnel-routed argocd hostnames terminate at Traefik on the
+      # `web` entrypoint, identical to the legacy routes pipeline.
+      # Traefik then matches the Host header against an IngressRoute
+      # the operator's chart applies into the project namespace via
+      # Argo CD. The A-record path (cf_tunnel=false) ignores `service`
+      # — the consumer skips the tunnel rule entirely.
+      service = "http://traefik.ingress-controller.svc.cluster.local:80"
+    }
+  }
 }
 
 output "has_db" {
