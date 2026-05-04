@@ -159,6 +159,12 @@ variable "shared_services" {
   default     = {}
 }
 
+variable "secrets" {
+  description = "Per-env `secrets:` map from the domain yaml — operator-defined random-value Secrets emitted in the project namespace. Each entry: `keys` (list of data-key names — every listed key receives the same random value, lets a chart's `envFrom` pull every variable from one Secret), `length` (optional, default 48). Use when an Argo CD-managed chart's `existingSecret` references an operator-named Secret that platform engine should pre-create with a random value the chart consumes via env. Engine creates `kubernetes_secret_v1` per entry; rotation = `tf taint random_password.<...>` + apply."
+  type        = any
+  default     = {}
+}
+
 # ── Locals ────────────────────────────────────────────────────────────────────
 
 locals {
@@ -767,6 +773,22 @@ resource "kubernetes_job_v1" "redis_setup" {
               "\\>${random_password.redis[0].result}",
               "resetkeys",
               "~${local.redis_key_prefix}*",
+              # Reset + scope pub/sub channels to the same prefix.
+              # Default `resetchannels` denies every channel; without
+              # this the user holds `+@pubsub` commands but can't
+              # subscribe to anything (NOPERM at SUBSCRIBE time).
+              # Two patterns: `<ns>:*` covers the keyspace-style
+              # channel naming (e.g. `<ns>:notifications`); `<ns>::*`
+              # covers the double-colon namespace separator some
+              # apps use (e.g. `<ns>::dialog_actions`). Both whitelisted
+              # so either convention works without per-app schema.
+              "resetchannels",
+              # `&` is a literal Redis ACL channel-pattern prefix; in
+              # `sh -c` it's also the background-job operator. Escape
+              # so the shell passes `&pattern*` through verbatim
+              # instead of interpreting as `&` + glob.
+              "\\&${local.redis_key_prefix}*",
+              "\\&${local.namespace}::*",
               "+@all",
               "-@dangerous",
               # Object-cache plugins (WP redis-cache, Drupal Redis, …)
@@ -835,6 +857,47 @@ resource "kubernetes_secret_v1" "ollama_endpoint" {
     OLLAMA_HOST     = var.ollama_url
     OLLAMA_BASE_URL = var.ollama_url
     OLLAMA_API_BASE = var.ollama_url
+  }
+}
+
+# ── Operator-defined Secrets (per-env `secrets:` block) ───────────────────────
+#
+# Generic Secret-emission machinery: operator declares a map of
+# `<secret-name>` → `{ keys: [...], length: 48 }` in the domain
+# yaml's per-env block; engine generates one random value per
+# entry and emits a `kubernetes_secret_v1` in the project
+# namespace with every listed `keys` populated by that same
+# random value. Lets an Argo CD-managed chart's `existingSecret`
+# pin reference an operator-named Secret that platform pre-creates
+# without involving any per-app TF code.
+#
+# Same value across keys is intentional — most charts that emit
+# multi-key Secrets (chart proxy + chart server pulling from the
+# same Secret via different env-var names) want one shared secret
+# bytes. If an operator needs different randoms per key, declare
+# multiple top-level entries.
+resource "random_password" "operator_secret" {
+  for_each = var.secrets
+
+  length  = try(each.value.length, 48)
+  special = false
+}
+
+resource "kubernetes_secret_v1" "operator_secret" {
+  for_each = var.secrets
+
+  metadata {
+    name      = each.key
+    namespace = kubernetes_namespace_v1.this.metadata[0].name
+    labels = {
+      "app.kubernetes.io/managed-by" = "terraform"
+      "app.kubernetes.io/part-of"    = local.namespace
+    }
+  }
+
+  data = {
+    for k in try(each.value.keys, []) :
+    k => random_password.operator_secret[each.key].result
   }
 }
 
