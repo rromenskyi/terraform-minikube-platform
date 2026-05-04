@@ -180,7 +180,30 @@ locals {
           namespace          = "${var.namespace_prefix}${cfg.slug}-${env_name}"
           cloudflare_zone_id = try(cfg.cloudflare_zone_id, null)
           routes             = try(env_spec.routes, {})
-          limits             = try(env_spec.limits, cfg.limits, null)
+          # Argo CD-managed hostnames declared per-env. Keyed by host
+          # prefix (resolves to `<prefix>.<domain>`); each entry sets
+          # `cf_tunnel: bool` (default true) and optional `node_ip:` for
+          # the no-tunnel A-record path. TF only plumbs DNS + tunnel
+          # rule — IngressRoute / Service live in the operator's deploy
+          # repo, applied by Argo CD.
+          argocd_hostnames = try(env_spec.argocd_hostnames, {})
+          # Argo CD bootstrap App-of-Apps root for this env. When set,
+          # TF emits a single root Application + AppProject; sub-apps
+          # live in the deploy repo and reconcile through Argo CD.
+          # Null = no Argo CD bootstrap (project has no Argo footprint
+          # unless `argocd_hostnames` is set).
+          argocd_bootstrap = try(env_spec.argocd_bootstrap, null)
+          # Per-env shared-service provisioning flags. Same shape as
+          # the per-component `postgres: true` / `redis: true` /
+          # `ollama: true` knobs but applied at the project layer —
+          # engine emits per-namespace ACL credentials (Postgres role
+          # + DB, Redis ACL user, Ollama Service URL Secret) WITHOUT
+          # requiring a `kind: deployment/app` component to opt in.
+          # Use for Argo CD-managed workloads whose pods aren't
+          # TF-emitted but still need platform shared-service
+          # credentials in their namespace.
+          shared_services = try(env_spec.shared_services, {})
+          limits          = try(env_spec.limits, cfg.limits, null)
           # Optional per-project component overrides. Top-level keys here
           # win over the matching keys in `config/components/<name>.yaml`
           # via shallow merge — provide a full replacement value for any
