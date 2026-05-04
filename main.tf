@@ -147,6 +147,15 @@ module "project" {
   shared_services   = try(each.value.shared_services, {})
   secrets           = try(each.value.secrets, {})
 
+  # Operator-supplied literal data for entries declared in this
+  # project's `secrets:` map. When a `secrets:<name>` entry's name
+  # appears as a top-level key in `var.operator_secret_values`, the
+  # engine writes those literal values into the Secret instead of
+  # generating a random shared value. Plumbed at root level (one
+  # map shared across every project), filtered down per-project on
+  # the module side.
+  operator_secret_values = var.operator_secret_values
+
   # Shared-service endpoints. Each module's outputs collapse to null
   # when its own `enabled` flag is off, so the preconditions in
   # modules/project can reject any component that asks for a disabled
