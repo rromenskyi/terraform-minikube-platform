@@ -68,6 +68,26 @@ variable "host_volume_path" {
   default     = "/data/vol"
 }
 
+variable "operator_secret_values" {
+  description = <<-EOT
+    Operator-supplied literal values for entries declared under a project's
+    `secrets:` map in the domain yaml. Outer key matches a `secrets:` entry
+    name (e.g. an external-storage credentials Secret); inner map carries the
+    literal data the engine writes into the resulting `kubernetes_secret_v1`.
+    When an outer key is present here, every key listed under that entry's
+    `secrets.<name>.keys:` in the yaml MUST be present in the inner map —
+    plan-time check rejects partial coverage with a clear error. When an
+    outer key is absent, the engine falls back to the historical random-shared
+    behavior (one `random_password` shared across every listed key in the
+    yaml). Use this for credentials the engine cannot synthesize: third-party
+    storage / OIDC client / vendor API keys. Never commit values to the
+    public repo — the live `terraform.tfvars` is gitignored.
+  EOT
+  type        = map(map(string))
+  default     = {}
+  sensitive   = true
+}
+
 variable "zitadel_pat" {
   description = <<-EOT
     Personal Access Token for the Zitadel TF provider. One-time
