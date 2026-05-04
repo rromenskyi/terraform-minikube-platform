@@ -187,12 +187,16 @@ locals {
           # rule — IngressRoute / Service live in the operator's deploy
           # repo, applied by Argo CD.
           argocd_hostnames = try(env_spec.argocd_hostnames, {})
-          # Argo CD bootstrap App-of-Apps root for this env. When set,
-          # TF emits a single root Application + AppProject; sub-apps
-          # live in the deploy repo and reconcile through Argo CD.
-          # Null = no Argo CD bootstrap (project has no Argo footprint
-          # unless `argocd_hostnames` is set).
-          argocd_bootstrap = try(env_spec.argocd_bootstrap, null)
+          # Argo CD bootstrap App-of-Apps roots for this env, keyed by
+          # short name. Each entry → one root Application
+          # (`<ns>-<key>-bootstrap`) + sub-apps recursing under it.
+          # AppProject sourceRepos is the union across entries, so
+          # multi-repo sub-Applications cross-referencing peer repos
+          # pass the allowlist (e.g. a backend chart and a frontend
+          # chart living in separate repos but sharing one project
+          # namespace). Empty map = no Argo CD bootstrap (project
+          # has no Argo footprint unless `argocd_hostnames` is set).
+          argocd_bootstraps = try(env_spec.argocd_bootstraps, {})
           # Per-env shared-service provisioning flags. Same shape as
           # the per-component `postgres: true` / `redis: true` /
           # `ollama: true` knobs but applied at the project layer —

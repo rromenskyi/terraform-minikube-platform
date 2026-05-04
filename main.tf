@@ -133,16 +133,19 @@ module "project" {
   default_limits   = local.default_limits
   volume_base_path = var.host_volume_path
 
-  # Argo CD wiring — the project module emits an AppProject + bootstrap
-  # Application when `argocd_bootstrap:` is declared in the domain yaml,
-  # plus DNS+tunnel records per `argocd_hostnames:` entry. All three
-  # propagate from the per-env block in the domain yaml; null/empty
-  # values short-circuit the resources.
-  argocd_namespace = local.platform.services.argocd.enabled ? local.platform.services.argocd.namespace : ""
-  argocd_hostnames = try(each.value.argocd_hostnames, {})
-  argocd_bootstrap = try(each.value.argocd_bootstrap, null)
-  shared_services  = try(each.value.shared_services, {})
-  secrets          = try(each.value.secrets, {})
+  # Argo CD wiring — the project module emits an AppProject + one
+  # bootstrap Application per `argocd_bootstraps:` entry in the domain
+  # yaml, plus DNS+tunnel records per `argocd_hostnames:` entry. All
+  # three propagate from the per-env block in the domain yaml; empty
+  # values short-circuit the resources. Multi-entry bootstraps let
+  # multiple chart repos share one project namespace (e.g. a backend
+  # chart + a frontend chart deployed via separate Applications into
+  # the same `phost-…` namespace).
+  argocd_namespace  = local.platform.services.argocd.enabled ? local.platform.services.argocd.namespace : ""
+  argocd_hostnames  = try(each.value.argocd_hostnames, {})
+  argocd_bootstraps = try(each.value.argocd_bootstraps, {})
+  shared_services   = try(each.value.shared_services, {})
+  secrets           = try(each.value.secrets, {})
 
   # Shared-service endpoints. Each module's outputs collapse to null
   # when its own `enabled` flag is off, so the preconditions in
