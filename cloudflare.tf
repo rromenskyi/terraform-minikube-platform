@@ -10,6 +10,35 @@ locals {
   all_hostnames = merge([
     for _, proj in module.project : proj.hostnames
   ]...)
+
+  # Argo CD-managed hostnames pulled from `envs.<env>.argocd_hostnames`
+  # in each project's domain yaml. Two flavours:
+  #   - cf_tunnel=true: hostname routes through the existing Cloudflare
+  #     Tunnel + Traefik chain. Treat exactly like a legacy `routes:`
+  #     entry — emit a CNAME to the tunnel + a tunnel ingress rule
+  #     pointing at Traefik. The IngressRoute itself is owned by the
+  #     operator's deploy repo and applied via Argo CD.
+  #   - cf_tunnel=false: hostname binds directly to the node's real
+  #     public IP (`node_ip`). Emit an unproxied A record; do NOT add
+  #     a tunnel ingress rule. The cluster service must be reachable
+  #     on that IP independently (hostNetwork pod, NodePort, etc.).
+  all_argocd_hostnames = merge([
+    for _, proj in module.project : proj.argocd_hostnames
+  ]...)
+
+  # Subset routed through the tunnel — folded into the tunnel + CNAME
+  # generators below alongside legacy hostnames.
+  tunnel_argocd_hostnames = {
+    for host, h in local.all_argocd_hostnames :
+    host => h if h.cf_tunnel
+  }
+
+  # Subset bound directly to a node IP. Drives unproxied A records;
+  # NOT included in the tunnel ingress rules.
+  direct_argocd_hostnames = {
+    for host, h in local.all_argocd_hostnames :
+    host => h if !h.cf_tunnel
+  }
 }
 
 # ── Cloudflare Zero Trust Tunnel ─────────────────────────────────────────────
@@ -117,6 +146,18 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "main" {
           }
         }
       ],
+      # Argo CD-managed hostnames opted into the tunnel. Same shape
+      # as legacy entries above; backend always Traefik on `web`.
+      [
+        for hostname, cfg in local.tunnel_argocd_hostnames : {
+          hostname = hostname
+          service  = cfg.service
+          origin_request = {
+            origin_server_name = hostname
+            http2_origin       = false
+          }
+        }
+      ],
       # Catch-all (required by Cloudflare — must be the last entry,
       # match-anything by omitting `hostname`).
       [{
@@ -130,7 +171,8 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "main" {
 
 resource "cloudflare_dns_record" "tunnel" {
   for_each = {
-    for hostname, cfg in local.all_hostnames : hostname => cfg
+    for hostname, cfg in merge(local.all_hostnames, local.tunnel_argocd_hostnames) :
+    hostname => cfg
     if cfg.zone_id != null
   }
 
@@ -143,6 +185,26 @@ resource "cloudflare_dns_record" "tunnel" {
   type    = "CNAME"
   proxied = true
   ttl     = 1
+}
+
+# Direct A records for argocd_hostnames opted out of the tunnel
+# (`cf_tunnel: false`). Unproxied so DNS resolves to the literal
+# node IP — the operator's workload terminates the connection there
+# (hostNetwork pod / NodePort with the firewall opened up). No
+# Cloudflare features in front; raw exposure.
+resource "cloudflare_dns_record" "argocd_direct" {
+  for_each = {
+    for hostname, cfg in local.direct_argocd_hostnames :
+    hostname => cfg
+    if cfg.zone_id != null && cfg.node_ip != ""
+  }
+
+  zone_id = each.value.zone_id
+  name    = each.key
+  content = each.value.node_ip
+  type    = "A"
+  proxied = false
+  ttl     = 60
 }
 
 # ── Manual DNS records — declared per-domain in YAML ─────────────────────────
