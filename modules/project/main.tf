@@ -136,7 +136,7 @@ variable "volume_base_path" {
 }
 
 variable "argocd_namespace" {
-  description = "Namespace where the Argo CD chart is installed. Argo CD AppProject + bootstrap Application CRDs land here when this project's domain yaml declares an `argocd_bootstrap:` block. Empty disables Argo CD wiring entirely in this project (caller fails the precondition below if anything Argo-related is declared)."
+  description = "Namespace where the Argo CD chart is installed. Argo CD AppProject + bootstrap Application CRDs land here when this project's domain yaml declares any `argocd_bootstraps:` entries. Empty disables Argo CD wiring entirely in this project (caller fails the precondition below if anything Argo-related is declared)."
   type        = string
   default     = ""
 }
@@ -147,10 +147,10 @@ variable "argocd_hostnames" {
   default     = {}
 }
 
-variable "argocd_bootstrap" {
-  description = "Optional `argocd_bootstrap:` block declared under `envs.<env>:` in the domain yaml. Carries `repo_url`, `path`, `target_revision`, and optional `repo_ssh_key_id` (looked up in the root `argocd_repo_ssh_keys` map). When set, TF emits one root Application in the Argo CD namespace pointing at this repo+path; sub-Application manifests living there are recursively synced by Argo CD (App-of-Apps pattern). Application + workload manifests are operator-owned; TF only stands up the bootstrap entrypoint + the AppProject scoping it. Null disables Argo CD wiring for this project/env."
+variable "argocd_bootstraps" {
+  description = "Map of Argo CD bootstrap App-of-Apps roots declared under `envs.<env>.argocd_bootstraps:` in the domain yaml. Keyed by short name (engine emits `<namespace>-<key>-bootstrap` Application per entry). Each entry: `repo_url` (git remote URL — SSH form when `repo_ssh_key_id` is set), `path` (default `.`), `target_revision` (default `HEAD`), `repo_ssh_key_id` (optional — looked up in root `argocd_repo_ssh_keys` map). Sub-Applications under `path` are recursively synced by Argo CD; their `spec.project` must equal this project's namespace to clear the AppProject allowlist. AppProject `sourceRepos` aggregates every entry's `repo_url`, so sub-Applications cross-referencing peer repos pass the allowlist. Empty map disables Argo CD bootstrap (project still gets an AppProject when `argocd_hostnames` is non-empty)."
   type        = any
-  default     = null
+  default     = {}
 }
 
 variable "shared_services" {
@@ -1156,19 +1156,22 @@ resource "kubernetes_secret_v1" "env_random" {
 #      IngressRoute itself + the Service it targets live in the
 #      operator's deploy repo (chart-rendered, Argo CD-applied).
 #
-#   2. `argocd_bootstrap:` block in the domain yaml — repo URL +
-#      path + branch the operator's deploy repo lives at. TF emits
-#      ONE root Application in the Argo CD namespace + an AppProject
-#      scoping every Application synced under it to this project's
+#   2. `argocd_bootstraps:` map in the domain yaml — keyed by short
+#      name, each entry carries the repo URL + path + branch of one
+#      operator deploy repo. TF emits ONE root Application per entry
+#      (`<ns>-<key>-bootstrap`) plus a single AppProject scoping every
+#      Application synced under any of them to this project's
 #      namespace. Sub-Applications and AppProject overrides land in
-#      the deploy repo itself, not here.
+#      the deploy repos themselves, not here. Multi-entry use case:
+#      one chart per repo deployed into the same namespace (e.g.
+#      `sipmesh` + `sipmesh-frontend`).
 #
 # When neither is declared, the project has zero Argo CD footprint.
 
-check "argocd_bootstrap_requires_argocd_ns" {
+check "argocd_bootstraps_require_argocd_ns" {
   assert {
-    condition     = var.argocd_bootstrap == null || var.argocd_namespace != ""
-    error_message = "project '${local.namespace}' declares an `argocd_bootstrap:` block but `argocd_namespace` is empty. Enable `services.argocd.enabled = true` in `config/platform.yaml` and re-apply."
+    condition     = length(var.argocd_bootstraps) == 0 || var.argocd_namespace != ""
+    error_message = "project '${local.namespace}' declares `argocd_bootstraps:` entries but `argocd_namespace` is empty. Enable `services.argocd.enabled = true` in `config/platform.yaml` and re-apply."
   }
 }
 
@@ -1190,7 +1193,7 @@ check "argocd_hostnames_node_ip_set_when_no_tunnel" {
 # resources are entirely denied — the platform owns CRDs, ClusterRoles,
 # Namespaces.
 resource "kubectl_manifest" "argocd_app_project" {
-  count = (var.argocd_bootstrap != null || length(var.argocd_hostnames) > 0) ? 1 : 0
+  for_each = (length(var.argocd_bootstraps) > 0 || length(var.argocd_hostnames) > 0) ? toset(["enabled"]) : toset([])
 
   yaml_body = yamlencode({
     apiVersion = "argoproj.io/v1alpha1"
@@ -1204,11 +1207,11 @@ resource "kubectl_manifest" "argocd_app_project" {
       }
     }
     spec = {
-      description = "Auto-managed AppProject for TF project ${local.namespace}. Pins Application destinations to this namespace and source repos to the operator's deploy repo declared in `argocd_bootstrap:`."
+      description = "Auto-managed AppProject for TF project ${local.namespace}. Pins Application destinations to this namespace and source repos to every operator deploy repo declared under `argocd_bootstraps:`."
 
-      sourceRepos = compact([
-        try(var.argocd_bootstrap.repo_url, ""),
-      ])
+      sourceRepos = distinct(compact([
+        for _, b in var.argocd_bootstraps : try(b.repo_url, "")
+      ]))
 
       destinations = [
         # Workload destination — every chart-rendered resource the
@@ -1242,7 +1245,7 @@ resource "kubectl_manifest" "argocd_app_project" {
 # `spec.project: <project-name>` to land workloads (AppProject above
 # refuses anything else).
 resource "kubectl_manifest" "argocd_bootstrap" {
-  count = var.argocd_bootstrap == null ? 0 : 1
+  for_each = var.argocd_bootstraps
 
   depends_on = [kubectl_manifest.argocd_app_project]
 
@@ -1250,7 +1253,7 @@ resource "kubectl_manifest" "argocd_bootstrap" {
     apiVersion = "argoproj.io/v1alpha1"
     kind       = "Application"
     metadata = {
-      name      = "${local.namespace}-bootstrap"
+      name      = "${local.namespace}-${each.key}-bootstrap"
       namespace = var.argocd_namespace
       finalizers = [
         "resources-finalizer.argocd.argoproj.io",
@@ -1259,15 +1262,16 @@ resource "kubectl_manifest" "argocd_bootstrap" {
         "app.kubernetes.io/managed-by" = "terraform"
         "platform.tenant"              = local.namespace
         "platform.role"                = "bootstrap"
+        "platform.bootstrap.key"       = each.key
       }
     }
     spec = {
       project = local.namespace
 
       source = {
-        repoURL        = var.argocd_bootstrap.repo_url
-        path           = try(var.argocd_bootstrap.path, ".")
-        targetRevision = try(var.argocd_bootstrap.target_revision, "HEAD")
+        repoURL        = each.value.repo_url
+        path           = try(each.value.path, ".")
+        targetRevision = try(each.value.target_revision, "HEAD")
         # Bootstrap directory contains plain Application yaml manifests —
         # no Helm rendering at the bootstrap layer. directory.recurse
         # picks up nested folders so the operator can group apps
