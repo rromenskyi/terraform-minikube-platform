@@ -142,6 +142,7 @@ module "project" {
   argocd_hostnames = try(each.value.argocd_hostnames, {})
   argocd_bootstrap = try(each.value.argocd_bootstrap, null)
   shared_services  = try(each.value.shared_services, {})
+  secrets          = try(each.value.secrets, {})
 
   # Shared-service endpoints. Each module's outputs collapse to null
   # when its own `enabled` flag is off, so the preconditions in
