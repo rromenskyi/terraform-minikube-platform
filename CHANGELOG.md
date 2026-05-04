@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **BREAKING** `modules/project` input renamed `argocd_bootstrap` (single object) → `argocd_bootstraps` (map of objects keyed by short name). Engine emits one root Application per entry as `<namespace>-<key>-bootstrap`; AppProject `sourceRepos` aggregates every entry's `repo_url` so sub-Applications cross-referencing peer repos pass the allowlist. Domain-yaml input renamed under `envs.<env>.argocd_bootstrap:` → `envs.<env>.argocd_bootstraps:`. **Migration:** wrap the old singular block as a map under any key — the key becomes the Application-name suffix, so the first apply destroys the legacy `<ns>-bootstrap` and re-creates `<ns>-<key>-bootstrap`. Apply requires operator OK because the bootstrap Application is destroy-replaced; sub-Applications themselves keep their own names and re-attach automatically once the new bootstrap App syncs.
+  ```yaml
+  # before
+  argocd_bootstrap:
+    repo_url: git@github.com:org/deploy.git
+    path: deploy/argocd/apps
+    target_revision: main
+    repo_ssh_key_id: deploy
+
+  # after
+  argocd_bootstraps:
+    deploy:                                # any key — becomes the Application name suffix
+      repo_url: git@github.com:org/deploy.git
+      path: deploy/argocd/apps
+      target_revision: main
+      repo_ssh_key_id: deploy
+  ```
+
+### Added
+- Multiple `argocd_bootstraps:` entries per project/env are now supported — primary use case is a single project namespace served by independent chart repos (e.g. a backend chart at `git@github.com:org/backend.git` and a frontend chart at `git@github.com:org/frontend.git`, both deploying into the same `phost-…` namespace with their own `deploy/argocd/apps/application-<env>.yaml`). One AppProject still scopes the entire namespace; its `sourceRepos` list is the union of every entry's `repo_url`.
+
 ### Fixed
 - `modules/redis` and `modules/project` switch Redis from `--requirepass` to `--aclfile /data/users.acl` so per-tenant ACL users survive `redis-0` restarts. Pre-fix every tenant lost its Redis login on the next pod bounce because `ACL SETUSER` only persisted in memory; now the tenant setup Job runs `ACL SAVE` after each `SETUSER`, and a `seed-users-acl` initContainer in the Redis StatefulSet writes the `default` user line on first boot from `$REDIS_PASSWORD` so the platform-root password keeps working too. `requirepass` and `aclfile` are mutually exclusive in Redis (server refuses to start with both); the migration is invisible from a fresh-volume bootstrap and self-heals on first restart for existing volumes (initContainer sees missing/empty `users.acl` and seeds it; tenant Jobs re-apply `SETUSER` + `SAVE`)
 
