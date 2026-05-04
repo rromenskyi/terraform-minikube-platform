@@ -203,7 +203,17 @@ locals {
           # TF-emitted but still need platform shared-service
           # credentials in their namespace.
           shared_services = try(env_spec.shared_services, {})
-          limits          = try(env_spec.limits, cfg.limits, null)
+          # Generic operator-defined Secrets — engine emits a
+          # `kubernetes_secret_v1` per entry in the project namespace.
+          # Use for app-specific shared-secrets (e.g. an apikey a
+          # chart's `existingSecret` references). Each entry's `keys`
+          # list defines data keys; a single random_password per
+          # entry seeds the value across every key. Sharing one
+          # value across keys lets an operator point a chart's
+          # multi-env-var Secret consumer at one Secret without
+          # rotating multiple downstream registrations.
+          secrets = try(env_spec.secrets, {})
+          limits  = try(env_spec.limits, cfg.limits, null)
           # Optional per-project component overrides. Top-level keys here
           # win over the matching keys in `config/components/<name>.yaml`
           # via shallow merge — provide a full replacement value for any
