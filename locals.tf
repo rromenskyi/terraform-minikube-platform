@@ -192,10 +192,10 @@ locals {
           # (`<ns>-<key>-bootstrap`) + sub-apps recursing under it.
           # AppProject sourceRepos is the union across entries, so
           # multi-repo sub-Applications cross-referencing peer repos
-          # pass the allowlist (e.g. `sipmesh` + `sipmesh-frontend`
-          # both deploying into the same project namespace). Empty
-          # map = no Argo CD bootstrap (project has no Argo footprint
-          # unless `argocd_hostnames` is set).
+          # pass the allowlist (e.g. a backend chart and a frontend
+          # chart living in separate repos but sharing one project
+          # namespace). Empty map = no Argo CD bootstrap (project
+          # has no Argo footprint unless `argocd_hostnames` is set).
           argocd_bootstraps = try(env_spec.argocd_bootstraps, {})
           # Per-env shared-service provisioning flags. Same shape as
           # the per-component `postgres: true` / `redis: true` /

@@ -18,26 +18,25 @@
 # the maps are separate so an operator can scope keys narrowly.
 
 variable "argocd_repo_ssh_keys" {
-  description = "Operator-supplied map of `<id>` => SSH private key (PEM string). Components reference an entry by `repo_ssh_key_id:` in the domain yaml's `argocd_bootstrap:` block. Empty map = no private repo support; bootstrap repo must be public. NOT marked sensitive at the variable level so `for_each` over keys works; the rendered Secret's `data` block is sensitive in state."
+  description = "Operator-supplied map of `<id>` => SSH private key (PEM string). Bootstrap entries reference an id by `repo_ssh_key_id:` under the domain yaml's `argocd_bootstraps:` map. Empty map = no private repo support; bootstrap repos must be public. NOT marked sensitive at the variable level so `for_each` over keys works; the rendered Secret's `data` block is sensitive in state."
   type        = map(string)
   default     = {}
 }
 
 locals {
-  # (url, ssh_key_id) pairs across every project that declares an
-  # `argocd_bootstrap:` block with a private-repo auth hint. Iterates
-  # per-project from `local.projects[*].argocd_bootstrap`. `distinct()`
-  # collapses duplicates so multiple envs sharing a deploy repo produce
-  # one Secret.
-  _argocd_app_repo_pairs = distinct([
-    for _, project in local.projects : {
-      url        = try(project.argocd_bootstrap.repo_url, "")
-      ssh_key_id = try(project.argocd_bootstrap.repo_ssh_key_id, "")
-    }
-    if try(project.argocd_bootstrap, null) != null
-    && try(project.argocd_bootstrap.repo_ssh_key_id, "") != ""
-    && try(project.argocd_bootstrap.repo_url, "") != ""
-  ])
+  # (url, ssh_key_id) pairs across every project's `argocd_bootstraps:`
+  # map. Flattens project × bootstrap-entry; `distinct()` collapses
+  # duplicates so multiple envs / multiple bootstrap entries sharing
+  # one deploy repo produce one Secret.
+  _argocd_app_repo_pairs = distinct(flatten([
+    for _, project in local.projects : [
+      for _, entry in try(project.argocd_bootstraps, {}) : {
+        url        = try(entry.repo_url, "")
+        ssh_key_id = try(entry.repo_ssh_key_id, "")
+      }
+      if try(entry.repo_ssh_key_id, "") != "" && try(entry.repo_url, "") != ""
+    ]
+  ]))
 
   # Stable for_each key. Key id first so Secret names group by operator
   # intent (one key spans many repos → all those Secrets share a prefix);
@@ -57,7 +56,7 @@ check "argocd_repo_ssh_keys_resolved" {
       for pair in local._argocd_app_repo_pairs :
       contains(keys(var.argocd_repo_ssh_keys), pair.ssh_key_id)
     ])
-    error_message = "argocd_bootstrap entry references a `repo_ssh_key_id` not present in `var.argocd_repo_ssh_keys`. Referenced ids: ${jsonencode([for p in local._argocd_app_repo_pairs : p.ssh_key_id])}. Available ids: ${jsonencode(keys(var.argocd_repo_ssh_keys))}. Add the missing entry to `terraform.tfvars` (`argocd_repo_ssh_keys = { ... }`) or remove the `repo_ssh_key_id:` field from the domain yaml's argocd_bootstrap block if the repo is public."
+    error_message = "argocd_bootstraps entry references a `repo_ssh_key_id` not present in `var.argocd_repo_ssh_keys`. Referenced ids: ${jsonencode([for p in local._argocd_app_repo_pairs : p.ssh_key_id])}. Available ids: ${jsonencode(keys(var.argocd_repo_ssh_keys))}. Add the missing entry to `terraform.tfvars` (`argocd_repo_ssh_keys = { ... }`) or remove the `repo_ssh_key_id:` field from the domain yaml's argocd_bootstraps entry if the repo is public."
   }
 }
 

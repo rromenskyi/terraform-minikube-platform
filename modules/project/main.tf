@@ -1163,8 +1163,9 @@ resource "kubernetes_secret_v1" "env_random" {
 #      Application synced under any of them to this project's
 #      namespace. Sub-Applications and AppProject overrides land in
 #      the deploy repos themselves, not here. Multi-entry use case:
-#      one chart per repo deployed into the same namespace (e.g.
-#      `sipmesh` + `sipmesh-frontend`).
+#      one chart per repo deployed into the same namespace (a backend
+#      chart and a frontend chart in separate repos sharing one
+#      project namespace, each owning its own Application manifest).
 #
 # When neither is declared, the project has zero Argo CD footprint.
 
