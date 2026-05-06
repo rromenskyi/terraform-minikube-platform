@@ -146,6 +146,7 @@ module "project" {
   argocd_bootstraps = try(each.value.argocd_bootstraps, {})
   shared_services   = try(each.value.shared_services, {})
   secrets           = try(each.value.secrets, {})
+  chart_oidc_apps   = try(each.value.chart_oidc_apps, {})
 
   # Operator-supplied literal data for entries declared in this
   # project's `secrets:` map. When a `secrets:<name>` entry's name

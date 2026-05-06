@@ -47,3 +47,6 @@ tfplan
 .terraform.lock.hcl
 
 .DS_Store
+.claude
+CLAUDE.md
+.backup-config.log
