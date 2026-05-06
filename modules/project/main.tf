@@ -172,6 +172,12 @@ variable "operator_secret_values" {
   sensitive   = true
 }
 
+variable "chart_oidc_apps" {
+  description = "Map of operator-named Secrets carrying engine-provisioned Zitadel OIDC client credentials. Keyed by Secret name (lands in the project namespace). Each entry: `app_name` (Zitadel Application display name), `redirect_uris` (list of allowed auth-code callback URLs), `post_logout_uris` (list, optional), `dev_mode` (bool, optional, allows http+localhost — flip on for dev pilots), `roles` (list of `{key, display_name, group?}` to register on the Zitadel Project). Engine creates one Zitadel Project + OIDC Application per entry through the existing `modules/zitadel-app`, and writes `AUTH_ZITADEL_ISSUER`, `AUTH_ZITADEL_ID`, `AUTH_ZITADEL_SECRET`, `AUTH_SECRET` into the Secret — same keys the Auth.js ecosystem expects. Use for chart-deployed apps that need OIDC without forcing the operator to register a client by hand. Empty map = no engine-managed chart OIDC."
+  type        = any
+  default     = {}
+}
+
 # ── Locals ────────────────────────────────────────────────────────────────────
 
 locals {
@@ -934,6 +940,51 @@ resource "kubernetes_secret_v1" "operator_secret" {
       k => random_password.operator_secret[each.key].result
     }
   )
+}
+
+# ── Zitadel auto-provisioning for chart-deployed apps ────────────────────────
+#
+# Counterpart of the `kind: app` machinery below — but for charts the
+# engine doesn't render itself (Argo CD-managed Helm charts in this
+# project's namespace). Operator declares
+# `chart_oidc_apps:<secret-name>` in the domain yaml; engine spins up
+# one Zitadel Project + OIDC Application per entry and writes the
+# four standard keys (issuer / client_id / client_secret / auth
+# secret) into a `kubernetes_secret_v1` of the matching name in the
+# project namespace. The chart's `envFrom: secretRef` then picks
+# them up — no operator-side `kubectl create secret`, no OIDC
+# values committed in plain text.
+
+check "zitadel_enabled_when_chart_oidc_used" {
+  assert {
+    condition     = length(var.chart_oidc_apps) == 0 || var.zitadel_issuer_url != null
+    error_message = "project '${local.namespace}' declares `chart_oidc_apps:` entries (${join(", ", keys(var.chart_oidc_apps))}) but `services.zitadel.enabled` is false. Either flip Zitadel on in `config/platform.yaml` or remove the chart_oidc_apps block."
+  }
+}
+
+check "zitadel_provider_authenticated_when_chart_oidc_used" {
+  assert {
+    condition     = length(var.chart_oidc_apps) == 0 || var.zitadel_provider_authenticated
+    error_message = "project '${local.namespace}' declares `chart_oidc_apps:` entries but `var.zitadel_pat` is empty — the Zitadel TF provider can't authenticate, so `zitadel_application_oidc` resources would fail at apply time. Set `TF_VAR_zitadel_pat` from a Zitadel IAM_OWNER PAT and re-run."
+  }
+}
+
+module "chart_oidc" {
+  for_each = var.chart_oidc_apps
+
+  source = "../zitadel-app"
+
+  org_id           = var.zitadel_org_id
+  project_name     = each.key
+  app_name         = try(each.value.app_name, each.key)
+  issuer_url       = var.zitadel_issuer_url
+  redirect_uris    = try(each.value.redirect_uris, [])
+  post_logout_uris = try(each.value.post_logout_uris, [])
+  dev_mode         = try(each.value.dev_mode, false)
+  roles            = try(each.value.roles, [])
+
+  secret_namespace = kubernetes_namespace_v1.this.metadata[0].name
+  secret_name      = each.key
 }
 
 # ── Zitadel auto-provisioning for `kind: app` components ─────────────────────

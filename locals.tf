@@ -217,7 +217,15 @@ locals {
           # multi-env-var Secret consumer at one Secret without
           # rotating multiple downstream registrations.
           secrets = try(env_spec.secrets, {})
-          limits  = try(env_spec.limits, cfg.limits, null)
+          # Engine-managed Zitadel OIDC clients for chart-deployed
+          # apps. Engine creates a Zitadel Project + OIDC Application
+          # per entry and emits a Secret in the project namespace
+          # with the four standard keys (issuer / client_id /
+          # client_secret / random session secret). Lets a chart's
+          # `envFrom: secretRef:` pick up the credentials without
+          # any click-ops in the Zitadel console.
+          chart_oidc_apps = try(env_spec.chart_oidc_apps, {})
+          limits          = try(env_spec.limits, cfg.limits, null)
           # Optional per-project component overrides. Top-level keys here
           # win over the matching keys in `config/components/<name>.yaml`
           # via shallow merge — provide a full replacement value for any
