@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `platform_dash` Zitadel application gains 12 new `namespace_phost-<slug>-<env>_admin` / `_sre` role keys (6 tenant `phost-*` namespaces × admin/sre). Mirrors the existing `cluster_<name>_admin/sre` family but scoped to a single tenant namespace. Consumed by the dashboard's namespace-scoped authorization (PR #52 in `platform-dash`). System namespaces (`platform`, `mail`, `ops`, `monitoring`, `ingress-controller`) are intentionally NOT delegable — they hold shared platform infra and stay cluster-admin only.
+
 ### Removed
 - Untracked `.claude/` skill cache from version control (4 markdown files: `SKILL.md`, `architecture.md`, `operating.md`, `troubleshooting.md`). The directory was already covered by `.gitignore`, but the files were committed before the gitignore line landed and remained tracked. Active skill content lives in operator's home at `~/.claude/skills/platform/`.
 
