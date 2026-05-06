@@ -111,7 +111,7 @@ locals {
       }
       # Defaults for the planned `services.platform_dash` block. Not
       # consumed yet — the dashboard currently lives as a tenant
-      # component under config/domains/ipsupport.us.yaml. Scaffolding
+      # component under `config/domains/<domain>.yaml`. Scaffolding
       # for a future refactor that promotes the dashboard to
       # first-class platform infra (its own ns + module).
       platform_dash = {
