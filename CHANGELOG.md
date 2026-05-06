@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `platform_dash` Zitadel application gains 12 new `namespace_phost-<slug>-<env>_admin` / `_sre` role keys (6 tenant `phost-*` namespaces × admin/sre). Mirrors the existing `cluster_<name>_admin/sre` family but scoped to a single tenant namespace. Consumed by the dashboard's namespace-scoped authorization (PR #52 in `platform-dash`). System namespaces (`platform`, `mail`, `ops`, `monitoring`, `ingress-controller`) are intentionally NOT delegable — they hold shared platform infra and stay cluster-admin only.
 
+### Changed
+- `./tf` wrapper's Zitadel port-forward readiness probe switched from HTTP `GET /.well-known/openid-configuration` (with curl) to a TCP listener probe via bash `/dev/tcp/127.0.0.1/8080`. The wrapper only needs to wait for kubectl's local listener to be open — Zitadel's own readiness behind the listener is the provider's concern (errors cleanly if not). Earlier curl probe false-warned on cold-start Zitadel pods. Loop now polls every 250ms × 60 attempts (was 500ms × 30) — same 15s overall budget but TCP connect typically completes in <1s on warm pods.
+
 ### Removed
 - Untracked `.claude/` skill cache from version control (4 markdown files: `SKILL.md`, `architecture.md`, `operating.md`, `troubleshooting.md`). The directory was already covered by `.gitignore`, but the files were committed before the gitignore line landed and remained tracked. Active skill content lives in operator's home at `~/.claude/skills/platform/`.
 

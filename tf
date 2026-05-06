@@ -189,11 +189,18 @@ start_zitadel_port_forward() {
   echo "tf: kubectl port-forward svc/zitadel 8080:8080 (provider transport, bypasses Cloudflare gRPC trailer-strip)"
   kubectl port-forward -n platform svc/zitadel 8080:8080 >/dev/null 2>&1 &
   ZITADEL_PF_PID=$!
-  for _ in $(seq 1 30); do
-    if curl -fsS -o /dev/null --max-time 1 "http://localhost:8080/.well-known/openid-configuration" 2>/dev/null; then
+  # Probe the local TCP listener only — that's all the wrapper has to wait for.
+  # Whether Zitadel itself is ready behind the listener is the provider's
+  # concern (it'll error cleanly if not). Earlier versions waited on
+  # `/.well-known/openid-configuration` and false-warned on cold-start
+  # Zitadel; bash's `<>` open against the listener probes only the
+  # kubectl-side TCP, completes in <1s on a warm pod.
+  for _ in $(seq 1 60); do
+    if (exec 3<>/dev/tcp/127.0.0.1/8080) 2>/dev/null; then
+      exec 3<&- 3>&-
       return 0
     fi
-    sleep 0.5
+    sleep 0.25
   done
   echo "tf: port-forward never became ready, continuing anyway (Zitadel may not be up yet)" >&2
 }
