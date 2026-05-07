@@ -224,8 +224,18 @@ locals {
   #   4. per-project overrides from the domain yaml
   #      (`project_config.components[name]`) — top-level keys here win
   #      over the same keys in the component yaml. Lists/nested maps
-  #      are REPLACED wholesale (Terraform merge() is shallow), which
-  #      keeps the override semantics predictable.
+  #      are REPLACED wholesale (Terraform merge() is shallow), with
+  #      one named exception below.
+  #
+  # `env_static` is specifically deep-merged: the operator's override
+  # ADDS to (and wins per-key over) the component template's
+  # `env_static`. Reason — `env_static` is the natural place to drop
+  # per-tenant environment knobs (canonical URL, hostname-derived
+  # OAuth callback, feature flags) without owning the whole envvar
+  # surface area of a third-party chart. Without this exception, the
+  # operator would have to copy every template env in to keep the
+  # template working — an immediate footgun when chart upstreams
+  # bump their env contract.
   normalized_components = {
     for name in local._component_names :
     name => merge(
@@ -233,6 +243,12 @@ locals {
       local.component_defaults,
       try(var.components[name], {}),
       try(var.project_config.components[name], {}),
+      {
+        env_static = merge(
+          try(var.components[name].env_static, {}),
+          try(var.project_config.components[name].env_static, {}),
+        )
+      },
     )
   }
 
