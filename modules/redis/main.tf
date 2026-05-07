@@ -456,7 +456,13 @@ resource "helm_release" "valkey_sentinel" {
     }
 
     replica = {
-      replicaCount = var.sentinel.replica_count - 1
+      # Bitnami chart's `replica.replicaCount` in sentinel mode is
+      # the TOTAL number of Valkey pods (each runs a Sentinel
+      # sidecar). To survive a single pod loss while keeping
+      # Sentinel quorum, you need replicaCount >= quorum + 1 (e.g.
+      # 3 pods + quorum 2 → survives 1 loss; 5 pods + quorum 3 →
+      # survives 2 losses). Operator's `replica_count` maps 1:1.
+      replicaCount = var.sentinel.replica_count
       persistence = {
         enabled      = var.storage_class != ""
         storageClass = var.storage_class
