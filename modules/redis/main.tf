@@ -8,6 +8,10 @@ terraform {
       source  = "hashicorp/random"
       version = "~> 3.0"
     }
+    helm = {
+      source  = "hashicorp/helm"
+      version = "~> 3.0"
+    }
   }
 }
 
@@ -65,8 +69,27 @@ variable "tolerations" {
   default = []
 }
 
+variable "sentinel" {
+  description = "Optional Valkey Sentinel HA topology. When `enabled = true`, the module switches from the default single-StatefulSet implementation to a Bitnami `valkey` Helm release running `architecture: replication` + `sentinel.enabled: true`, plus an HAProxy Deployment in front (sentinel-aware health checks via `tcp-check expect role:master`) so consumers keep talking to the flat `redis.<ns>.svc:6379` Service without any client-side changes. **Operator opts in** via `services.redis.sentinel:` in `config/platform.yaml`. Default `enabled = false` preserves the simple single-instance path. Switching `false → true` is a one-way data wipe (the existing single-instance PVC is destroyed when its for_each collapses; tenant ACL Jobs need re-trigger to repopulate per-tenant users on the fresh chart deploy)."
+  type = object({
+    enabled             = optional(bool, false)
+    replica_count       = optional(number, 3)
+    quorum              = optional(number, 2)
+    chart_version       = optional(string, "5.6.1")
+    image_repo          = optional(string, "bitnami/valkey")
+    image_tag           = optional(string, "latest")
+    sentinel_image_repo = optional(string, "bitnami/valkey-sentinel")
+    sentinel_image_tag  = optional(string, "latest")
+    haproxy_image       = optional(string, "haproxytech/haproxy-alpine:3.0")
+    haproxy_replicas    = optional(number, 2)
+  })
+  default = {}
+}
+
 locals {
-  instances = var.enabled ? toset(["enabled"]) : toset([])
+  instances          = var.enabled ? toset(["enabled"]) : toset([])
+  single_instances   = (var.enabled && !var.sentinel.enabled) ? toset(["enabled"]) : toset([])
+  sentinel_instances = (var.enabled && var.sentinel.enabled) ? toset(["enabled"]) : toset([])
 }
 
 # ── Default (root) password ───────────────────────────────────────────────────
@@ -112,7 +135,7 @@ resource "kubernetes_secret_v1" "default" {
 #     reference Longhorn (or any other CSI driver) directly.
 
 resource "kubernetes_persistent_volume_claim_v1" "redis" {
-  for_each = local.instances
+  for_each = local.single_instances
 
   metadata {
     name      = "redis-data"
@@ -134,7 +157,7 @@ resource "kubernetes_persistent_volume_claim_v1" "redis" {
 # ── StatefulSet ───────────────────────────────────────────────────────────────
 
 resource "kubernetes_stateful_set_v1" "redis" {
-  for_each = local.instances
+  for_each = local.single_instances
 
   metadata {
     name      = "redis"
@@ -345,6 +368,268 @@ resource "kubernetes_service_v1" "redis" {
       name        = "redis"
       port        = 6379
       target_port = 6379
+    }
+  }
+}
+
+# ── Sentinel mode (opt-in via var.sentinel.enabled) ──────────────────────────
+#
+# Bitnami `valkey` Helm chart in `architecture: replication` +
+# `sentinel.enabled: true` mode deploys a single StatefulSet of N
+# valkey pods (1 elected primary + N-1 replicas via Sentinel
+# orchestration). Each pod runs a Sentinel sidecar; quorum is set
+# by `var.sentinel.quorum` (default 2 for a 3-node deployment).
+#
+# Bitnami's chart explicitly does NOT include an HAProxy proxy in
+# sentinel mode — clients are expected to be Sentinel-aware. To
+# preserve transparent client compatibility (consumers keep talking
+# to the flat `redis.<ns>.svc:6379` Service), we run our own HAProxy
+# Deployment in front. HAProxy uses TCP-check + `tcp-check expect
+# string role:master` to filter — only pods replying with
+# `role:master` to the `INFO replication` query pass health checks,
+# so HAProxy routes traffic exclusively to whichever pod is the
+# current primary. On Sentinel-driven failover the new primary
+# starts replying `role:master`, the old one drops out of the
+# health-check pool, traffic flips within HAProxy's check interval
+# (1s default).
+#
+# The chart's auth.password is wired to the same `redis-default`
+# Secret single mode uses, so consumers see one password across
+# both modes. ACL changes (per-tenant SETUSER from project module
+# Jobs) propagate from primary → replicas via Redis 6+ replication
+# automatically.
+
+resource "helm_release" "valkey_sentinel" {
+  for_each = local.sentinel_instances
+
+  name       = "redis"
+  repository = "https://charts.bitnami.com/bitnami"
+  chart      = "valkey"
+  version    = var.sentinel.chart_version
+  namespace  = var.namespace
+  timeout    = 900
+
+  values = [yamlencode({
+    architecture = "replication"
+
+    image = {
+      registry   = "docker.io"
+      repository = var.sentinel.image_repo
+      tag        = var.sentinel.image_tag
+    }
+
+    sentinel = {
+      enabled = true
+      quorum  = var.sentinel.quorum
+      image = {
+        registry   = "docker.io"
+        repository = var.sentinel.sentinel_image_repo
+        tag        = var.sentinel.sentinel_image_tag
+      }
+      # Bitnami chart's default sentinel resource preset is tight
+      # (~150m CPU limit). Sentinel needs timer interrupts firing
+      # 10/sec consistently — at 150m CFS throttling delays them
+      # past the 2s threshold and Sentinel enters TILT mode (local
+      # PING blocks 60s+, probes time out, daemon useless).
+      # Lift to 500m so timer-driven discovery + election keep up.
+      resourcesPreset = "none"
+      resources = {
+        requests = { cpu = "100m", memory = "64Mi" }
+        limits   = { cpu = "500m", memory = "128Mi" }
+      }
+    }
+
+    auth = {
+      enabled                   = true
+      existingSecret            = "redis-default"
+      existingSecretPasswordKey = "REDIS_PASSWORD"
+    }
+
+    primary = {
+      persistence = {
+        enabled      = var.storage_class != ""
+        storageClass = var.storage_class
+        size         = "5Gi"
+      }
+      nodeSelector = var.node_selector
+      tolerations  = var.tolerations
+    }
+
+    replica = {
+      # Bitnami chart's `replica.replicaCount` in sentinel mode is
+      # the TOTAL number of Valkey pods (each runs a Sentinel
+      # sidecar). To survive a single pod loss while keeping
+      # Sentinel quorum, you need replicaCount >= quorum + 1 (e.g.
+      # 3 pods + quorum 2 → survives 1 loss; 5 pods + quorum 3 →
+      # survives 2 losses). Operator's `replica_count` maps 1:1.
+      replicaCount = var.sentinel.replica_count
+      persistence = {
+        enabled      = var.storage_class != ""
+        storageClass = var.storage_class
+        size         = "5Gi"
+      }
+      nodeSelector = var.node_selector
+      tolerations  = var.tolerations
+    }
+  })]
+}
+
+# HAProxy frontend so consumers keep using flat `redis:6379`.
+# Health check filters to current primary via `role:master` reply.
+
+resource "kubernetes_config_map_v1" "haproxy_config" {
+  for_each = local.sentinel_instances
+
+  metadata {
+    name      = "redis-haproxy-config"
+    namespace = var.namespace
+  }
+
+  data = {
+    "haproxy.cfg" = <<-EOT
+      global
+        log stdout format raw local0 info
+        maxconn 4096
+
+      defaults
+        log global
+        mode tcp
+        option tcplog
+        timeout connect 5s
+        timeout client  60s
+        timeout server  60s
+
+      resolvers k8s
+        parse-resolv-conf
+        accepted_payload_size 8192
+        hold valid 10s
+
+      frontend redis_front
+        bind *:6379
+        default_backend redis_back
+
+      backend redis_back
+        option tcp-check
+        tcp-check connect
+        tcp-check send AUTH\ ${random_password.default["enabled"].result}\r\n
+        tcp-check expect string +OK
+        tcp-check send PING\r\n
+        tcp-check expect string +PONG
+        tcp-check send info\ replication\r\n
+        tcp-check expect string role:master
+        tcp-check send QUIT\r\n
+        tcp-check expect string +OK
+        server-template valkey ${var.sentinel.replica_count} redis-valkey-headless.${var.namespace}.svc.cluster.local:6379 check inter 1s rise 1 fall 2 resolvers k8s init-addr none
+    EOT
+  }
+}
+
+resource "kubernetes_deployment_v1" "haproxy" {
+  for_each = local.sentinel_instances
+
+  depends_on = [helm_release.valkey_sentinel]
+
+  metadata {
+    name      = "redis-haproxy"
+    namespace = var.namespace
+    labels    = { app = "redis", component = "haproxy" }
+  }
+
+  spec {
+    replicas = var.sentinel.haproxy_replicas
+
+    selector {
+      match_labels = { app = "redis", component = "haproxy" }
+    }
+
+    template {
+      metadata {
+        labels = { app = "redis", component = "haproxy" }
+      }
+
+      spec {
+        node_selector = length(var.node_selector) > 0 ? var.node_selector : null
+
+        dynamic "toleration" {
+          for_each = var.tolerations
+          content {
+            key                = toleration.value.key
+            operator           = toleration.value.operator
+            value              = toleration.value.value
+            effect             = toleration.value.effect
+            toleration_seconds = toleration.value.toleration_seconds
+          }
+        }
+
+        affinity {
+          pod_anti_affinity {
+            preferred_during_scheduling_ignored_during_execution {
+              weight = 100
+              pod_affinity_term {
+                topology_key = "kubernetes.io/hostname"
+                label_selector {
+                  match_labels = { app = "redis", component = "haproxy" }
+                }
+              }
+            }
+          }
+        }
+
+        container {
+          name  = "haproxy"
+          image = var.sentinel.haproxy_image
+
+          env {
+            name = "REDIS_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = "redis-default"
+                key  = "REDIS_PASSWORD"
+              }
+            }
+          }
+
+          port {
+            name           = "redis"
+            container_port = 6379
+          }
+
+          volume_mount {
+            name       = "config"
+            mount_path = "/usr/local/etc/haproxy"
+          }
+
+          # HAProxy expands $REDIS_PASSWORD via the env var at startup
+          # (haproxy 2.4+ supports environment variable substitution
+          # in its config — `${REDIS_PASSWORD}` literal sits in the
+          # ConfigMap and HAProxy fills it from the env at parse time).
+          args = ["-f", "/usr/local/etc/haproxy/haproxy.cfg"]
+
+          resources {
+            requests = { cpu = "50m", memory = "64Mi" }
+            limits   = { cpu = "200m", memory = "128Mi" }
+          }
+
+          readiness_probe {
+            tcp_socket { port = 6379 }
+            initial_delay_seconds = 5
+            period_seconds        = 5
+          }
+
+          liveness_probe {
+            tcp_socket { port = 6379 }
+            initial_delay_seconds = 30
+            period_seconds        = 10
+          }
+        }
+
+        volume {
+          name = "config"
+          config_map {
+            name = kubernetes_config_map_v1.haproxy_config["enabled"].metadata[0].name
+          }
+        }
+      }
     }
   }
 }

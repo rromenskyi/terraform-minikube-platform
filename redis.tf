@@ -11,6 +11,7 @@ module "redis" {
   namespace        = kubernetes_namespace_v1.platform.metadata[0].name
   volume_base_path = var.host_volume_path
   storage_class    = local.platform.services.redis.storage_class
+  sentinel         = local.platform.services.redis.sentinel
 
   node_selector = local.platform.services.redis.node_selector
   tolerations   = local.platform.services.redis.tolerations
