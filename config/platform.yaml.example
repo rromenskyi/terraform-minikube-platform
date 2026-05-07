@@ -161,6 +161,56 @@ services:
   #   systemctl enable --now iscsid
   # Without these, Longhorn instance-managers crash at startup
   # and no PVC ever binds.
+  # MetalLB — bare-metal LoadBalancer for `Service type:
+  # LoadBalancer` on a self-hosted / VPS cluster.
+  #
+  # L2 mode only: one node per VIP announces via gratuitous ARP.
+  # The announcing node MUST be reachable from the network the
+  # client lives on (real public IP for Internet traffic, or
+  # private IP if the cluster only serves intranet).
+  #
+  # Source-IP preservation requires the consuming Service to set
+  # `externalTrafficPolicy: Local` AND its backend pod to land on
+  # the announcing node — kube-proxy with Local does NOT forward
+  # across nodes; it drops if no local backend exists. Multi-pod
+  # horizontal scale on L2 = DaemonSet pattern (one pod per
+  # speaker-eligible node). True multi-active fronting one VIP
+  # needs BGP mode + an upstream router that speaks BGP.
+  #
+  # Pool layout is per-operator. Each pool's `l2_node_selectors`
+  # restricts which nodes announce its VIPs; without it, every
+  # speaker would ARP for the IP and the upstream switch picks
+  # whichever speaker won the race (split-brain; flapping).
+  metallb:
+    enabled: false
+    # Controller node selector — controller is stateless, just
+    # picks IPs from pools. Pin to a stable tier to avoid flap.
+    # controller_node_selector:
+    #   workload-tier: general
+    # Speaker node selector — restricts the speaker DaemonSet to
+    # the nodes that should announce VIPs (i.e. the nodes whose
+    # NICs the LB IPs live on). Empty = speaker on every
+    # un-tainted node, which is rarely what you want.
+    # speaker_node_selector:
+    #   kubernetes.io/hostname: edge-node
+    # Speaker tolerations — needed if the announcing node carries
+    # an app-specific taint (e.g. a VPS that's both an LB ingress
+    # and an app-pinned node).
+    # speaker_tolerations:
+    #   - { key: app, operator: Equal, value: matrix, effect: NoSchedule }
+    # Pools — map of pool name → addresses + L2 advertisement.
+    # `addresses` is a list of CIDRs or `start-end` ranges in
+    # MetalLB's native syntax. `auto_assign: false` makes Services
+    # opt in by name (`spec.loadBalancerIP: <addr>`).
+    # `l2_node_selectors` is a list of label-selector maps that
+    # becomes the L2Advertisement.spec.nodeSelectors field.
+    # pools:
+    #   public:
+    #     addresses:
+    #       - 192.0.2.10/32
+    #     l2_node_selectors:
+    #       - { kubernetes.io/hostname: edge-node }
+
   longhorn:
     enabled: false
     # `replica_count` — how many copies of each volume Longhorn
