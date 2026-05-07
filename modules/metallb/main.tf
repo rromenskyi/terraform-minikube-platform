@@ -91,6 +91,18 @@ variable "speaker_tolerations" {
   default = []
 }
 
+variable "shared_ip_annotations" {
+  description = "Map of `<namespace>/<service-name>` → shared-ip key. Engine annotates the listed Service with `metallb.universe.tf/allow-shared-ip: <key>` so MetalLB legalises sharing one VIP across multiple Services with non-conflicting port/protocol pairs (e.g. Traefik on TCP 80/443 and a SIP proxy on UDP 5160). Both Services must carry the SAME key; the engine writes the annotation server-side without touching the Service's other fields, so a chart-managed Service (Helm, ArgoCD) keeps its ownership intact. Empty map (default) emits no annotations. Only meaningful when at least one pool's IP is targeted by multiple Services."
+  type        = map(string)
+  default     = {}
+  validation {
+    condition = alltrue([
+      for k, _ in var.shared_ip_annotations : can(regex("^[a-z0-9-]+/[a-z0-9-]+$", k))
+    ])
+    error_message = "Every `shared_ip_annotations` key must be `<namespace>/<service-name>` (lowercase DNS labels)."
+  }
+}
+
 variable "pools" {
   description = "IP address pools MetalLB allocates from. Each entry produces one `IPAddressPool` CRD plus, when `l2_node_selectors` is non-empty, one `L2Advertisement` CRD restricting which nodes announce the pool's IPs via ARP (avoids split-brain ARP from multiple speakers offering the same VIP). Map key is the pool name (also used as CRD object name). `addresses` is a list of CIDRs or `start-end` ranges in MetalLB's native syntax. `auto_assign` controls whether unallocated IPs in the pool can be auto-picked for `Service type: LoadBalancer` without an explicit `loadBalancerIP` request — set false for tightly-controlled pools where every Service must opt in by name. `l2_node_selectors` is a list of label-selector maps that becomes the `L2Advertisement.spec.nodeSelectors` field; restricts which nodes announce these IPs (defaults to all nodes with a speaker if empty). Empty `pools` map = MetalLB installed but inert."
   type = map(object({
@@ -207,6 +219,31 @@ resource "kubectl_manifest" "l2_advertisement" {
       ]
     }
   })
+}
+
+# ── Shared-IP annotations on existing Services ────────────────────────────
+#
+# Annotates a Service that another controller (Helm chart, ArgoCD)
+# owns, without claiming ownership of the Service itself.
+# `kubernetes_annotations` patches only the listed annotation keys
+# server-side — the rest of the Service spec stays under the
+# original owner's reconciliation. Helm / ArgoCD do not strip
+# annotations they don't manage, so this persists across upgrades.
+
+resource "kubernetes_annotations" "shared_ip" {
+  for_each = var.enabled ? var.shared_ip_annotations : {}
+
+  depends_on = [helm_release.metallb]
+
+  api_version = "v1"
+  kind        = "Service"
+  metadata {
+    name      = split("/", each.key)[1]
+    namespace = split("/", each.key)[0]
+  }
+  annotations = {
+    "metallb.universe.tf/allow-shared-ip" = each.value
+  }
 }
 
 # ── Outputs ────────────────────────────────────────────────────────────────
