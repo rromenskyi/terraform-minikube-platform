@@ -81,6 +81,7 @@ locals {
         storage_size  = "50Gi"
         node_selector = {}
         tolerations   = []
+        distributed   = {}
         buckets       = {}
       }
       backup = {

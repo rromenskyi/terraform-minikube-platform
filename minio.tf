@@ -1,11 +1,15 @@
 # MinIO — S3-compatible object store.
 #
-# Single-replica Deployment + per-bucket service-account credentials.
-# Operator declares buckets via `services.minio.buckets` — engine
-# pre-creates each, generates a dedicated access-key pair, and emits
-# a `kubernetes_secret_v1` carrying the standard `S3_*` env names
+# Two topologies, operator-selected via `services.minio.distributed.enabled`:
+#   - standalone (default): single-replica Deployment + one PVC.
+#   - distributed (4+ replicas): StatefulSet + per-replica PVC,
+#     erasure-coded across the pool. Required minimum 4 disks.
+#
+# Either way, operator declares buckets via `services.minio.buckets` —
+# engine pre-creates each, generates a dedicated access-key pair, and
+# emits a `kubernetes_secret_v1` carrying the standard `S3_*` env names
 # in the consumer namespace. Consumer chart `envFrom`s the Secret
-# and points its S3 client at the in-cluster endpoint.
+# and points its S3 client at the in-cluster Service endpoint.
 
 module "minio" {
   source     = "./modules/minio"
@@ -17,6 +21,7 @@ module "minio" {
   storage_size  = local.platform.services.minio.storage_size
   node_selector = local.platform.services.minio.node_selector
   tolerations   = local.platform.services.minio.tolerations
+  distributed   = local.platform.services.minio.distributed
   buckets       = local.platform.services.minio.buckets
 }
 

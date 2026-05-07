@@ -91,6 +91,19 @@ variable "tolerations" {
   default = []
 }
 
+variable "distributed" {
+  description = "Optional distributed MinIO topology — `enabled = true` switches the module from a single-replica `Deployment` + one PVC to a `StatefulSet` with N replicas, each backed by its own PVC, with a headless Service for pod-to-pod traffic and `MINIO_VOLUMES` pointing at the per-pod hostnames so MinIO erasure-codes objects across the pool. The minimum legal `replica_count` is 4 (MinIO erasure coding requires at least 4 disks); `5` matches a single-pod-per-node spread on this 5-node cluster. Per-pod `storage_size` (set on `var.storage_size`) — total raw capacity is `storage_size × replica_count`, usable capacity is roughly `(replica_count - parity) × storage_size` (default parity 1, so 4 of 5 = 80% efficient on a 5-pod cluster). Anti-affinity spreads pods one-per-node by `kubernetes.io/hostname`. Empty / `enabled = false` keeps the standalone Deployment shape unchanged."
+  type = object({
+    enabled       = optional(bool, false)
+    replica_count = optional(number, 4)
+  })
+  default = {}
+  validation {
+    condition     = !try(var.distributed.enabled, false) || try(var.distributed.replica_count, 4) >= 4
+    error_message = "distributed.replica_count must be at least 4 — MinIO erasure coding requires 4+ disks."
+  }
+}
+
 variable "buckets" {
   description = "Buckets the engine pre-creates and exposes via per-bucket Secrets. Map key is the bucket name (must match S3 naming rules: lowercase + dash). Each entry: `consumer_namespace` (where the engine emits the credentials Secret — engine assumes the namespace already exists), `secret_name` (the Secret's name in that namespace), `region` (string the SDK expects in `S3_REGION`; MinIO ignores it but boto3 / aws-sdk-go demand a value — default `auto` is universally accepted). Each bucket gets a dedicated MinIO service-account key — leakage of one Secret limits blast radius to that bucket. Empty map = MinIO server runs but no buckets are pre-created (unusual; only fits an operator who'll manage buckets externally)."
   type = map(object({
@@ -104,12 +117,21 @@ variable "buckets" {
 # ── Locals ─────────────────────────────────────────────────────────────────
 
 locals {
-  instances      = var.enabled ? toset(["enabled"]) : toset([])
-  bucket_targets = var.enabled ? var.buckets : {}
-  service_name   = "minio"
-  api_port       = 9000
-  console_port   = 9001
-  endpoint       = "http://${local.service_name}.${var.namespace}.svc.cluster.local:${local.api_port}"
+  instances             = var.enabled ? toset(["enabled"]) : toset([])
+  standalone_instances  = (var.enabled && !try(var.distributed.enabled, false)) ? toset(["enabled"]) : toset([])
+  distributed_instances = (var.enabled && try(var.distributed.enabled, false)) ? toset(["enabled"]) : toset([])
+  bucket_targets        = var.enabled ? var.buckets : {}
+
+  service_name          = "minio"
+  headless_service_name = "minio-headless"
+  api_port              = 9000
+  console_port          = 9001
+  endpoint              = "http://${local.service_name}.${var.namespace}.svc.cluster.local:${local.api_port}"
+
+  # MINIO_VOLUMES env in distributed mode points at the per-pod
+  # hostnames inside the headless Service. Bash brace-expansion
+  # syntax — MinIO parses `{0...N-1}` natively into N peer URLs.
+  distributed_volumes = try(var.distributed.enabled, false) ? "http://${local.service_name}-{0...${try(var.distributed.replica_count, 4) - 1}}.${local.headless_service_name}.${var.namespace}.svc.cluster.local/data" : ""
 }
 
 # ── Root credentials ───────────────────────────────────────────────────────
@@ -146,10 +168,10 @@ resource "kubernetes_secret_v1" "root" {
   }
 }
 
-# ── PVC ────────────────────────────────────────────────────────────────────
+# ── PVC (standalone mode only — distributed uses volumeClaimTemplates) ────
 
 resource "kubernetes_persistent_volume_claim_v1" "minio" {
-  for_each = local.instances
+  for_each = local.standalone_instances
 
   metadata {
     name      = "minio-data"
@@ -168,10 +190,10 @@ resource "kubernetes_persistent_volume_claim_v1" "minio" {
   }
 }
 
-# ── Server ─────────────────────────────────────────────────────────────────
+# ── Server: standalone Deployment (single-replica path) ───────────────────
 
 resource "kubernetes_deployment_v1" "minio" {
-  for_each = local.instances
+  for_each = local.standalone_instances
 
   metadata {
     name      = "minio"
@@ -286,7 +308,187 @@ resource "kubernetes_deployment_v1" "minio" {
   }
 }
 
+# ── Server: distributed StatefulSet (4+ replicas with erasure coding) ─────
+#
+# Each replica gets its own PVC via volumeClaimTemplates. Pods talk
+# to one another via the headless Service (`minio-headless`) at
+# `minio-{0..N-1}.minio-headless.<ns>.svc.cluster.local`. MinIO
+# parses `MINIO_VOLUMES=http://minio-{0...N-1}...` into N peer
+# URLs at boot, sets up the erasure-coded ring, and refuses to
+# accept writes until quorum (N/2 + 1) is healthy.
+
+resource "kubernetes_service_v1" "minio_headless" {
+  for_each = local.distributed_instances
+
+  metadata {
+    name      = local.headless_service_name
+    namespace = var.namespace
+    labels = {
+      "app.kubernetes.io/name"      = "minio"
+      "app.kubernetes.io/component" = "headless"
+    }
+  }
+
+  spec {
+    cluster_ip                  = "None"
+    publish_not_ready_addresses = true
+    selector                    = { "app.kubernetes.io/name" = "minio" }
+
+    port {
+      name        = "api"
+      port        = local.api_port
+      target_port = local.api_port
+    }
+  }
+}
+
+resource "kubernetes_stateful_set_v1" "minio" {
+  for_each = local.distributed_instances
+
+  metadata {
+    name      = "minio"
+    namespace = var.namespace
+    labels    = { "app.kubernetes.io/name" = "minio" }
+  }
+
+  spec {
+    service_name = local.headless_service_name
+    replicas     = var.distributed.replica_count
+    # Pods come up in parallel — distributed MinIO requires every
+    # peer reachable at boot to form the erasure-coded ring; a
+    # serial OrderedReady would deadlock the first replica waiting
+    # for peers that haven't started.
+    pod_management_policy = "Parallel"
+
+    selector {
+      match_labels = { "app.kubernetes.io/name" = "minio" }
+    }
+
+    template {
+      metadata {
+        labels = { "app.kubernetes.io/name" = "minio" }
+      }
+
+      spec {
+        node_selector = length(var.node_selector) > 0 ? var.node_selector : null
+
+        dynamic "toleration" {
+          for_each = var.tolerations
+          content {
+            key      = toleration.value.key
+            operator = toleration.value.operator
+            value    = toleration.value.value
+            effect   = toleration.value.effect
+          }
+        }
+
+        # Spread replicas one-per-node — required for HA: with
+        # erasure coding `N+1` survives one disk loss, but only
+        # if disks are on distinct nodes. `requiredDuringScheduling`
+        # blocks scheduling on a node that already hosts a peer.
+        affinity {
+          pod_anti_affinity {
+            required_during_scheduling_ignored_during_execution {
+              label_selector {
+                match_labels = { "app.kubernetes.io/name" = "minio" }
+              }
+              topology_key = "kubernetes.io/hostname"
+            }
+          }
+        }
+
+        container {
+          name  = "minio"
+          image = var.image
+          args = [
+            "server",
+            "--address",
+            ":${local.api_port}",
+            "--console-address",
+            ":${local.console_port}",
+          ]
+
+          env_from {
+            secret_ref {
+              name = kubernetes_secret_v1.root["enabled"].metadata[0].name
+            }
+          }
+
+          env {
+            name  = "MINIO_VOLUMES"
+            value = local.distributed_volumes
+          }
+
+          port {
+            name           = "api"
+            container_port = local.api_port
+          }
+          port {
+            name           = "console"
+            container_port = local.console_port
+          }
+
+          volume_mount {
+            name       = "data"
+            mount_path = "/data"
+          }
+
+          readiness_probe {
+            http_get {
+              path = "/minio/health/ready"
+              port = local.api_port
+            }
+            initial_delay_seconds = 30
+            period_seconds        = 10
+          }
+
+          liveness_probe {
+            http_get {
+              path = "/minio/health/live"
+              port = local.api_port
+            }
+            initial_delay_seconds = 60
+            period_seconds        = 30
+          }
+
+          resources {
+            requests = {
+              cpu    = "100m"
+              memory = "256Mi"
+            }
+            limits = {
+              cpu    = "1"
+              memory = "1Gi"
+            }
+          }
+        }
+      }
+    }
+
+    volume_claim_template {
+      metadata {
+        name = "data"
+      }
+      spec {
+        access_modes       = ["ReadWriteOnce"]
+        storage_class_name = var.storage_class != "" ? var.storage_class : null
+        resources {
+          requests = {
+            storage = var.storage_size
+          }
+        }
+      }
+    }
+  }
+}
+
 # ── Service ────────────────────────────────────────────────────────────────
+#
+# Single ClusterIP entry point — selects MinIO pods regardless of
+# whether they're emitted from the standalone Deployment or the
+# distributed StatefulSet (label `app.kubernetes.io/name=minio` on
+# both). Consumers always hit `minio.<ns>.svc.cluster.local:9000`,
+# the topology change is transparent.
 
 resource "kubernetes_service_v1" "minio" {
   for_each = local.instances
@@ -373,7 +575,11 @@ resource "kubernetes_secret_v1" "bucket" {
 resource "kubernetes_job_v1" "buckets" {
   for_each = length(local.bucket_targets) > 0 ? local.instances : toset([])
 
-  depends_on = [kubernetes_deployment_v1.minio]
+  depends_on = [
+    kubernetes_deployment_v1.minio,
+    kubernetes_stateful_set_v1.minio,
+    kubernetes_service_v1.minio,
+  ]
 
   metadata {
     name      = "minio-buckets-${formatdate("YYYYMMDDhhmmss", timestamp())}"
