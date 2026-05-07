@@ -89,31 +89,17 @@ resource "kubernetes_secret_v1" "default" {
   }
 }
 
-# ── Persistent storage (AOF) ──────────────────────────────────────────────────
-
-resource "kubernetes_persistent_volume_v1" "redis" {
-  for_each = local.instances
-
-  metadata {
-    name = "platform-redis-data"
-  }
-
-  spec {
-    capacity = {
-      storage = "5Gi"
-    }
-    access_modes                     = ["ReadWriteOnce"]
-    persistent_volume_reclaim_policy = "Retain"
-    storage_class_name               = "standard"
-
-    persistent_volume_source {
-      host_path {
-        path = "${var.volume_base_path}/${var.namespace}/redis"
-        type = "DirectoryOrCreate"
-      }
-    }
-  }
-}
+# ── Persistent storage (AOF + RDB) ────────────────────────────────────────────
+#
+# Backed by Longhorn distributed block storage (PR #58). Longhorn
+# replicates volume blocks across multiple nodes, so a node-loss
+# event re-attaches the same logical volume to a surviving node and
+# Valkey resumes from the last AOF/RDB sync — no data loss, ~1-2 min
+# rescheduling downtime. No manual `kubernetes_persistent_volume_v1`
+# needed; Longhorn's CSI driver provisions the PV dynamically when
+# the PVC is bound. The legacy hostPath PV ("platform-redis-data")
+# pinned the volume to one node — replaced with the Longhorn-backed
+# PVC below.
 
 resource "kubernetes_persistent_volume_claim_v1" "redis" {
   for_each = local.instances
@@ -125,8 +111,7 @@ resource "kubernetes_persistent_volume_claim_v1" "redis" {
 
   spec {
     access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "standard"
-    volume_name        = kubernetes_persistent_volume_v1.redis["enabled"].metadata[0].name
+    storage_class_name = "longhorn"
 
     resources {
       requests = {
@@ -210,7 +195,7 @@ resource "kubernetes_stateful_set_v1" "redis" {
         # populated users.acl never touches it.
         init_container {
           name  = "seed-users-acl"
-          image = "redis:7-alpine"
+          image = "valkey/valkey:9-alpine"
 
           # Root because chown-data re-owns /data to 999 *after* this
           # container would run if order were swapped; running as root
@@ -249,7 +234,7 @@ resource "kubernetes_stateful_set_v1" "redis" {
 
         container {
           name  = "redis"
-          image = "redis:7-alpine"
+          image = "valkey/valkey:9-alpine"
 
           port {
             container_port = 6379
