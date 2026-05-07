@@ -72,14 +72,16 @@ variable "tolerations" {
 variable "sentinel" {
   description = "Optional Valkey Sentinel HA topology. When `enabled = true`, the module switches from the default single-StatefulSet implementation to a Bitnami `valkey` Helm release running `architecture: replication` + `sentinel.enabled: true`, plus an HAProxy Deployment in front (sentinel-aware health checks via `tcp-check expect role:master`) so consumers keep talking to the flat `redis.<ns>.svc:6379` Service without any client-side changes. **Operator opts in** via `services.redis.sentinel:` in `config/platform.yaml`. Default `enabled = false` preserves the simple single-instance path. Switching `false → true` is a one-way data wipe (the existing single-instance PVC is destroyed when its for_each collapses; tenant ACL Jobs need re-trigger to repopulate per-tenant users on the fresh chart deploy)."
   type = object({
-    enabled          = optional(bool, false)
-    replica_count    = optional(number, 3)
-    quorum           = optional(number, 2)
-    chart_version    = optional(string, "5.6.1")
-    image_repo       = optional(string, "bitnami/valkey")
-    image_tag        = optional(string, "9.0.4-debian-12-r0")
-    haproxy_image    = optional(string, "haproxytech/haproxy-alpine:3.0")
-    haproxy_replicas = optional(number, 2)
+    enabled             = optional(bool, false)
+    replica_count       = optional(number, 3)
+    quorum              = optional(number, 2)
+    chart_version       = optional(string, "5.6.1")
+    image_repo          = optional(string, "bitnami/valkey")
+    image_tag           = optional(string, "latest")
+    sentinel_image_repo = optional(string, "bitnami/valkey-sentinel")
+    sentinel_image_tag  = optional(string, "latest")
+    haproxy_image       = optional(string, "haproxytech/haproxy-alpine:3.0")
+    haproxy_replicas    = optional(number, 2)
   })
   default = {}
 }
@@ -411,9 +413,30 @@ resource "helm_release" "valkey_sentinel" {
     architecture = "replication"
 
     image = {
-      registry   = split("/", var.sentinel.image_repo)[0]
-      repository = join("/", slice(split("/", var.sentinel.image_repo), 1, length(split("/", var.sentinel.image_repo))))
+      registry   = "docker.io"
+      repository = var.sentinel.image_repo
       tag        = var.sentinel.image_tag
+    }
+
+    sentinel = {
+      enabled = true
+      quorum  = var.sentinel.quorum
+      image = {
+        registry   = "docker.io"
+        repository = var.sentinel.sentinel_image_repo
+        tag        = var.sentinel.sentinel_image_tag
+      }
+      # Bitnami chart's default sentinel resource preset is tight
+      # (~150m CPU limit). Sentinel needs timer interrupts firing
+      # 10/sec consistently — at 150m CFS throttling delays them
+      # past the 2s threshold and Sentinel enters TILT mode (local
+      # PING blocks 60s+, probes time out, daemon useless).
+      # Lift to 500m so timer-driven discovery + election keep up.
+      resourcesPreset = "none"
+      resources = {
+        requests = { cpu = "100m", memory = "64Mi" }
+        limits   = { cpu = "500m", memory = "128Mi" }
+      }
     }
 
     auth = {
@@ -441,11 +464,6 @@ resource "helm_release" "valkey_sentinel" {
       }
       nodeSelector = var.node_selector
       tolerations  = var.tolerations
-    }
-
-    sentinel = {
-      enabled = true
-      quorum  = var.sentinel.quorum
     }
   })]
 }
@@ -476,7 +494,7 @@ resource "kubernetes_config_map_v1" "haproxy_config" {
         timeout server  60s
 
       resolvers k8s
-        parsers /etc/resolv.conf
+        parse-resolv-conf
         accepted_payload_size 8192
         hold valid 10s
 
@@ -487,7 +505,7 @@ resource "kubernetes_config_map_v1" "haproxy_config" {
       backend redis_back
         option tcp-check
         tcp-check connect
-        tcp-check send AUTH\ $${REDIS_PASSWORD}\r\n
+        tcp-check send AUTH\ ${random_password.default["enabled"].result}\r\n
         tcp-check expect string +OK
         tcp-check send PING\r\n
         tcp-check expect string +PONG
@@ -495,7 +513,7 @@ resource "kubernetes_config_map_v1" "haproxy_config" {
         tcp-check expect string role:master
         tcp-check send QUIT\r\n
         tcp-check expect string +OK
-        server-template valkey ${var.sentinel.replica_count} redis-headless.${var.namespace}.svc.cluster.local:6379 check inter 1s rise 1 fall 2 resolvers k8s init-addr none
+        server-template valkey ${var.sentinel.replica_count} redis-valkey-headless.${var.namespace}.svc.cluster.local:6379 check inter 1s rise 1 fall 2 resolvers k8s init-addr none
     EOT
   }
 }
