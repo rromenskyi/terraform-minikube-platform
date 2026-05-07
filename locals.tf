@@ -75,6 +75,14 @@ locals {
         pools                    = {}
         shared_ip_annotations    = {}
       }
+      minio = {
+        enabled       = false
+        storage_class = ""
+        storage_size  = "50Gi"
+        node_selector = {}
+        tolerations   = []
+        buckets       = {}
+      }
       backup = {
         enabled                = false
         postgres_databases     = []
@@ -155,6 +163,7 @@ locals {
       kured         = merge(local._platform_defaults.services.kured, try(local._platform_services.kured, {}))
       longhorn      = merge(local._platform_defaults.services.longhorn, try(local._platform_services.longhorn, {}))
       metallb       = merge(local._platform_defaults.services.metallb, try(local._platform_services.metallb, {}))
+      minio         = merge(local._platform_defaults.services.minio, try(local._platform_services.minio, {}))
       backup        = merge(local._platform_defaults.services.backup, try(local._platform_services.backup, {}))
       platform_dash = merge(local._platform_defaults.services.platform_dash, try(local._platform_services.platform_dash, {}))
     }
