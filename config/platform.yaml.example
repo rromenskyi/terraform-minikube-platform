@@ -195,9 +195,9 @@ services:
     #   kubernetes.io/hostname: edge-node
     # Speaker tolerations — needed if the announcing node carries
     # an app-specific taint (e.g. a VPS that's both an LB ingress
-    # and an app-pinned node).
+    # and a dedicated-app node).
     # speaker_tolerations:
-    #   - { key: app, operator: Equal, value: matrix, effect: NoSchedule }
+    #   - { key: app, operator: Equal, value: <app-name>, effect: NoSchedule }
     # Pools — map of pool name → addresses + L2 advertisement.
     # `addresses` is a list of CIDRs or `start-end` ranges in
     # MetalLB's native syntax. `auto_assign: false` makes Services
