@@ -99,6 +99,18 @@ variable "secret_name" {
   type        = string
 }
 
+variable "secret_formats" {
+  description = "List of env-name conventions to materialise inside the emitted Secret. Each format adds a parallel set of keys with the same client_id / client_secret / issuer values rendered under the env names that format expects. Multiple formats stack non-destructively — a chart that reads any one of them works without engine changes. Supported values: `auth_js` (default — emits AUTH_ZITADEL_ISSUER / AUTH_ZITADEL_ID / AUTH_ZITADEL_SECRET / AUTH_SECRET, the @auth/sveltekit + Auth.js convention), `open_webui` (OAUTH_CLIENT_ID / OAUTH_CLIENT_SECRET / OPENID_PROVIDER_URL — Open WebUI's `ENABLE_OAUTH_SIGNUP` path), `grafana_oauth` (GF_AUTH_GENERIC_OAUTH_CLIENT_ID / GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET / GF_AUTH_GENERIC_OAUTH_AUTH_URL / _TOKEN_URL / _API_URL — Grafana's generic OAuth provider). Empty list disables every format (Secret still created but data-only — engine consumers can read raw `*` outputs)."
+  type        = list(string)
+  default     = ["auth_js"]
+  validation {
+    condition = alltrue([
+      for f in var.secret_formats : contains(["auth_js", "open_webui", "grafana_oauth"], f)
+    ])
+    error_message = "Each `secret_formats` entry must be one of: auth_js, open_webui, grafana_oauth."
+  }
+}
+
 # ── Resources ─────────────────────────────────────────────────────────────────
 
 resource "zitadel_project" "this" {
@@ -169,12 +181,40 @@ resource "kubernetes_secret_v1" "oidc" {
     }
   }
 
-  data = {
-    AUTH_ZITADEL_ISSUER = var.issuer_url
-    AUTH_ZITADEL_ID     = zitadel_application_oidc.this.client_id
-    AUTH_ZITADEL_SECRET = zitadel_application_oidc.this.client_secret
-    AUTH_SECRET         = random_password.auth_secret.result
-  }
+  data = merge(
+    # auth_js — @auth/sveltekit / Auth.js standard env names. Default,
+    # always-emitted historically; kept as the canonical set so the
+    # AUTH_SECRET (signing key for Auth.js JWT cookies) is part of
+    # every format's output regardless of which client convention
+    # the chart follows.
+    contains(var.secret_formats, "auth_js") ? {
+      AUTH_ZITADEL_ISSUER = var.issuer_url
+      AUTH_ZITADEL_ID     = zitadel_application_oidc.this.client_id
+      AUTH_ZITADEL_SECRET = zitadel_application_oidc.this.client_secret
+      AUTH_SECRET         = random_password.auth_secret.result
+    } : {},
+
+    # open_webui — Open WebUI's `ENABLE_OAUTH_SIGNUP` flow reads a
+    # discovery URL (full path to /.well-known/openid-configuration),
+    # not the bare issuer. Compose it from issuer + standard suffix
+    # so charts don't have to assemble it themselves.
+    contains(var.secret_formats, "open_webui") ? {
+      OAUTH_CLIENT_ID     = zitadel_application_oidc.this.client_id
+      OAUTH_CLIENT_SECRET = zitadel_application_oidc.this.client_secret
+      OPENID_PROVIDER_URL = "${var.issuer_url}/.well-known/openid-configuration"
+    } : {},
+
+    # grafana_oauth — Grafana's `[auth.generic_oauth]` config can be
+    # driven entirely via `GF_AUTH_GENERIC_OAUTH_*` env. Auth/token/
+    # API URLs follow Zitadel's standard issuer paths.
+    contains(var.secret_formats, "grafana_oauth") ? {
+      GF_AUTH_GENERIC_OAUTH_CLIENT_ID     = zitadel_application_oidc.this.client_id
+      GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET = zitadel_application_oidc.this.client_secret
+      GF_AUTH_GENERIC_OAUTH_AUTH_URL      = "${var.issuer_url}/oauth/v2/authorize"
+      GF_AUTH_GENERIC_OAUTH_TOKEN_URL     = "${var.issuer_url}/oauth/v2/token"
+      GF_AUTH_GENERIC_OAUTH_API_URL       = "${var.issuer_url}/oidc/v1/userinfo"
+    } : {},
+  )
 }
 
 # ── Outputs ───────────────────────────────────────────────────────────────────
