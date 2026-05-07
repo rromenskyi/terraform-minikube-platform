@@ -24,6 +24,7 @@ module "metallb" {
   speaker_node_selector    = local.platform.services.metallb.speaker_node_selector
   speaker_tolerations      = local.platform.services.metallb.speaker_tolerations
   pools                    = local.platform.services.metallb.pools
+  shared_ip_annotations    = local.platform.services.metallb.shared_ip_annotations
 }
 
 output "metallb_pools" {

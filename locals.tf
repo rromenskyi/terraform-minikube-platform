@@ -73,6 +73,7 @@ locals {
         speaker_node_selector    = {}
         speaker_tolerations      = []
         pools                    = {}
+        shared_ip_annotations    = {}
       }
       backup = {
         enabled                = false

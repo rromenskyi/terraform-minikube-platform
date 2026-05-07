@@ -210,6 +210,18 @@ services:
     #       - 192.0.2.10/32
     #     l2_node_selectors:
     #       - { kubernetes.io/hostname: edge-node }
+    # Shared-IP annotations — engine adds
+    # `metallb.universe.tf/allow-shared-ip: <key>` on a Service
+    # owned by another controller (Helm chart, ArgoCD) so MetalLB
+    # legalises sharing one VIP across multiple Services with
+    # non-conflicting port/protocol pairs (e.g. Traefik on TCP
+    # 80/443 + a SIP proxy on UDP 5160). BOTH Services must carry
+    # the same key. Engine annotates with kubernetes_annotations
+    # (server-side patch) — the Service's other fields stay under
+    # the original owner's reconciliation. Map key is
+    # `<namespace>/<service-name>`, value is the shared-ip key.
+    # shared_ip_annotations:
+    #   ingress-controller/traefik: public
 
   longhorn:
     enabled: false

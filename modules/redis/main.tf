@@ -408,6 +408,14 @@ resource "helm_release" "valkey_sentinel" {
   version    = var.sentinel.chart_version
   namespace  = var.namespace
   timeout    = 900
+  # Don't block apply on pod readiness. Sentinel cluster bring-up
+  # converges on its own once pods schedule (StatefulSet, sidecar
+  # quorum gossip); kubelet probes can flap on network-saturated
+  # nodes and stall every other apply target waiting on a sentinel
+  # sidecar to flip ready. Helm completes the manifest push and
+  # moves on; failures surface via `helm status` / pod state, not
+  # TF state drift.
+  wait = false
 
   values = [yamlencode({
     architecture = "replication"
