@@ -57,6 +57,17 @@ variable "default_replica_count" {
   default     = 3
 }
 
+variable "tag_pools" {
+  description = "Operator-defined topology pools. Each entry causes the engine to emit a sibling StorageClass named `longhorn-<key>` whose volumes are constrained to nodes carrying the specified Longhorn node tag (and optionally with a custom replica count + reclaim policy). Operator decides which pools exist (keys are operator-named, e.g. `home`, `edge`, `fast-ssd`) and tags the matching nodes one-time via `kubectl -n longhorn-system patch node.longhorn.io <name> --type=merge -p '{\"spec\":{\"tags\":[\"<key>\"]}}'`. Consumers (e.g. `services.redis.storage_class`) opt in by referencing `longhorn-<key>` SC name. Empty map (default) emits no extra SCs — only the default `longhorn` SC the chart creates is in play."
+  type = map(object({
+    replicas       = optional(number, 2)
+    reclaim_policy = optional(string, "Delete")
+    fs_type        = optional(string, "ext4")
+    data_locality  = optional(string, "best-effort")
+  }))
+  default = {}
+}
+
 variable "default_data_path" {
   description = "Host directory each Longhorn instance-manager pod writes replica data to. Should NOT be the same path the platform's hostPath PVs use — keep blast radius separate."
   type        = string
@@ -131,6 +142,7 @@ locals {
   backup_configured = (
     var.enabled &&
     var.backup_b2_bucket != "" &&
+    var.backup_b2_region != "" &&
     var.backup_b2_endpoint != ""
   )
 
@@ -255,6 +267,49 @@ resource "helm_release" "longhorn" {
   timeout = 1200
 
   values = [local.values]
+}
+
+# ── Sibling StorageClasses per operator-defined topology pool ─────────────
+#
+# Default `longhorn` StorageClass spreads replicas across all
+# Longhorn-registered nodes per the chart's anti-affinity rules.
+# In a multi-DC cluster (home + VPS through WireGuard mesh) this
+# puts replicas on VPS reachable only over the internet, adding
+# 100-200ms per synchronous write — acceptable for object stores
+# but ruinous for latency-sensitive Redis/Valkey-class workloads.
+#
+# `var.tag_pools` lets the operator declare topology pools; each
+# entry emits a sibling StorageClass `longhorn-<key>` whose volumes
+# are constrained to nodes carrying the matching Longhorn node tag.
+# Engine stays generic: the keys / tag names / replica counts are
+# all operator-decided. Tagging is operator-side one-time:
+#
+#   kubectl -n longhorn-system patch node.longhorn.io <node> \
+#     --type=merge -p '{"spec":{"tags":["<key>"]}}'
+#
+# PVCs opt in by setting `storageClassName: longhorn-<key>`.
+# Without the tag applied to at least `replicas` nodes, PVCs of
+# the corresponding class stay Pending until tags are placed.
+
+resource "kubernetes_storage_class_v1" "tag_pool" {
+  for_each = var.enabled ? var.tag_pools : {}
+
+  depends_on = [helm_release.longhorn]
+
+  metadata {
+    name = "longhorn-${each.key}"
+  }
+  storage_provisioner    = "driver.longhorn.io"
+  reclaim_policy         = each.value.reclaim_policy
+  volume_binding_mode    = "Immediate"
+  allow_volume_expansion = true
+  parameters = {
+    numberOfReplicas    = tostring(each.value.replicas)
+    nodeSelector        = each.key
+    dataLocality        = each.value.data_locality
+    fsType              = each.value.fs_type
+    staleReplicaTimeout = "30"
+  }
 }
 
 # ── Recurring backup job ───────────────────────────────────────────────────

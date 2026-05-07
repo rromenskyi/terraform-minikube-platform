@@ -28,6 +28,13 @@ check "platform_dash_hostname_set" {
   }
 }
 
+check "platform_dash_image_set" {
+  assert {
+    condition     = !local.platform.services.platform_dash.enabled || local.platform.services.platform_dash.image != ""
+    error_message = "services.platform_dash.image must be set when platform_dash is enabled (e.g. `ghcr.io/<your-handle>/platform-dash:vX.Y.Z`). Engine does not assume a specific registry path — operator owns the dashboard build."
+  }
+}
+
 # OIDC integration. Emits a Secret in `platform` ns with
 # AUTH_ZITADEL_ISSUER / AUTH_ZITADEL_ID / AUTH_ZITADEL_SECRET /
 # AUTH_SECRET — the module's Deployment mounts it via env_from.

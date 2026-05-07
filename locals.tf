@@ -23,12 +23,13 @@ locals {
       }
       redis = {
         enabled       = false
+        storage_class = ""
         node_selector = {}
         tolerations   = []
       }
       ollama = {
         enabled        = false
-        models         = ["deepseek-r1:1.5b"]
+        models         = []
         memory_request = "4Gi"
         memory_limit   = "16Gi"
         cpu_request    = "200m"
@@ -60,8 +61,9 @@ locals {
       longhorn = {
         enabled          = false
         replica_count    = 3
-        backup_b2_region = "us-east-005"
+        backup_b2_region = ""
         tolerations      = []
+        tag_pools        = {}
       }
       backup = {
         enabled                = false
@@ -116,7 +118,7 @@ locals {
       # first-class platform infra (its own ns + module).
       platform_dash = {
         enabled  = false
-        image    = "ghcr.io/rromenskyi/platform-dash:latest"
+        image    = ""
         replicas = 1
         hostname = ""
         resources = {
