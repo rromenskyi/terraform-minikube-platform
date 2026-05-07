@@ -66,6 +66,14 @@ locals {
         tolerations      = []
         tag_pools        = {}
       }
+      metallb = {
+        enabled                  = false
+        controller_node_selector = {}
+        controller_tolerations   = []
+        speaker_node_selector    = {}
+        speaker_tolerations      = []
+        pools                    = {}
+      }
       backup = {
         enabled                = false
         postgres_databases     = []
@@ -145,6 +153,7 @@ locals {
       argocd        = merge(local._platform_defaults.services.argocd, try(local._platform_services.argocd, {}))
       kured         = merge(local._platform_defaults.services.kured, try(local._platform_services.kured, {}))
       longhorn      = merge(local._platform_defaults.services.longhorn, try(local._platform_services.longhorn, {}))
+      metallb       = merge(local._platform_defaults.services.metallb, try(local._platform_services.metallb, {}))
       backup        = merge(local._platform_defaults.services.backup, try(local._platform_services.backup, {}))
       platform_dash = merge(local._platform_defaults.services.platform_dash, try(local._platform_services.platform_dash, {}))
     }
