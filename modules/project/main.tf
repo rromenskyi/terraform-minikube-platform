@@ -985,6 +985,7 @@ module "chart_oidc" {
 
   secret_namespace = kubernetes_namespace_v1.this.metadata[0].name
   secret_name      = each.key
+  secret_formats   = try(each.value.secret_formats, ["auth_js"])
 }
 
 # ── Zitadel auto-provisioning for `kind: app` components ─────────────────────
@@ -1102,16 +1103,47 @@ module "component" {
     kubernetes_secret_v1.ollama_endpoint[0].metadata[0].name
   ) : null
 
-  oidc_secret_name = contains(keys(local.app_components_with_oidc), each.key) ? (
-    module.zitadel_app[each.key].secret_name
-  ) : null
+  # OIDC Secret wiring — two ways the component can opt in:
+  #
+  #   1. `kind: app` + `oidc.enabled: true` — engine auto-creates
+  #      a per-app Zitadel Project + OIDC Application via the
+  #      `module.zitadel_app[<component>]` block above. The standard
+  #      path for first-party apps the engine itself owns.
+  #
+  #   2. Any kind, with `oidc_secret_ref: <key>` pointing at a
+  #      `chart_oidc_apps` entry — engine reuses an OIDC client
+  #      defined at project scope. The path for third-party charts
+  #      (Open WebUI, Grafana) where the env-name convention is
+  #      controlled per-entry via `chart_oidc_apps.<key>.secret_formats`.
+  #
+  # When neither path applies, `oidc_secret_name` stays null and the
+  # component starts without OAuth env (the chart's own degrade
+  # behaviour decides whether anonymous access works or sign-in is
+  # disabled).
+  oidc_secret_name = (
+    contains(keys(local.app_components_with_oidc), each.key)
+    ? module.zitadel_app[each.key].secret_name
+    : (
+      try(each.value.oidc_secret_ref, null) != null
+      && contains(keys(var.chart_oidc_apps), try(each.value.oidc_secret_ref, ""))
+      ? module.chart_oidc[each.value.oidc_secret_ref].secret_name
+      : null
+    )
+  )
 
   # Drive a pod rollout whenever the OIDC Secret rotates. K8s doesn't
   # do this on its own for envFrom-sourced env vars — see the
   # `pod_annotations` var in modules/component for the why.
-  pod_annotations = contains(keys(local.app_components_with_oidc), each.key) ? {
-    "checksum/oidc" = module.zitadel_app[each.key].secret_checksum
-  } : {}
+  pod_annotations = (
+    contains(keys(local.app_components_with_oidc), each.key)
+    ? { "checksum/oidc" = module.zitadel_app[each.key].secret_checksum }
+    : (
+      try(each.value.oidc_secret_ref, null) != null
+      && contains(keys(var.chart_oidc_apps), try(each.value.oidc_secret_ref, ""))
+      ? { "checksum/oidc" = module.chart_oidc[each.value.oidc_secret_ref].secret_checksum }
+      : {}
+    )
+  )
 
   static_env = try(each.value.env_static, {})
 

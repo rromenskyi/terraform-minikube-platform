@@ -39,10 +39,38 @@ env_random:
 # sentence-transformers locally. `RAG_OLLAMA_BASE_URL` is set to the
 # same in-cluster URL Open WebUI already uses for chat completions —
 # one model server, one place to manage models.
+# OIDC sign-in via Zitadel — the OAUTH_CLIENT_ID / OAUTH_CLIENT_SECRET /
+# OPENID_PROVIDER_URL env vars come from the project's `chart_oidc_apps:
+# <oidc_secret_ref>` entry (engine emits the Secret in `secret_formats:
+# [open_webui]` shape). When the project doesn't declare a matching
+# entry — or platform's Zitadel is disabled cluster-wide — the secret
+# reference resolves to null and the chat container starts without
+# OAuth env, which Open WebUI degrades gracefully into local-account
+# sign-up + admin-key login.
+oidc_secret_ref: chat-oidc
+
 env_static:
   RAG_EMBEDDING_ENGINE: ollama
   RAG_OLLAMA_BASE_URL:  http://ollama.platform.svc.cluster.local:11434
   RAG_EMBEDDING_MODEL:  all-minilm:latest
+
+  # OAuth wiring statics — the dynamic CLIENT_ID / CLIENT_SECRET /
+  # PROVIDER_URL come from the OIDC secret above. These three flags
+  # turn the feature on; the rest pin Zitadel's role claim path so
+  # `webui_admin` / `webui_user` Project roles map cleanly onto Open
+  # WebUI's admin / user role gates. Override per-tenant in the
+  # domain yaml's `components:` block when a specific tenant wants
+  # different role names or a closed sign-up policy.
+  ENABLE_OAUTH_SIGNUP:           "true"
+  ENABLE_OAUTH_ROLE_MANAGEMENT:  "true"
+  OAUTH_PROVIDER_NAME:           "Zitadel"
+  OAUTH_ROLES_CLAIM:             "urn:zitadel:iam:org:project:roles"
+  OAUTH_ALLOWED_ROLES:           "webui_admin,webui_user"
+  OAUTH_ADMIN_ROLES:             "webui_admin"
+  # Open WebUI assumes its sign-in flow lands at the same hostname
+  # the user typed in their address bar — don't pin a specific URL,
+  # leave the redirect URI inference to the request hostname so the
+  # same chart works under any tenant's domain.
 
   # `all-minilm` is embeddings-only; picking it in the chat UI returns
   # "model does not support chat". Hide it from the UI — the RAG backend
