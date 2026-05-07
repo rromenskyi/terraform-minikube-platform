@@ -50,6 +50,16 @@ env_random:
 oidc_secret_ref: chat-oidc
 
 env_static:
+  # Open WebUI runs under uvicorn — trust the forwarded proto from
+  # the cluster's ingress chain (cloudflared → Traefik → pod). TLS
+  # terminates at the Cloudflare edge; the hop into the pod is
+  # plain HTTP, so without this uvicorn falls back to scheme=http
+  # when building absolute URLs (in particular the OAuth callback
+  # `redirect_uri`, which Zitadel then rejects against the
+  # registered HTTPS URL). `*` is fine inside a single-trust-boundary
+  # cluster; tighten only if multi-tenant ingress lands here.
+  FORWARDED_ALLOW_IPS:  "*"
+
   RAG_EMBEDDING_ENGINE: ollama
   RAG_OLLAMA_BASE_URL:  http://ollama.platform.svc.cluster.local:11434
   RAG_EMBEDDING_MODEL:  all-minilm:latest
@@ -78,9 +88,15 @@ env_static:
   # stay visible so the user can A/B them side-by-side. Tiny qwen3.5
   # variants (0.8b + 2b) ride along for snappy single-shot prompts where
   # the bigger 4b/9b/14b round-trip latency feels heavy.
-  DEFAULT_MODELS:      qwen3.5:9b
-  ENABLE_MODEL_FILTER: "True"
-  MODEL_FILTER_LIST:   qwen3.5:0.8b,qwen3.5:2b,qwen3.5:4b,qwen3.5:9b,qwen3:14b,gemma4:e2b,gemma4:e4b
+  DEFAULT_MODELS: qwen3.5:9b
+  # NOTE: `ENABLE_MODEL_FILTER` + `MODEL_FILTER_LIST` are no-ops in
+  # Open WebUI v0.9.x — model visibility is purely per-model ACL
+  # in the local SQLite (`model.access_control` + AccessGrants).
+  # Operator currently sets visibility manually via Admin Panel
+  # after a one-time login as the pre-OIDC local admin account.
+  # Engine extension to auto-upsert via admin API is in
+  # `~/.claude/.../memory/project_platform_ops_todo.md` —
+  # "Open WebUI per-model config automation".
 
   # Pre-register the co-located mcp-weather sidecar as a native MCP tool
   # server so the chat model can call `get_current_weather`, `get_forecast`
