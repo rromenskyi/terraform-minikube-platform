@@ -47,6 +47,12 @@ variable "node_selector" {
   default     = {}
 }
 
+variable "storage_class" {
+  description = "StorageClass name for the Redis PVC. Empty (default) = no `storageClassName` field is set on the PVC, so the cluster's default StorageClass is used (typically `local-path` on k3s, hostPath-backed and node-pinned). Set to a HA-capable SC (e.g. one of `services.longhorn.tag_pools`'s `longhorn-<pool>` outputs) to opt the Redis volume into distributed block storage that survives node failure. The choice is operator-side per `services.redis.storage_class` in `config/platform.yaml` — engine stays generic and does not assume Longhorn or any particular SC implementation is present."
+  type        = string
+  default     = ""
+}
+
 variable "tolerations" {
   description = "Taints the Redis pod tolerates. Empty list = pod cannot land on any tainted node."
   type = list(object({
@@ -91,15 +97,19 @@ resource "kubernetes_secret_v1" "default" {
 
 # ── Persistent storage (AOF + RDB) ────────────────────────────────────────────
 #
-# Backed by Longhorn distributed block storage (PR #58). Longhorn
-# replicates volume blocks across multiple nodes, so a node-loss
-# event re-attaches the same logical volume to a surviving node and
-# Valkey resumes from the last AOF/RDB sync — no data loss, ~1-2 min
-# rescheduling downtime. No manual `kubernetes_persistent_volume_v1`
-# needed; Longhorn's CSI driver provisions the PV dynamically when
-# the PVC is bound. The legacy hostPath PV ("platform-redis-data")
-# pinned the volume to one node — replaced with the Longhorn-backed
-# PVC below.
+# Dynamic-provisioned PVC. The chosen StorageClass is operator-supplied
+# via `var.storage_class`:
+#   - Empty (default) → no `storageClassName` is set, cluster default
+#     SC is used (typically `local-path` on k3s — hostPath-backed and
+#     node-pinned, no HA but zero extra dependencies).
+#   - Non-empty → the named SC handles provisioning. A common opt-in
+#     is to point this at a `longhorn-<pool>` SC emitted by
+#     `services.longhorn.tag_pools` (operator-defined topology pools)
+#     — Longhorn replicates blocks across the pool's tagged nodes, so
+#     node-loss events re-attach the logical PV to a surviving node
+#     and Valkey resumes from the last AOF/RDB sync. The redis module
+#     itself stays storage-implementation-agnostic — it does not
+#     reference Longhorn (or any other CSI driver) directly.
 
 resource "kubernetes_persistent_volume_claim_v1" "redis" {
   for_each = local.instances
@@ -111,7 +121,7 @@ resource "kubernetes_persistent_volume_claim_v1" "redis" {
 
   spec {
     access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "longhorn"
+    storage_class_name = var.storage_class != "" ? var.storage_class : null
 
     resources {
       requests = {
