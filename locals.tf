@@ -26,6 +26,7 @@ locals {
         storage_class = ""
         node_selector = {}
         tolerations   = []
+        sentinel      = {}
       }
       ollama = {
         enabled        = false
