@@ -79,10 +79,10 @@ variable "controller_tolerations" {
 }
 
 variable "scale_sets" {
-  description = "Map of runner scale sets to install. Map key is the scale-set name (also the chart release name and the runner label set's identifier). Each entry: `github_config_url` (full URL — `https://github.com/<org>` or `https://github.com/<org>/<repo>` or `https://github.com/enterprises/<ent>`), `github_secret_name` (k8s Secret in the scale-set's namespace carrying either `github_token` for PAT auth or `github_app_id` + `github_app_installation_id` + `github_app_private_key` for GitHub App auth — engine does NOT create this Secret, operator pre-creates it), `namespace` (where the runner pods + listener land — engine creates it), `min_runners` (int, default 0 — scale to zero between jobs is the default; set ≥1 to keep warm runners), `max_runners` (int, default 4 — upper bound on concurrent runners; pick based on cluster headroom), `runner_image` (default pinned to a verified-pullable upstream tag — bump as upstream cuts new releases), `runner_resources` (k8s resources block), `runner_node_selector` / `runner_tolerations` / `runner_affinity` (placement for runner pods — separate from controller). `runner_affinity` is the standard k8s v1 affinity shape (`nodeAffinity`, `podAffinity`, `podAntiAffinity` keys); empty map preserves chart defaults (no anti-affinity), set `podAntiAffinity` on `kubernetes.io/hostname` to spread N runners across N nodes so a single node loss takes out at most one runner. Empty map = no scale sets, controller still installs (cheap to leave running)."
+  description = "Map of runner scale sets to install. Map key is the scale-set name (also the chart release name and the runner label set's identifier). Each entry: `github_config_url` (full URL — `https://github.com/<org>` or `https://github.com/<org>/<repo>` or `https://github.com/enterprises/<ent>`), `github_secret_name` (optional — set to reference an externally-managed k8s Secret carrying GitHub App fields; leave empty to have engine emit a `<key>-github-pat` PAT-shaped Secret automatically from `var.tokens[<key>]`), `namespace` (where the runner pods + listener land — engine creates it), `min_runners` (int, default 0 — scale to zero between jobs is the default; set ≥1 to keep warm runners), `max_runners` (int, default 4 — upper bound on concurrent runners; pick based on cluster headroom), `runner_image` (default pinned to a verified-pullable upstream tag — bump as upstream cuts new releases), `runner_resources` (k8s resources block), `runner_node_selector` / `runner_tolerations` / `runner_affinity` (placement for runner pods — separate from controller). `runner_affinity` is the standard k8s v1 affinity shape (`nodeAffinity`, `podAffinity`, `podAntiAffinity` keys); empty map preserves chart defaults (no anti-affinity), set `podAntiAffinity` on `kubernetes.io/hostname` to spread N runners across N nodes so a single node loss takes out at most one runner. Empty map = no scale sets, controller still installs (cheap to leave running)."
   type = map(object({
     github_config_url    = string
-    github_secret_name   = string
+    github_secret_name   = optional(string, "")
     namespace            = string
     min_runners          = optional(number, 0)
     max_runners          = optional(number, 4)
@@ -98,6 +98,13 @@ variable "scale_sets" {
     runner_affinity = optional(any, {})
   }))
   default = {}
+}
+
+variable "tokens" {
+  description = "Sensitive map of GitHub PATs keyed by scale-set name — when an entry's key matches a `scale_sets` map key whose `github_secret_name` is empty, the engine emits a `<key>-github-pat` Secret in the scale-set's namespace carrying `github_token: <value>` and wires the chart to consume it. Operator supplies values via `TF_VAR_github_runner_tokens` (one-time `.env` paste, eventually BWS — see ops backlog). Engine never paths kubectl-create-secret for ARC auth; this map is the only knob. Empty map (default) implies every scale set must reference an externally-managed `github_secret_name`."
+  type        = map(string)
+  default     = {}
+  sensitive   = true
 }
 
 # ── Locals ─────────────────────────────────────────────────────────────────
@@ -154,6 +161,42 @@ resource "kubernetes_namespace_v1" "scale_set" {
   }
 }
 
+# ── Engine-emitted PAT Secret per scale set ───────────────────────────────
+#
+# Triggers when the operator supplied a token in `var.tokens[<key>]`
+# AND the scale-set entry left `github_secret_name` empty (the
+# default). Engine creates `<key>-github-pat` carrying the
+# `github_token` field the chart's listener-pod expects. The
+# operator's only knob is the `.env` map — no kubectl-create-secret
+# anywhere in the workflow.
+resource "kubernetes_secret_v1" "github_pat" {
+  # Token VALUES are sensitive; their KEYS aren't (they match
+  # operator-yaml scale-set names that already live unencrypted in
+  # `services.github_runners.scale_sets`). `nonsensitive(keys(...))`
+  # unwraps just the key list so for_each can iterate at plan time.
+  for_each = {
+    for k, v in local.scale_set_targets :
+    k => v
+    if v.github_secret_name == "" && contains(nonsensitive(keys(var.tokens)), k)
+  }
+
+  depends_on = [kubernetes_namespace_v1.scale_set]
+
+  metadata {
+    name      = "${each.key}-github-pat"
+    namespace = each.value.namespace
+    labels = {
+      "app.kubernetes.io/managed-by" = "terraform"
+      "app.kubernetes.io/component"  = "arc-github-pat"
+      "platform.scale-set"           = each.key
+    }
+  }
+
+  data = {
+    github_token = var.tokens[each.key]
+  }
+}
+
 # ── Scale sets ─────────────────────────────────────────────────────────────
 
 resource "helm_release" "scale_set" {
@@ -162,6 +205,7 @@ resource "helm_release" "scale_set" {
   depends_on = [
     helm_release.controller,
     kubernetes_namespace_v1.scale_set,
+    kubernetes_secret_v1.github_pat,
   ]
 
   name             = each.key
@@ -172,8 +216,11 @@ resource "helm_release" "scale_set" {
   create_namespace = false
 
   values = [yamlencode({
-    githubConfigUrl    = each.value.github_config_url
-    githubConfigSecret = each.value.github_secret_name
+    githubConfigUrl = each.value.github_config_url
+    # Either the operator referenced an externally-managed Secret
+    # (GitHub App fields outside the scope of `var.tokens`) or
+    # engine emitted a PAT Secret named after the scale-set key.
+    githubConfigSecret = each.value.github_secret_name != "" ? each.value.github_secret_name : "${each.key}-github-pat"
     minRunners         = each.value.min_runners
     maxRunners         = each.value.max_runners
     template = {

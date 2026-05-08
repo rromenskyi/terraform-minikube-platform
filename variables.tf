@@ -4,6 +4,13 @@ variable "cluster_name" {
   default     = "minikube"
 }
 
+variable "github_runner_tokens" {
+  description = "Sensitive map of GitHub PATs keyed by `services.github_runners.scale_sets` map key. When a key is present here AND the matching scale-set entry leaves `github_secret_name` empty, the engine emits a `<key>-github-pat` Secret in the scale-set's namespace carrying `github_token: <value>` and wires the chart to consume it. Operator pastes via `TF_VAR_github_runner_tokens='{\"<key>\":\"ghp_...\"}'` in the gitignored `.env` (BWS migration on the ops backlog). Empty map (default) implies every scale set must reference an externally-managed `github_secret_name`."
+  type        = map(string)
+  default     = {}
+  sensitive   = true
+}
+
 variable "memory" {
   description = "Memory allocated to the Minikube cluster in MB"
   type        = number
