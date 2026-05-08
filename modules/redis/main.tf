@@ -69,6 +69,12 @@ variable "tolerations" {
   default = []
 }
 
+variable "affinity" {
+  description = "Optional pod / node affinity rendered into the Bitnami `valkey` chart's `replica.affinity` block (sentinel mode). Standard Kubernetes affinity shape — `nodeAffinity`, `podAffinity`, `podAntiAffinity` map keys, native v1 schema. Common use: `nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution` excluding a high-latency node from the sentinel pool when the chart's default cluster-wide pod-anti-affinity would otherwise scatter a replica there. Single-instance mode ignores this input. Empty map (default) preserves the chart's default placement."
+  type        = any
+  default     = {}
+}
+
 variable "sentinel" {
   description = "Optional Valkey Sentinel HA topology. When `enabled = true`, the module switches from the default single-StatefulSet implementation to a Bitnami `valkey` Helm release running `architecture: replication` + `sentinel.enabled: true`, plus an HAProxy Deployment in front (sentinel-aware health checks via `tcp-check expect role:master`) so consumers keep talking to the flat `redis.<ns>.svc:6379` Service without any client-side changes. **Operator opts in** via `services.redis.sentinel:` in `config/platform.yaml`. Default `enabled = false` preserves the simple single-instance path. Switching `false → true` is a one-way data wipe (the existing single-instance PVC is destroyed when its for_each collapses; tenant ACL Jobs need re-trigger to repopulate per-tenant users on the fresh chart deploy)."
   type = object({
@@ -478,6 +484,11 @@ resource "helm_release" "valkey_sentinel" {
       }
       nodeSelector = var.node_selector
       tolerations  = var.tolerations
+      # Empty-map default leaves the chart's bundled
+      # podAntiAffinity in place; an operator-supplied affinity
+      # block REPLACES it wholesale (the chart's render path
+      # resolves a single `affinity:` field, no merge).
+      affinity = var.affinity
     }
   })]
 }
