@@ -178,3 +178,21 @@ resource "zitadel_default_login_policy" "main" {
   multi_factors  = ["MULTI_FACTOR_TYPE_U2F_WITH_VERIFICATION"]
   second_factors = ["SECOND_FACTOR_TYPE_OTP", "SECOND_FACTOR_TYPE_U2F"]
 }
+
+# Instance-wide OIDC token lifetimes. Operator-tunable via
+# `services.zitadel.oidc_settings`. Default values mirror Zitadel's
+# upstream defaults (12h access / 12h id / 30d refresh / 7d idle);
+# shorter `access_token_lifetime` (e.g. 5m) bounds the staleness
+# window on every OIDC consumer — Stalwart, chat, ArgoCD — so a
+# role grant flipped via the Zitadel UI surfaces in the consumer
+# within one token-lifetime cycle instead of being stuck on a
+# cached pre-grant token until LRU eviction or pod restart.
+resource "zitadel_default_oidc_settings" "main" {
+  count      = local.platform.services.zitadel.enabled ? 1 : 0
+  depends_on = [module.zitadel]
+
+  access_token_lifetime         = local.platform.services.zitadel.oidc_settings.access_token_lifetime
+  id_token_lifetime             = local.platform.services.zitadel.oidc_settings.id_token_lifetime
+  refresh_token_expiration      = local.platform.services.zitadel.oidc_settings.refresh_token_expiration
+  refresh_token_idle_expiration = local.platform.services.zitadel.oidc_settings.refresh_token_idle_expiration
+}

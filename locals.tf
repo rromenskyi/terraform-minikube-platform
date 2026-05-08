@@ -110,6 +110,21 @@ locals {
           allow_external_idp      = true
           allow_username_password = true
         }
+        # Instance-wide OIDC token lifetimes. Defaults match
+        # Zitadel's bundled defaults (12h access/id, 30d refresh,
+        # 7d idle) so a clean install lands the same shape upstream
+        # ships. Override to shorten — e.g. 5m access keeps OIDC
+        # consumers re-fetching `/userinfo` close to the IdP's
+        # current state, so role-grant changes (Zitadel UI / TF /
+        # API) propagate to consumers (Stalwart, chat, ArgoCD)
+        # within the access-token lifetime instead of being stuck
+        # on stale tokens until LRU eviction or pod restart.
+        oidc_settings = {
+          access_token_lifetime         = "12h"
+          id_token_lifetime             = "12h"
+          refresh_token_expiration      = "720h"
+          refresh_token_idle_expiration = "168h"
+        }
         # Provider transport — how the Zitadel TF provider (gRPC)
         # reaches the Zitadel API. Default = `public`: provider hits
         # the real ExternalDomain over HTTPS, which works on any
