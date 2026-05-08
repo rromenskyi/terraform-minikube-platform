@@ -19,6 +19,7 @@ module "github_runners" {
   controller_node_selector = local.platform.services.github_runners.controller_node_selector
   controller_tolerations   = local.platform.services.github_runners.controller_tolerations
   scale_sets               = local.platform.services.github_runners.scale_sets
+  tokens                   = var.github_runner_tokens
 }
 
 output "github_runners_scale_sets" {
