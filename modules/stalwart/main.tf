@@ -493,6 +493,29 @@ locals {
           directoryId = "#dir-zitadel"
         }
       }),
+
+      # Minimise the access-token positive cache. Stalwart's `Cache`
+      # struct caches access-token → user-info lookups by capacity
+      # only (LRU eviction, no TTL). When an operator grants a new
+      # OIDC role in Zitadel, an existing cached access_token still
+      # resolves to the pre-grant identity until LRU pressure
+      # eventually evicts it OR the pod restarts.
+      #
+      # Stalwart validation refuses values below 2048 ("must be at
+      # least 2048" — verified at apply 2026-05-08), so we cap at
+      # the floor. Combined with the 5-minute access-token lifetime
+      # set on the Zitadel side (`services.zitadel.oidc_settings`),
+      # an entry can stay cached at most one token-lifetime window
+      # before the OIDC consumer rotates to a fresh token (and a
+      # fresh cache key) — bounding role-grant staleness to ≤5min
+      # without per-request `/userinfo` round-trips.
+      jsonencode({
+        "@type" = "update"
+        object  = "Cache"
+        value = {
+          accessTokens = 2048
+        }
+      }),
     ] : [],
 
     # ── Outbound smart host (when configured) ─────────────────────
