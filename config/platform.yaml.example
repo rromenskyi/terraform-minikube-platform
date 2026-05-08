@@ -268,6 +268,56 @@ services:
     #   enabled:       true
     #   replica_count: 5
 
+  # GitHub self-hosted runners via ARC (Actions Runner Controller v0.9+).
+  #
+  # GitHub-maintained ARC has a built-in listener that polls the GH
+  # Actions API and scales runner pods 0 → max_runners as the queue
+  # grows. No KEDA needed. The earlier `summerwind/actions-runner-
+  # controller` is deprecated; this module uses
+  # `actions/actions-runner-controller-charts` only.
+  #
+  # GitHub auth per scale set: operator pre-creates a k8s Secret in
+  # the scale set's namespace carrying either:
+  #   - `github_token` (PAT — scope: workflow registration on the
+  #     specific org / repo / enterprise URL)
+  #   - `github_app_id` + `github_app_installation_id` +
+  #     `github_app_private_key` (GitHub App — preferred for orgs)
+  #
+  # Engine references the Secret by name; engine does NOT create or
+  # rotate it. Bootstrap once via `kubectl create secret generic
+  # arc-github-pat -n <ns> --from-literal=github_token=...`.
+  github_runners:
+    enabled: false
+    # Controller is shared across every scale set — stateless,
+    # cheap to leave on a stable tier.
+    # controller_node_selector:
+    #   workload-tier: general
+    # Map of scale sets — each entry is one runner pool. Map key is
+    # also the chart release name and runner-label-set identifier.
+    # scale_sets:
+    #   org-runners:
+    #     # Org-level runners — workflows in any repo under the org
+    #     # land in this pool. Use repo-level URL
+    #     # (https://github.com/<org>/<repo>) to scope to one repo.
+    #     github_config_url:  https://github.com/<org>
+    #     # Pre-created Secret in the namespace below (see comment
+    #     # above for required keys).
+    #     github_secret_name: arc-github-pat
+    #     namespace:          arc-runners
+    #     # Scale-to-zero between jobs (default min_runners: 0).
+    #     # Bump min ≥1 to keep warm runners; pay continuous CPU
+    #     # for queue-latency reduction. ARC controller charges no
+    #     # GitHub API rate when idle.
+    #     min_runners: 0
+    #     max_runners: 4
+    #     # Pin runners to the fat compute tier — runner pods are
+    #     # short-lived but can spike on multi-core builds.
+    #     runner_node_selector:
+    #       workload-tier: general
+    #     runner_resources:
+    #       requests: { cpu: "500m",  memory: "1Gi"  }
+    #       limits:   { cpu: "4",     memory: "8Gi"  }
+
   longhorn:
     enabled: false
     # `replica_count` — how many copies of each volume Longhorn
