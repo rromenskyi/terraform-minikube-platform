@@ -170,10 +170,14 @@ resource "kubernetes_namespace_v1" "scale_set" {
 # operator's only knob is the `.env` map — no kubectl-create-secret
 # anywhere in the workflow.
 resource "kubernetes_secret_v1" "github_pat" {
+  # Token VALUES are sensitive; their KEYS aren't (they match
+  # operator-yaml scale-set names that already live unencrypted in
+  # `services.github_runners.scale_sets`). `nonsensitive(keys(...))`
+  # unwraps just the key list so for_each can iterate at plan time.
   for_each = {
     for k, v in local.scale_set_targets :
     k => v
-    if v.github_secret_name == "" && contains(keys(var.tokens), k)
+    if v.github_secret_name == "" && contains(nonsensitive(keys(var.tokens)), k)
   }
 
   depends_on = [kubernetes_namespace_v1.scale_set]
