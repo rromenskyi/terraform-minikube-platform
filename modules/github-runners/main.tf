@@ -79,14 +79,14 @@ variable "controller_tolerations" {
 }
 
 variable "scale_sets" {
-  description = "Map of runner scale sets to install. Map key is the scale-set name (also the chart release name and the runner label set's identifier). Each entry: `github_config_url` (full URL — `https://github.com/<org>` or `https://github.com/<org>/<repo>` or `https://github.com/enterprises/<ent>`), `github_secret_name` (k8s Secret in the scale-set's namespace carrying either `github_token` for PAT auth or `github_app_id` + `github_app_installation_id` + `github_app_private_key` for GitHub App auth — engine does NOT create this Secret, operator pre-creates it), `namespace` (where the runner pods + listener land — engine creates it), `min_runners` (int, default 0 — scale to zero between jobs is the default; set ≥1 to keep warm runners), `max_runners` (int, default 4 — upper bound on concurrent runners; pick based on cluster headroom), `runner_image` (defaults to GitHub's hosted image equivalent), `runner_resources` (k8s resources block), `runner_node_selector` / `runner_tolerations` (placement for runner pods, separate from controller). Empty map = no scale sets, controller still installs (cheap to leave running)."
+  description = "Map of runner scale sets to install. Map key is the scale-set name (also the chart release name and the runner label set's identifier). Each entry: `github_config_url` (full URL — `https://github.com/<org>` or `https://github.com/<org>/<repo>` or `https://github.com/enterprises/<ent>`), `github_secret_name` (k8s Secret in the scale-set's namespace carrying either `github_token` for PAT auth or `github_app_id` + `github_app_installation_id` + `github_app_private_key` for GitHub App auth — engine does NOT create this Secret, operator pre-creates it), `namespace` (where the runner pods + listener land — engine creates it), `min_runners` (int, default 0 — scale to zero between jobs is the default; set ≥1 to keep warm runners), `max_runners` (int, default 4 — upper bound on concurrent runners; pick based on cluster headroom), `runner_image` (default pinned to a verified-pullable upstream tag — bump as upstream cuts new releases), `runner_resources` (k8s resources block), `runner_node_selector` / `runner_tolerations` / `runner_affinity` (placement for runner pods — separate from controller). `runner_affinity` is the standard k8s v1 affinity shape (`nodeAffinity`, `podAffinity`, `podAntiAffinity` keys); empty map preserves chart defaults (no anti-affinity), set `podAntiAffinity` on `kubernetes.io/hostname` to spread N runners across N nodes so a single node loss takes out at most one runner. Empty map = no scale sets, controller still installs (cheap to leave running)."
   type = map(object({
     github_config_url    = string
     github_secret_name   = string
     namespace            = string
     min_runners          = optional(number, 0)
     max_runners          = optional(number, 4)
-    runner_image         = optional(string, "ghcr.io/actions/actions-runner:latest")
+    runner_image         = optional(string, "ghcr.io/actions/actions-runner:2.328.0")
     runner_resources     = optional(any, {})
     runner_node_selector = optional(map(string), {})
     runner_tolerations = optional(list(object({
@@ -95,6 +95,7 @@ variable "scale_sets" {
       value    = optional(string)
       effect   = optional(string)
     })), [])
+    runner_affinity = optional(any, {})
   }))
   default = {}
 }
@@ -179,6 +180,7 @@ resource "helm_release" "scale_set" {
       spec = {
         nodeSelector = each.value.runner_node_selector
         tolerations  = each.value.runner_tolerations
+        affinity     = each.value.runner_affinity
         containers = [{
           name      = "runner"
           image     = each.value.runner_image

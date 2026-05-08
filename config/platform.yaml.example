@@ -314,6 +314,21 @@ services:
     #     # short-lived but can spike on multi-core builds.
     #     runner_node_selector:
     #       workload-tier: general
+    #     # Optional standard k8s v1 affinity. Common pattern:
+    #     # spread N runners across N nodes via podAntiAffinity on
+    #     # `kubernetes.io/hostname` so a single node loss takes
+    #     # out at most one runner. Combine with nodeAffinity rules
+    #     # to opt runners into specific tiers (edge / general /
+    #     # whatever the operator labels).
+    #     runner_affinity:
+    #       podAntiAffinity:
+    #         preferredDuringSchedulingIgnoredDuringExecution:
+    #           - weight: 100
+    #             podAffinityTerm:
+    #               labelSelector:
+    #                 matchLabels:
+    #                   actions.github.com/scale-set-name: <key-above>
+    #               topologyKey: kubernetes.io/hostname
     #     runner_resources:
     #       requests: { cpu: "500m",  memory: "1Gi"  }
     #       limits:   { cpu: "4",     memory: "8Gi"  }
