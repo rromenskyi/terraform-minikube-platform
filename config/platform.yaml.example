@@ -250,13 +250,23 @@ services:
     storage_size: 50Gi
     # node_selector:
     #   workload-tier: stateful
-    # buckets:
-    #   tenant-archive:
-    #     consumer_namespace: phost-example-com-prod
-    #     secret_name:        tenant-s3
-    #     # `region` is what the SDK expects in S3_REGION. MinIO
-    #     # ignores it but boto3 / aws-sdk-go demand a value.
-    #     region:             auto
+    # Optional distributed topology — switches from a single-replica
+    # Deployment to a StatefulSet with N replicas, each backed by
+    # its own PVC, erasure-coded across the pool. Anti-affinity
+    # spreads pods one-per-node by hostname. Per-pod storage =
+    # `storage_size` above; total raw = `storage_size × replica_count`,
+    # usable ≈ `(replica_count - 1) × storage_size` (1 parity).
+    # Minimum `replica_count` is 4 (MinIO erasure coding floor).
+    #
+    # Trade-off: native HA (survives 1 node loss without re-attach
+    # window), parallel read/write — but every PUT requires quorum
+    # acknowledgment, which over a WG mesh between geographically
+    # distant nodes adds latency proportional to the slowest peer.
+    # Stay on standalone if the consumers tolerate ~1 min re-attach
+    # window on a node loss event.
+    # distributed:
+    #   enabled:       true
+    #   replica_count: 5
 
   longhorn:
     enabled: false
