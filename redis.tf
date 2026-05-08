@@ -15,4 +15,5 @@ module "redis" {
 
   node_selector = local.platform.services.redis.node_selector
   tolerations   = local.platform.services.redis.tolerations
+  affinity      = local.platform.services.redis.affinity
 }
