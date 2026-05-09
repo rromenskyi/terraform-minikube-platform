@@ -31,6 +31,6 @@ output "minio_endpoint" {
 }
 
 output "minio_buckets" {
-  description = "Map of bucket name → consumer-namespace Secret name. Empty when MinIO is disabled or no buckets are configured."
+  description = "Map of bucket name → list of `{namespace, secret_name}` for every consumer on that bucket. Empty when MinIO is disabled or no buckets are configured."
   value       = module.minio.bucket_secret_names
 }

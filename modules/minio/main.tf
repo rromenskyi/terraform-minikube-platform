@@ -850,6 +850,6 @@ output "service_name" {
 }
 
 output "bucket_secret_names" {
-  description = "Map of bucket name → emitted Secret name (in the consumer namespace). Empty when no buckets configured or module disabled."
-  value       = { for k, v in local.bucket_targets : k => v.secret_name }
+  description = "Map of bucket name → list of `{namespace, secret_name}` for every consumer Secret emitted on that bucket. Empty when no buckets configured or module disabled."
+  value       = { for k, v in local.bucket_targets : k => v.consumers }
 }
