@@ -602,6 +602,40 @@ resource "kubernetes_secret_v1" "postgres_credentials" {
 # can't carry dashes without quoting; same convention as the default
 # `pg_database` / `pg_user` already use.
 
+# Composes the per-extra-database identifier (DB name + role name)
+# through `terraform-null-label`. Same shape as the chart_oidc adoption:
+# operator-readable, length-capped, and tagged consistently across Job
+# + Secret labels.
+#
+# `delimiter = "_"` because Postgres identifiers must be quoted to use
+# dashes — staying ASCII-safe lets every downstream `psql` interaction
+# skip the extra quoting layer. `namespace` is already env-encoded
+# (`phost-<slug>-<env>` → `phost_<slug>_<env>`), so `label_order =
+# ["namespace", "name"]` skips the env attribute that chart_oidc's
+# label adds — would just duplicate.
+#
+# `id_max_length = 63` is Postgres's identifier limit (`NAMEDATALEN -
+# 1`); on overflow null-label truncates to cap-9 chars + delimiter +
+# 8-char sha256 suffix to keep uniqueness. Long namespace + long key
+# combos no longer silently get truncated by Postgres itself.
+module "pg_extra_label" {
+  for_each = local.pg_extra_databases
+
+  source = "git::https://github.com/rromenskyi/terraform-null-label.git?ref=v0.1.0"
+
+  namespace     = replace(local.namespace, "-", "_") # "phost_<slug>_<env>"
+  name          = each.key                           # the extra-database key
+  delimiter     = "_"
+  label_order   = ["namespace", "name"]
+  id_max_length = 63
+  tags = {
+    "app.kubernetes.io/managed-by" = "terraform"
+    "app.kubernetes.io/component"  = "postgres-extra-db"
+    "project-namespace"            = local.namespace
+    "extra-database"               = each.key
+  }
+}
+
 resource "random_password" "postgres_extra" {
   for_each = local.pg_extra_databases
 
@@ -617,11 +651,7 @@ resource "kubernetes_job_v1" "postgres_setup_extra" {
   metadata {
     name      = "postgres-setup-${local.namespace}-${each.key}"
     namespace = var.postgres_namespace
-    labels = {
-      "app.kubernetes.io/managed-by" = "terraform"
-      "project-namespace"            = local.namespace
-      "extra-database"               = each.key
-    }
+    labels    = module.pg_extra_label[each.key].tags
   }
 
   spec {
@@ -666,11 +696,11 @@ resource "kubernetes_job_v1" "postgres_setup_extra" {
           command = [
             "sh", "-c",
             join(" && ", [
-              "psql -h ${var.postgres_host} -U postgres -tc \"SELECT 1 FROM pg_database WHERE datname = '${local.pg_database}_${each.key}'\" | grep -q 1 || psql -h ${var.postgres_host} -U postgres -c \"CREATE DATABASE \\\"${local.pg_database}_${each.key}\\\"\"",
-              "psql -h ${var.postgres_host} -U postgres -tc \"SELECT 1 FROM pg_roles WHERE rolname = '${local.pg_user}_${each.key}'\" | grep -q 1 || psql -h ${var.postgres_host} -U postgres -c \"CREATE ROLE \\\"${local.pg_user}_${each.key}\\\" WITH LOGIN PASSWORD '${random_password.postgres_extra[each.key].result}'\"",
-              "psql -h ${var.postgres_host} -U postgres -c \"ALTER ROLE \\\"${local.pg_user}_${each.key}\\\" WITH PASSWORD '${random_password.postgres_extra[each.key].result}'\"",
-              "psql -h ${var.postgres_host} -U postgres -c \"GRANT ALL PRIVILEGES ON DATABASE \\\"${local.pg_database}_${each.key}\\\" TO \\\"${local.pg_user}_${each.key}\\\"\"",
-              "psql -h ${var.postgres_host} -U postgres -d ${local.pg_database}_${each.key} -c \"GRANT ALL ON SCHEMA public TO \\\"${local.pg_user}_${each.key}\\\"\"",
+              "psql -h ${var.postgres_host} -U postgres -tc \"SELECT 1 FROM pg_database WHERE datname = '${module.pg_extra_label[each.key].id}'\" | grep -q 1 || psql -h ${var.postgres_host} -U postgres -c \"CREATE DATABASE \\\"${module.pg_extra_label[each.key].id}\\\"\"",
+              "psql -h ${var.postgres_host} -U postgres -tc \"SELECT 1 FROM pg_roles WHERE rolname = '${module.pg_extra_label[each.key].id}'\" | grep -q 1 || psql -h ${var.postgres_host} -U postgres -c \"CREATE ROLE \\\"${module.pg_extra_label[each.key].id}\\\" WITH LOGIN PASSWORD '${random_password.postgres_extra[each.key].result}'\"",
+              "psql -h ${var.postgres_host} -U postgres -c \"ALTER ROLE \\\"${module.pg_extra_label[each.key].id}\\\" WITH PASSWORD '${random_password.postgres_extra[each.key].result}'\"",
+              "psql -h ${var.postgres_host} -U postgres -c \"GRANT ALL PRIVILEGES ON DATABASE \\\"${module.pg_extra_label[each.key].id}\\\" TO \\\"${module.pg_extra_label[each.key].id}\\\"\"",
+              "psql -h ${var.postgres_host} -U postgres -d ${module.pg_extra_label[each.key].id} -c \"GRANT ALL ON SCHEMA public TO \\\"${module.pg_extra_label[each.key].id}\\\"\"",
             ])
           ]
         }
@@ -693,15 +723,16 @@ resource "kubernetes_secret_v1" "postgres_credentials_extra" {
   metadata {
     name      = "${each.key}-postgres-credentials"
     namespace = kubernetes_namespace_v1.this.metadata[0].name
+    labels    = module.pg_extra_label[each.key].tags
   }
 
   data = {
     PG_HOST      = var.postgres_host
     PG_PORT      = "5432"
-    PG_DATABASE  = "${local.pg_database}_${each.key}"
-    PG_USER      = "${local.pg_user}_${each.key}"
+    PG_DATABASE  = module.pg_extra_label[each.key].id
+    PG_USER      = module.pg_extra_label[each.key].id
     PG_PASSWORD  = random_password.postgres_extra[each.key].result
-    DATABASE_URL = "postgres://${local.pg_user}_${each.key}:${random_password.postgres_extra[each.key].result}@${var.postgres_host}:5432/${local.pg_database}_${each.key}"
+    DATABASE_URL = "postgres://${module.pg_extra_label[each.key].id}:${random_password.postgres_extra[each.key].result}@${var.postgres_host}:5432/${module.pg_extra_label[each.key].id}"
   }
 }
 
