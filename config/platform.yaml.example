@@ -267,6 +267,27 @@ services:
     # distributed:
     #   enabled:       true
     #   replica_count: 5
+    #
+    # Buckets pre-created by the engine, each exposed to N consumer
+    # namespaces via per-consumer Secrets. Each consumer gets its
+    # own MinIO service-account key + its own k8s Secret in its own
+    # namespace (`S3_*` env vars), so leakage of one Secret limits
+    # blast radius to that service-account and is revocable without
+    # bucket recreation. Multiple consumers on the same bucket
+    # share data — same `s3:*` policy on the bucket per
+    # service-account (no per-consumer prefix scoping yet). A
+    # plan-time precondition rejects buckets with zero consumers.
+    # Map key is the bucket name (S3 naming rules apply: lowercase
+    # + dashes only).
+    # buckets:
+    #   tenant-archive:
+    #     region: auto                         # SDK-required string; MinIO ignores
+    #     consumers:
+    #       - { namespace: phost-example-com-prod, secret_name: example-archive-s3 }
+    #       - { namespace: phost-example-com-prod, secret_name: example-frontend-s3 }
+    #   shared-uploads:
+    #     consumers:
+    #       - { namespace: phost-other-tld-prod,   secret_name: other-uploads-s3 }
 
   # GitHub self-hosted runners via ARC (Actions Runner Controller v0.9+).
   #
@@ -276,16 +297,26 @@ services:
   # controller` is deprecated; this module uses
   # `actions/actions-runner-controller-charts` only.
   #
-  # GitHub auth per scale set: operator pre-creates a k8s Secret in
-  # the scale set's namespace carrying either:
-  #   - `github_token` (PAT — scope: workflow registration on the
-  #     specific org / repo / enterprise URL)
-  #   - `github_app_id` + `github_app_installation_id` +
-  #     `github_app_private_key` (GitHub App — preferred for orgs)
+  # GitHub auth per scale set has two shapes:
   #
-  # Engine references the Secret by name; engine does NOT create or
-  # rotate it. Bootstrap once via `kubectl create secret generic
-  # arc-github-pat -n <ns> --from-literal=github_token=...`.
+  #   (a) Engine-emitted PAT (default). Leave `github_secret_name`
+  #       empty in the scale-set entry below AND drop the PAT into
+  #       `TF_VAR_github_runner_tokens` in the operator's `.env`
+  #       (sensitive map keyed by the same map key as `scale_sets`).
+  #       Engine then materialises `<key>-github-pat` in the scale
+  #       set's namespace carrying `github_token: <value>` and wires
+  #       the chart to consume it. No `kubectl create secret` step
+  #       anywhere — the engine owns the Secret lifecycle.
+  #
+  #   (b) Externally-managed Secret. Set `github_secret_name` to the
+  #       name of a Secret you manage outside this engine (typical
+  #       case: GitHub App fields, since `tokens` only takes a single
+  #       PAT string per entry). The engine references the Secret by
+  #       name and never reads or rotates it.
+  #
+  # A `lifecycle.precondition` on the chart release fails the plan
+  # if neither auth source is wired for a scale set, with an error
+  # message naming the offending key.
   github_runners:
     enabled: false
     # Controller is shared across every scale set — stateless,
@@ -294,15 +325,19 @@ services:
     #   workload-tier: general
     # Map of scale sets — each entry is one runner pool. Map key is
     # also the chart release name and runner-label-set identifier.
+    # PATs for engine-emit mode (shape (a) above) come from
+    # `TF_VAR_github_runner_tokens` in `.env`, keyed by the same
+    # map key — e.g. `TF_VAR_github_runner_tokens='{"org-runners":"ghp_..."}'`.
     # scale_sets:
     #   org-runners:
     #     # Org-level runners — workflows in any repo under the org
     #     # land in this pool. Use repo-level URL
     #     # (https://github.com/<org>/<repo>) to scope to one repo.
     #     github_config_url:  https://github.com/<org>
-    #     # Pre-created Secret in the namespace below (see comment
-    #     # above for required keys).
-    #     github_secret_name: arc-github-pat
+    #     # Leave empty for shape (a) — engine emits
+    #     # `<key>-github-pat` from var.tokens. Set to an existing
+    #     # Secret name for shape (b).
+    #     github_secret_name: ""
     #     namespace:          arc-runners
     #     # Scale-to-zero between jobs (default min_runners: 0).
     #     # Bump min ≥1 to keep warm runners; pay continuous CPU
@@ -429,6 +464,91 @@ services:
     #   allow_register:          false
     #   allow_external_idp:      true
     #   allow_username_password: true
+
+  # Operator dashboard (SvelteKit) — single-pane status view of every
+  # tenant project + platform service. OIDC-only authentication via
+  # Zitadel; the engine creates the matching Zitadel application
+  # automatically (so `services.zitadel.enabled` is a hard pre-req,
+  # surfaced as a `check` block).
+  #
+  # Engine does NOT assume a specific dashboard build — operator owns
+  # the image. Push a build to any registry the cluster can pull from
+  # (GHCR, Docker Hub, in-cluster Harbor) and pin the tag here.
+  platform_dash:
+    enabled: false
+    # image:    ghcr.io/<your-handle>/platform-dash:vX.Y.Z
+    # hostname: dash.example.com               # routed via the same CF tunnel
+    # replicas: 1
+    # resources:
+    #   requests: { cpu: 100m, memory: 128Mi }
+    #   limits:   { cpu: 500m, memory: 512Mi }
+    # node_selector:
+    #   workload-tier: general
+
+  # Knobs for the bundled `terraform-k8s-addons` releases. Each field
+  # is a thin pass-through to the addon chart — leave commented to
+  # preserve the chart's stock behaviour. Currently only Traefik is
+  # exposed.
+  addons: {}
+    # `Deployment` (chart default; one Pod fronting all VIPs) or
+    # `DaemonSet` (one Pod per matched node — required when
+    # MetalLB pools have `l2_node_selectors` pinning each VIP to
+    # a specific node, so the Traefik backing the VIP must run on
+    # that node too).
+    # traefik_deployment_kind: DaemonSet
+    # Tolerations on the Traefik Pod — needed in DaemonSet mode if
+    # any matched node carries a NoSchedule taint (e.g. an edge
+    # node tagged `node-role.kubernetes.io/edge`).
+    # traefik_tolerations:
+    #   - { key: node-role.kubernetes.io/edge, operator: Exists, effect: NoSchedule }
+    # Optional node selector for the Traefik Pod — only useful in
+    # Deployment mode (DaemonSet runs everywhere it tolerates).
+    # traefik_node_selector:
+    #   workload-tier: edge
+
+  # Cluster-internal BuildKit daemon for self-hosted runner image
+  # builds. Single shared `buildkitd` Pod exposes its gRPC API on
+  # `tcp://buildkitd.arc-buildkitd.svc.cluster.local:1234`; ARC
+  # workflows hit it via `docker buildx create --driver remote
+  # --endpoint <that>`. Cache slabs land on a hostPath volume so
+  # sequential builds reuse layers across (ephemeral) runner pods.
+  #
+  # Runs the upstream rootful `moby/buildkit` image with the CERN
+  # userns pattern: `securityContext.privileged: true` *inside* a
+  # Pod with `hostUsers: false`, so the privileged uid 0 in-container
+  # remaps through a kernel user-namespace to an unprivileged uid on
+  # the host. The namespace label `pod-security.kubernetes.io/enforce`
+  # is set to `privileged` (required for `privileged: true`); the
+  # actual blast-radius bound is the kernel userns, not PSA. See
+  # `buildkitd.tf` header for the full trust model.
+  #
+  # Why not the rootless `*-rootless` image: Ubuntu 23.10+ closes
+  # the AppArmor `userns_create` LSM hook by default, which blocks
+  # unprivileged user-namespace creation. CERN privileged-in-userns
+  # sidesteps the hook and is the upstream-documented production
+  # pattern.
+  buildkitd:
+    enabled: false
+    # image_tag:  v0.29.0                       # rootful — `<ver>-rootless` will not work without sysctl tweaks
+    # host_path:  /data/vol/buildkit-cache      # cluster-node cache dir; pin daemon with node_selector
+    # mount_path: /var/lib/buildkit             # in-container cache path (rootful default)
+    # Resource budget — buildkit can spike on multi-stage builds.
+    # cpu_request:    200m
+    # cpu_limit:      "4"
+    # memory_request: 512Mi
+    # memory_limit:   8Gi
+    # Readiness-probe knobs. Buildkit's `buildctl debug workers`
+    # contends with the active build for the OCI worker lock, so
+    # the chart-default `period=10, timeout=1` killed Pods mid-build.
+    # Defaults below are values that survived a real ARC build cycle.
+    # readiness_initial_delay_seconds: 5
+    # readiness_period_seconds:        60
+    # readiness_timeout_seconds:       15
+    # readiness_failure_threshold:     5
+    # Pin the daemon to a specific node so the hostPath cache
+    # stays warm across rollouts.
+    # node_selector:
+    #   workload-tier: general
 
 # Pod placement (Phase B, optional per service)
 #
