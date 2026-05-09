@@ -51,7 +51,7 @@ locals {
 # ── ServiceAccount ───────────────────────────────────────────────────────────
 
 resource "kubernetes_service_account_v1" "this" {
-  count = var.enabled ? 1 : 0
+  for_each = var.enabled ? toset(["enabled"]) : toset([])
   metadata {
     name      = local.app_name
     namespace = var.namespace
@@ -66,7 +66,7 @@ resource "kubernetes_service_account_v1" "this" {
 # CRD edit/delete is intentionally left out for now.
 
 resource "kubernetes_cluster_role_v1" "this" {
-  count = var.enabled ? 1 : 0
+  for_each = var.enabled ? toset(["enabled"]) : toset([])
   metadata {
     name   = local.cluster_role
     labels = local.labels
@@ -99,7 +99,7 @@ resource "kubernetes_cluster_role_v1" "this" {
 }
 
 resource "kubernetes_cluster_role_binding_v1" "this" {
-  count = var.enabled ? 1 : 0
+  for_each = var.enabled ? toset(["enabled"]) : toset([])
   metadata {
     name   = local.cluster_role
     labels = local.labels
@@ -107,11 +107,11 @@ resource "kubernetes_cluster_role_binding_v1" "this" {
   role_ref {
     api_group = "rbac.authorization.k8s.io"
     kind      = "ClusterRole"
-    name      = kubernetes_cluster_role_v1.this[0].metadata[0].name
+    name      = values(kubernetes_cluster_role_v1.this)[0].metadata[0].name
   }
   subject {
     kind      = "ServiceAccount"
-    name      = kubernetes_service_account_v1.this[0].metadata[0].name
+    name      = values(kubernetes_service_account_v1.this)[0].metadata[0].name
     namespace = var.namespace
   }
 }
@@ -119,7 +119,7 @@ resource "kubernetes_cluster_role_binding_v1" "this" {
 # ── Deployment ───────────────────────────────────────────────────────────────
 
 resource "kubernetes_deployment_v1" "this" {
-  count = var.enabled ? 1 : 0
+  for_each = var.enabled ? toset(["enabled"]) : toset([])
 
   metadata {
     name      = local.app_name
@@ -148,7 +148,7 @@ resource "kubernetes_deployment_v1" "this" {
       }
 
       spec {
-        service_account_name = kubernetes_service_account_v1.this[0].metadata[0].name
+        service_account_name = values(kubernetes_service_account_v1.this)[0].metadata[0].name
 
         # Pod placement primitives — empty defaults preserve prior
         # scheduler behaviour.
@@ -244,7 +244,7 @@ resource "kubernetes_deployment_v1" "this" {
 # ── Service ──────────────────────────────────────────────────────────────────
 
 resource "kubernetes_service_v1" "this" {
-  count = var.enabled ? 1 : 0
+  for_each = var.enabled ? toset(["enabled"]) : toset([])
   metadata {
     name      = local.app_name
     namespace = var.namespace
