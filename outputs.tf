@@ -163,13 +163,25 @@ output "vault" {
 output "zitadel_pat" {
   description = "PAT for the Zitadel TF provider (machine user `tf-platform`, IAM_OWNER, far-future expiry). Lifted from the in-cluster `zitadel-tf-pat` Secret that the FIRSTINSTANCE-bootstrapped pat-broker sidecar populates. Empty when Zitadel is disabled OR the sidecar hasn't run yet (pre-bootstrap clean clone); populated after the first `./tf apply` brings Zitadel up. Fetch with `terraform output -raw zitadel_pat`, then paste into `.env` as `TF_VAR_zitadel_pat=...` so subsequent applies provision kind:app components."
   sensitive   = true
-  value = try(
-    base64decode([
+  # Two legitimate empty-state cases — only those collapse to "":
+  #   1. Zitadel disabled: the data source for_each map is empty
+  #      (no "enabled" key), so we short-circuit on the service flag
+  #      before indexing it.
+  #   2. Zitadel enabled but the pat-broker sidecar hasn't populated
+  #      `zitadel-tf-pat` yet (clean-clone bootstrap): the filter
+  #      returns zero objects and `one()` collapses to null, which
+  #      `coalesce(..., "")` turns into "".
+  # Anything else (the Secret exists but `data.access_token` is
+  # missing, malformed base64, ...) is a real schema regression and
+  # must surface as a plan-time error rather than be swallowed by a
+  # broad `try()`.
+  value = local.platform.services.zitadel.enabled ? coalesce(
+    one([
       for o in data.kubernetes_resources.zitadel_tf_pat_output["enabled"].objects :
-      o if o.metadata.name == "zitadel-tf-pat"
-    ][0].data.access_token),
+      base64decode(o.data.access_token) if o.metadata.name == "zitadel-tf-pat"
+    ]),
     ""
-  )
+  ) : ""
 }
 
 output "namespaces" {
