@@ -40,6 +40,26 @@ terraform {
 
 locals {
   instances = var.enabled ? toset(["enabled"]) : toset([])
+
+  # Shorthand for the propagated null-label tag set used by every
+  # non-Helm resource the module emits. Helm release delegates label
+  # generation to the chart (`metallb/metallb`), so we don't apply
+  # `metadata.labels` to the `helm_release` TF resource — the chart
+  # owns its own runtime labels.
+  tags = module.label.tags
+}
+
+# Module-tier label, chained off `var.context` (root passes
+# `module.platform_label.context` from `_label.tf`).
+module "label" {
+  source = "git::https://github.com/rromenskyi/terraform-null-label.git?ref=v0.1.0"
+
+  context   = var.context
+  namespace = var.namespace
+  name      = "metallb"
+  tags = {
+    "app.kubernetes.io/component" = "metallb"
+  }
 }
 
 # ── Namespace ──────────────────────────────────────────────────────────────
@@ -49,12 +69,12 @@ resource "kubernetes_namespace_v1" "metallb" {
 
   metadata {
     name = var.namespace
-    labels = {
+    labels = merge(local.tags, {
       # MetalLB's webhook expects this label so its ValidatingAdmissionWebhook
       # can scope CRD validation correctly. Skipping it makes IPAddressPool /
       # L2Advertisement creates fail with "namespace not found by webhook".
       "pod-security.kubernetes.io/enforce" = "privileged"
-    }
+    })
   }
 }
 
@@ -110,6 +130,7 @@ resource "kubectl_manifest" "ip_pool" {
     metadata = {
       name      = each.key
       namespace = var.namespace
+      labels    = local.tags
     }
     spec = {
       addresses  = each.value.addresses
@@ -132,6 +153,7 @@ resource "kubectl_manifest" "l2_advertisement" {
     metadata = {
       name      = each.key
       namespace = var.namespace
+      labels    = local.tags
     }
     spec = {
       ipAddressPools = [each.key]
