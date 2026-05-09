@@ -183,7 +183,12 @@ resource "kubernetes_stateful_set_v1" "ollama" {
         container {
           name = "ollama"
           # GPU-capable image from `var.gpu.image` when configured;
-          # CPU-only `ollama/ollama:latest` otherwise.
+          # CPU-only `ollama/ollama:latest` otherwise. `:latest` is
+          # intentional — Ollama ships engine + model-format support
+          # in lock-step, and we want the freshest of both on every
+          # rollout. Pin via `var.gpu.image` when the operator needs
+          # a fixed CUDA / Vulkan combo on the GPU path; the CPU
+          # fallback can roll forward freely.
           image   = var.gpu == null ? "ollama/ollama:latest" : var.gpu.image
           command = var.gpu == null ? null : ["ollama", "serve"]
 
@@ -394,7 +399,10 @@ resource "kubernetes_job_v1" "pull_models" {
         restart_policy = "OnFailure"
 
         container {
-          name  = "pull"
+          name = "pull"
+          # `:latest` is intentional — this Job only runs `ollama
+          # pull` against the StatefulSet's API; it ships no engine
+          # itself, and any version that can speak the API will do.
           image = "ollama/ollama:latest"
 
           env {

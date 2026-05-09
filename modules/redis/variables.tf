@@ -61,10 +61,24 @@ variable "affinity" {
 variable "sentinel" {
   description = "Optional Valkey Sentinel HA topology. When `enabled = true`, the module switches from the default single-StatefulSet implementation to a Bitnami `valkey` Helm release running `architecture: replication` + `sentinel.enabled: true`, plus an HAProxy Deployment in front (sentinel-aware health checks via `tcp-check expect role:master`) so consumers keep talking to the flat `redis.<ns>.svc:6379` Service without any client-side changes. **Operator opts in** via `services.redis.sentinel:` in `config/platform.yaml`. Default `enabled = false` preserves the simple single-instance path. Switching `false → true` is a one-way data wipe (the existing single-instance PVC is destroyed when its for_each collapses; tenant ACL Jobs need re-trigger to repopulate per-tenant users on the fresh chart deploy)."
   type = object({
-    enabled             = optional(bool, false)
-    replica_count       = optional(number, 3)
-    quorum              = optional(number, 2)
-    chart_version       = optional(string, "5.6.1")
+    enabled       = optional(bool, false)
+    replica_count = optional(number, 3)
+    quorum        = optional(number, 2)
+    chart_version = optional(string, "5.6.1")
+    # `image_tag` and `sentinel_image_tag` default to `latest` because
+    # Bitnami / Broadcom moved every versioned `bitnami/<X>:<ver>` tag
+    # to the paid Bitnami Secure Images registry in August 2025. The
+    # free `docker.io/bitnami/*` images now ship ONLY `:latest` (every
+    # prior `:9.x.y` is `404 not found`; the `bitnamilegacy/*` archive
+    # does not back-fill). Pinning options short of paying:
+    #   1. Digest-pin (`bitnami/valkey@sha256:...`) — works but needs
+    #      manual digest bumps per upgrade, defeats reusable defaults.
+    #   2. Switch off the Bitnami chart (run upstream `valkey/valkey`
+    #      under our own StatefulSet, or move to the
+    #      `valkeyio/valkey-helm-chart` community chart) — real long-
+    #      term answer, deferred until a chart switch is on the table.
+    # Operator may override here per-deployment if they hit a working
+    # tag — but expect 404s on anything other than `latest`.
     image_repo          = optional(string, "bitnami/valkey")
     image_tag           = optional(string, "latest")
     sentinel_image_repo = optional(string, "bitnami/valkey-sentinel")

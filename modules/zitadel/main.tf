@@ -472,7 +472,15 @@ resource "kubernetes_deployment_v1" "zitadel" {
         # Uses the dedicated `zitadel-pat-broker` ServiceAccount which
         # only has Secret create/patch in this namespace.
         container {
-          name  = "pat-broker"
+          name = "pat-broker"
+          # `bitnami/kubectl:latest` is forced by the same Bitnami
+          # tag-removal as the Redis sentinel images: free Docker Hub
+          # `bitnami/*` images ship ONLY `:latest` since August 2025
+          # (every prior `kubectl:1.x.y` returns 404). The sidecar
+          # only runs `kubectl create/patch secret` once per Zitadel
+          # bootstrap, so the rolling-version risk is minimal — any
+          # kubectl version that can speak to the apiserver suffices.
+          # See `modules/redis/variables.tf` for the full trap notes.
           image = "bitnami/kubectl:latest"
 
           command = ["/bin/bash", "-c"]
