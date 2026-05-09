@@ -290,29 +290,49 @@ locals {
   redis_key_prefix = "${local.namespace}:"
 }
 
-# `terraform-null-label` instance for the project's tenant-credential
-# identifiers (Postgres + MySQL DB / role names). Postgres-safe `_`
-# delimiter and length cap (`NAMEDATALEN - 1 = 63`) match what the
-# `pg_extra_label` adoption in PR #102 already does for the
-# `extra_databases` path; this brings the legacy single-DB path under
-# the same engine convention.
+# Project-tier label — the keystone for every per-feature label
+# instance below. Chains off `var.context` (root passes
+# `module.platform_label.context` from `_label.tf`), so any tag the
+# operator adds at the platform tier propagates here and downstream.
 #
-# `name = local.namespace` produces `id = "phost_<slug>_<env>"` after
-# the underscore delimiter — byte-for-byte identical to the prior
-# `replace(local.namespace, "-", "_")`. Plan diff is zero for any
-# existing tenant. The `tags` output is wired up here and ready for
-# downstream `metadata.labels` adoption — kept unconsumed in this PR
-# so the foundation lands cleanly first; the per-resource label sweep
-# is a follow-up PR.
+# `namespace = local.namespace` overrides the inherited
+# `namespace = "platform"` from the root context — at this tier the
+# k8s namespace IS the tenant identifier. `environment = local.env`
+# specialises the inherited (empty) env. Other context fields
+# (operator-added tags) inherit unchanged.
+#
+# Per-feature labels below pass `context = module.project_label.context`
+# so they pick up the same tag set + can override only what they
+# specifically need (delimiter, label_order, length cap).
+module "project_label" {
+  source = "git::https://github.com/rromenskyi/terraform-null-label.git?ref=v0.1.0"
+
+  context     = var.context
+  namespace   = local.namespace
+  environment = local.env
+  name        = local.namespace
+  tags = {
+    "domain" = local.domain
+  }
+}
+
+# Per-tenant Postgres / MySQL credential identifiers (DB + role
+# names). Postgres-safe `_` delimiter and length cap
+# (`NAMEDATALEN - 1 = 63`) match what `pg_extra_label` does for the
+# `extra_databases` path so legacy and extras paths produce
+# uniformly-shaped names.
+#
+# `replace(local.namespace, "-", "_")` is required because
+# null-label's `delimiter` joins label components but does not
+# transform character sets within a single component — the
+# delimiter only matters when `label_order` has multiple entries.
+# Output `id = "phost_<slug>_<env>"` is byte-for-byte identical to
+# the prior inline `replace(...)`. Plan diff is zero for any
+# existing tenant.
 module "pg_credentials_label" {
   source = "git::https://github.com/rromenskyi/terraform-null-label.git?ref=v0.1.0"
 
-  namespace   = local.namespace
-  environment = local.env
-  # `replace(local.namespace, "-", "_")` because null-label's `delimiter`
-  # joins label components but does not transform character sets within
-  # a single component. The delimiter below would only matter when
-  # `label_order` had multiple entries.
+  context       = module.project_label.context
   name          = replace(local.namespace, "-", "_")
   delimiter     = "_"
   label_order   = ["name"]
@@ -665,16 +685,15 @@ module "pg_extra_label" {
 
   source = "git::https://github.com/rromenskyi/terraform-null-label.git?ref=v0.1.0"
 
-  namespace     = replace(local.namespace, "-", "_") # "phost_<slug>_<env>"
+  context       = module.project_label.context
+  namespace     = replace(local.namespace, "-", "_") # "phost_<slug>_<env>" — overrides parent dashed form
   name          = each.key                           # the extra-database key
   delimiter     = "_"
   label_order   = ["namespace", "name"]
   id_max_length = 63
   tags = {
-    "app.kubernetes.io/managed-by" = "terraform"
-    "app.kubernetes.io/component"  = "postgres-extra-db"
-    "project-namespace"            = local.namespace
-    "extra-database"               = each.key
+    "app.kubernetes.io/component" = "postgres-extra-db"
+    "extra-database"              = each.key
   }
 }
 
@@ -1079,9 +1098,18 @@ check "zitadel_provider_authenticated_when_chart_oidc_used" {
 module "chart_oidc_label" {
   for_each = var.chart_oidc_apps
 
-  source     = "git::https://github.com/rromenskyi/terraform-null-label.git?ref=v0.1.0"
-  name       = trimsuffix(each.key, "-oidc")
-  attributes = [local.env]
+  source  = "git::https://github.com/rromenskyi/terraform-null-label.git?ref=v0.1.0"
+  context = module.project_label.context
+  name    = trimsuffix(each.key, "-oidc")
+  # Explicit `label_order` shrinks the id to `<name>-<attributes>`
+  # so the Zitadel project name stays the operator's chosen
+  # `<key-without-oidc-suffix>-<env>` shape. Without this override
+  # the inherited default `["namespace", "environment", "name",
+  # "attributes"]` from `module.project_label.context` would prefix
+  # the id with the tenant namespace + env, renaming every existing
+  # Zitadel project — destructive.
+  label_order = ["name", "attributes"]
+  attributes  = [local.env]
 }
 
 module "chart_oidc" {

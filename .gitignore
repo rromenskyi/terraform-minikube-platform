@@ -50,3 +50,8 @@ tfplan
 .claude
 CLAUDE.md
 .backup-config.log
+
+# Pre-commit scrub list — operator-private regex patterns. Engine
+# ships `config/.scrub-list.example` template; the live file with
+# operator's actual tenant slugs / IPs / node names stays gitignored.
+config/.scrub-list
