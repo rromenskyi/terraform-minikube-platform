@@ -40,6 +40,7 @@ module "oauth2_proxy" {
   # any plan that touched module.zitadel) is no longer needed.
   depends_on = [module.addons]
 
+  context                        = module.platform_label.context
   enabled                        = local.platform.services.zitadel.enabled
   namespace                      = "ingress-controller"
   zitadel_provider_authenticated = var.zitadel_pat != ""

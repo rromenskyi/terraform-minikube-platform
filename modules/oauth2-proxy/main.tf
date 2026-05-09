@@ -36,6 +36,28 @@ locals {
 
   # Stable resource name; used for Service, Deployment, Secret, Middleware.
   app_name = "forward-auth"
+
+  # Local labels merged with the propagated null-label tag set
+  # (root → platform_label → module.label). Local-side keeps only
+  # `app = local.app_name` because the Service / Deployment selectors
+  # bind on that key — null-label uses different keys (`name`,
+  # `namespace`) so both intentionally coexist.
+  labels = merge(module.label.tags, {
+    app = local.app_name
+  })
+}
+
+# Module-tier label, chained off `var.context` (root passes
+# `module.platform_label.context` from `_label.tf`).
+module "label" {
+  source = "git::https://github.com/rromenskyi/terraform-null-label.git?ref=v0.1.0"
+
+  context   = var.context
+  namespace = var.namespace
+  name      = local.app_name
+  tags = {
+    "app.kubernetes.io/component" = "oauth2-proxy"
+  }
 }
 
 # ── Zitadel project + application ─────────────────────────────────────────────
@@ -102,6 +124,7 @@ resource "kubernetes_secret_v1" "oauth2_proxy" {
   metadata {
     name      = local.app_name
     namespace = var.namespace
+    labels    = local.labels
   }
 
   data = {
@@ -119,7 +142,7 @@ resource "kubernetes_deployment_v1" "oauth2_proxy" {
   metadata {
     name      = local.app_name
     namespace = var.namespace
-    labels    = { app = local.app_name }
+    labels    = local.labels
   }
 
   spec {
@@ -131,7 +154,7 @@ resource "kubernetes_deployment_v1" "oauth2_proxy" {
 
     template {
       metadata {
-        labels = { app = local.app_name }
+        labels = local.labels
       }
 
       spec {
@@ -234,7 +257,7 @@ resource "kubernetes_service_v1" "oauth2_proxy" {
   metadata {
     name      = local.app_name
     namespace = var.namespace
-    labels    = { app = local.app_name }
+    labels    = local.labels
   }
 
   spec {
@@ -286,6 +309,7 @@ resource "kubectl_manifest" "middleware_proto" {
     metadata = {
       name      = "force-https-proto"
       namespace = var.namespace
+      labels    = local.labels
     }
     spec = {
       headers = {
@@ -306,6 +330,7 @@ resource "kubectl_manifest" "middleware_forward" {
     metadata = {
       name      = "zitadel-auth"
       namespace = var.namespace
+      labels    = local.labels
     }
     spec = {
       forwardAuth = {
