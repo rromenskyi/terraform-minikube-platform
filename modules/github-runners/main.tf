@@ -44,6 +44,28 @@ locals {
   # Each scale set lands in its own namespace — engine creates them
   # idempotently rather than asking the operator to pre-create.
   scale_set_namespaces = distinct([for _, s in local.scale_set_targets : s.namespace])
+
+  # Shorthand for the propagated null-label tag set used by every
+  # non-Helm resource the module emits. Helm releases delegate label
+  # generation to their charts (gha-runner-scale-set-controller and
+  # gha-runner-scale-set), so we don't apply `metadata.labels` to the
+  # `helm_release` TF resource — the chart's own values block owns
+  # the runtime labels. Only the engine-emitted glue (namespaces +
+  # the engine-emitted PAT Secret) carries our null-label tags.
+  tags = module.label.tags
+}
+
+# Module-tier label, chained off `var.context` (root passes
+# `module.platform_label.context` from `_label.tf`).
+module "label" {
+  source = "git::https://github.com/rromenskyi/terraform-null-label.git?ref=v0.1.0"
+
+  context   = var.context
+  namespace = var.namespace_controller
+  name      = "github-runners"
+  tags = {
+    "app.kubernetes.io/component" = "github-runners"
+  }
 }
 
 # ── Controller namespace + chart ───────────────────────────────────────────
@@ -53,10 +75,10 @@ resource "kubernetes_namespace_v1" "controller" {
 
   metadata {
     name = var.namespace_controller
-    labels = {
+    labels = merge(local.tags, {
       "app.kubernetes.io/managed-by" = "terraform"
       "app.kubernetes.io/component"  = "arc-controller"
-    }
+    })
   }
 }
 
@@ -83,10 +105,10 @@ resource "kubernetes_namespace_v1" "scale_set" {
 
   metadata {
     name = each.key
-    labels = {
+    labels = merge(local.tags, {
       "app.kubernetes.io/managed-by" = "terraform"
       "app.kubernetes.io/component"  = "arc-runners"
-    }
+    })
   }
 }
 
@@ -114,11 +136,11 @@ resource "kubernetes_secret_v1" "github_pat" {
   metadata {
     name      = "${each.key}-github-pat"
     namespace = each.value.namespace
-    labels = {
+    labels = merge(local.tags, {
       "app.kubernetes.io/managed-by" = "terraform"
       "app.kubernetes.io/component"  = "arc-github-pat"
       "platform.scale-set"           = each.key
-    }
+    })
   }
 
   data = {

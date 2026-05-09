@@ -15,6 +15,7 @@ module "github_runners" {
   source     = "./modules/github-runners"
   depends_on = [module.addons]
 
+  context                  = module.platform_label.context
   enabled                  = local.platform.services.github_runners.enabled
   controller_node_selector = local.platform.services.github_runners.controller_node_selector
   controller_tolerations   = local.platform.services.github_runners.controller_tolerations
