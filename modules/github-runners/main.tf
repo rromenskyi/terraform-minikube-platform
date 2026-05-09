@@ -86,7 +86,7 @@ variable "scale_sets" {
     namespace            = string
     min_runners          = optional(number, 0)
     max_runners          = optional(number, 4)
-    runner_image         = optional(string, "ghcr.io/actions/actions-runner:2.328.0")
+    runner_image         = optional(string, "ghcr.io/actions/actions-runner:2.334.0")
     runner_resources     = optional(any, {})
     runner_node_selector = optional(map(string), {})
     runner_tolerations = optional(list(object({

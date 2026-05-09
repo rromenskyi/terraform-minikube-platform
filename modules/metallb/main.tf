@@ -52,7 +52,7 @@ variable "namespace" {
 variable "version_pin" {
   description = "Helm chart version for metallb/metallb. Pinned so an upstream re-tag doesn't change CRD shape or defaults across applies."
   type        = string
-  default     = "0.14.9"
+  default     = "0.15.3"
 }
 
 variable "controller_node_selector" {
@@ -92,7 +92,7 @@ variable "speaker_tolerations" {
 }
 
 variable "shared_ip_annotations" {
-  description = "Map of `<namespace>/<service-name>` → shared-ip key. Engine annotates the listed Service with `metallb.universe.tf/allow-shared-ip: <key>` so MetalLB legalises sharing one VIP across multiple Services with non-conflicting port/protocol pairs (e.g. Traefik on TCP 80/443 and a SIP proxy on UDP 5160). Both Services must carry the SAME key; the engine writes the annotation server-side without touching the Service's other fields, so a chart-managed Service (Helm, ArgoCD) keeps its ownership intact. Empty map (default) emits no annotations. Only meaningful when at least one pool's IP is targeted by multiple Services."
+  description = "Map of `<namespace>/<service-name>` → shared-ip key. Engine annotates the listed Service with `metallb.io/allow-shared-ip: <key>` so MetalLB legalises sharing one VIP across multiple Services with non-conflicting port/protocol pairs (e.g. Traefik on TCP 80/443 and a SIP proxy on UDP 5160). Both Services must carry the SAME key AND the same `externalTrafficPolicy` (MetalLB rejects sharing across mismatched policies); the engine writes the annotation server-side without touching the Service's other fields, so a chart-managed Service (Helm, ArgoCD) keeps its ownership intact. Empty map (default) emits no annotations. Only meaningful when at least one pool's IP is targeted by multiple Services."
   type        = map(string)
   default     = {}
   validation {
@@ -241,8 +241,16 @@ resource "kubernetes_annotations" "shared_ip" {
     name      = split("/", each.key)[1]
     namespace = split("/", each.key)[0]
   }
+  # MetalLB v0.15+ recognises only the canonical `metallb.io/...`
+  # annotation prefix for sharing-key extraction. The legacy
+  # `metallb.universe.tf/...` form still fires a `deprecatedAnnotation`
+  # warn in controller logs but is read as empty for sharing-key
+  # purposes — a Service with only legacy annotations cannot share a
+  # VIP with a canonical-annotated Service even when values match.
+  # Tenant charts that still emit legacy annotations need to migrate
+  # to the canonical prefix on their side.
   annotations = {
-    "metallb.universe.tf/allow-shared-ip" = each.value
+    "metallb.io/allow-shared-ip" = each.value
   }
 }
 

@@ -689,3 +689,8 @@ output "default_secret_name" {
   value       = one([for s in kubernetes_secret_v1.default : s.metadata[0].name])
   description = "Name of the Secret holding the `default`-user password. The tenant-provisioner Job reads it when calling ACL SETUSER. Null if disabled."
 }
+
+output "helm_revision" {
+  value       = length(local.sentinel_instances) > 0 ? helm_release.valkey_sentinel["enabled"].metadata.revision : 0
+  description = "Helm release revision counter for the Valkey/Sentinel chart. Increments on every `helm upgrade` (chart bump, values change, replicas/affinity update, etc). Consumers (tenant ACL provisioner Jobs) interpolate this into their resource name so a chart upgrade — which can switch the master pod and lose previously-applied ACL state — automatically re-runs the ACL setup with the new credentials. Zero when sentinel mode is disabled (no chart deployed). Sentinel-mode-only by design — the legacy single-pod path uses a different bring-up Job that is not affected by master switches."
+}

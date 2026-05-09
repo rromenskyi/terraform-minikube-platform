@@ -83,7 +83,7 @@ check "k3s_ssh_vars_set" {
 # Layer 2: Platform add-ons (Traefik, cert-manager, monitoring, namespaces).
 # -----------------------------------------------------------------------------
 module "addons" {
-  source = "git::https://github.com/rromenskyi/terraform-k8s-addons.git?ref=v2.1.0"
+  source = "git::https://github.com/rromenskyi/terraform-k8s-addons.git?ref=v2.3.0"
 
   kubeconfig_path      = module.k8s.kubeconfig_path
   cluster_name         = module.k8s.cluster_name
@@ -110,6 +110,23 @@ module "addons" {
   # chart-side one on would create two IRs serving the dashboard at
   # different hostnames with different auth.
   enable_traefik_dashboard = false
+
+  # Traefik runs as ClusterIP, not LoadBalancer. The cluster's only
+  # public ingress for HTTPS is the Cloudflare Tunnel (`cloudflared`
+  # in the `ops` namespace), which resolves Traefik through the
+  # cluster DNS name `traefik.ingress-controller.svc.cluster.local`
+  # and reaches it via the in-cluster ClusterIP — no external IP
+  # needed on the Traefik Service.
+  traefik_service_type = "ClusterIP"
+
+  # Traefik workload kind + placement come from the operator config
+  # (`services.addons.traefik_*` in `config/platform.yaml`). Engine
+  # stays generic — every tenant-specific taint key, label, or
+  # workload-kind decision lives in the gitignored operator file,
+  # not here.
+  traefik_deployment_kind = local.platform.services.addons.traefik_deployment_kind
+  traefik_tolerations     = local.platform.services.addons.traefik_tolerations
+  traefik_node_selector   = local.platform.services.addons.traefik_node_selector
 }
 
 # =============================================================================
@@ -169,6 +186,7 @@ module "project" {
   redis_namespace           = module.redis.namespace
   redis_host                = module.redis.host
   redis_default_secret      = module.redis.default_secret_name
+  redis_helm_revision       = module.redis.helm_revision
   ollama_url                = module.ollama.url
 
   # Zitadel — issuer URL is null when `services.zitadel.enabled = false`,
