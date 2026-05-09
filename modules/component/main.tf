@@ -151,7 +151,7 @@ resource "kubernetes_persistent_volume_claim_v1" "this" {
 # ── Config Files (ConfigMap) ──────────────────────────────────────────────────
 
 resource "kubernetes_config_map_v1" "files" {
-  count = length(var.config_files) > 0 ? 1 : 0
+  for_each = length(var.config_files) > 0 ? toset(["enabled"]) : toset([])
 
   metadata {
     name      = "${var.name}-config"
@@ -810,7 +810,7 @@ resource "kubernetes_deployment_v1" "this" {
           content {
             name = "config-files"
             config_map {
-              name = kubernetes_config_map_v1.files[0].metadata[0].name
+              name = values(kubernetes_config_map_v1.files)[0].metadata[0].name
             }
           }
         }

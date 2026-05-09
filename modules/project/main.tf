@@ -234,9 +234,25 @@ locals {
     for _, c in local.normalized_components : try(c.db, false)
   ]) || try(var.shared_services.db, false)
 
+  # `shared_services.postgres` accepts two shapes:
+  #   - bool (legacy): `true` → emit one default DB+role+Secret named
+  #     after the namespace (`<ns>` / `postgres-credentials`).
+  #   - map (new): `{ enabled: <bool>, extra_databases: [<key>, ...] }` →
+  #     `enabled` controls the legacy default DB independently from the
+  #     extras list; each extra key gets its own DB / role / Secret
+  #     (`<ns>_<key>` / `<key>-postgres-credentials`). Use when one
+  #     chart-managed app needs more than one Postgres logical DB in
+  #     the same tenant namespace (e.g. an app + its Synapse).
+  _shared_pg_raw     = try(var.shared_services.postgres, false)
+  _shared_pg_default = can(tobool(local._shared_pg_raw)) ? tobool(local._shared_pg_raw) : try(local._shared_pg_raw.enabled, false)
+  _shared_pg_extras  = can(tobool(local._shared_pg_raw)) ? [] : try(local._shared_pg_raw.extra_databases, [])
+
   needs_postgres = anytrue([
     for _, c in local.normalized_components : try(c.postgres, false)
-  ]) || try(var.shared_services.postgres, false)
+  ]) || local._shared_pg_default
+
+  pg_default_instances = local.needs_postgres ? toset(["enabled"]) : toset([])
+  pg_extra_databases   = toset(local._shared_pg_extras)
 
   needs_redis = anytrue([
     for _, c in local.normalized_components : try(c.redis, false)
@@ -350,9 +366,9 @@ resource "kubernetes_resource_quota_v1" "limits" {
 # ── MySQL: DB + User + Secret (only when at least one component needs db) ─────
 
 resource "random_password" "db" {
-  count   = local.needs_db ? 1 : 0
-  length  = 24
-  special = false
+  for_each = local.needs_db ? toset(["enabled"]) : toset([])
+  length   = 24
+  special  = false
 }
 
 # Provisions the DB and user inside the shared MySQL via a Kubernetes Job.
@@ -360,7 +376,7 @@ resource "random_password" "db" {
 # kubectl or shell escaping. Database is intentionally NOT dropped on destroy
 # to preserve data.
 resource "kubernetes_job_v1" "mysql_setup" {
-  count = local.needs_db ? 1 : 0
+  for_each = local.needs_db ? toset(["enabled"]) : toset([])
 
   depends_on = [kubernetes_namespace_v1.this]
 
@@ -417,7 +433,7 @@ resource "kubernetes_job_v1" "mysql_setup" {
               "-p\"$MYSQL_ROOT_PASSWORD\" -e \"",
               "CREATE DATABASE IF NOT EXISTS \\`${local.db_name}\\`;",
               "CREATE USER IF NOT EXISTS '${local.db_user}'@'%' ",
-              "IDENTIFIED BY '${random_password.db[0].result}';",
+              "IDENTIFIED BY '${values(random_password.db)[0].result}';",
               "GRANT ALL PRIVILEGES ON \\`${local.db_name}\\`.* TO '${local.db_user}'@'%';",
               "FLUSH PRIVILEGES;\"",
             ])
@@ -435,7 +451,7 @@ resource "kubernetes_job_v1" "mysql_setup" {
 }
 
 resource "kubernetes_secret_v1" "db_credentials" {
-  count = local.needs_db ? 1 : 0
+  for_each = local.needs_db ? toset(["enabled"]) : toset([])
 
   depends_on = [kubernetes_job_v1.mysql_setup]
 
@@ -449,14 +465,15 @@ resource "kubernetes_secret_v1" "db_credentials" {
     DB_PORT = "3306"
     DB_NAME = local.db_name
     DB_USER = local.db_user
-    DB_PASS = random_password.db[0].result
+    DB_PASS = values(random_password.db)[0].result
   }
 }
 
 # ── PostgreSQL: per-namespace database + user (only when needed) ──────────────
 
 resource "random_password" "postgres" {
-  count   = local.needs_postgres ? 1 : 0
+  for_each = local.pg_default_instances
+
   length  = 24
   special = false
 }
@@ -465,7 +482,7 @@ resource "random_password" "postgres" {
 # in-cluster. Database is NOT dropped on destroy — data preservation
 # matches the MySQL behaviour.
 resource "kubernetes_job_v1" "postgres_setup" {
-  count = local.needs_postgres ? 1 : 0
+  for_each = local.pg_default_instances
 
   depends_on = [kubernetes_namespace_v1.this]
 
@@ -528,8 +545,8 @@ resource "kubernetes_job_v1" "postgres_setup" {
             "sh", "-c",
             join(" && ", [
               "psql -h ${var.postgres_host} -U postgres -tc \"SELECT 1 FROM pg_database WHERE datname = '${local.pg_database}'\" | grep -q 1 || psql -h ${var.postgres_host} -U postgres -c \"CREATE DATABASE \\\"${local.pg_database}\\\"\"",
-              "psql -h ${var.postgres_host} -U postgres -tc \"SELECT 1 FROM pg_roles WHERE rolname = '${local.pg_user}'\" | grep -q 1 || psql -h ${var.postgres_host} -U postgres -c \"CREATE ROLE \\\"${local.pg_user}\\\" WITH LOGIN PASSWORD '${random_password.postgres[0].result}'\"",
-              "psql -h ${var.postgres_host} -U postgres -c \"ALTER ROLE \\\"${local.pg_user}\\\" WITH PASSWORD '${random_password.postgres[0].result}'\"",
+              "psql -h ${var.postgres_host} -U postgres -tc \"SELECT 1 FROM pg_roles WHERE rolname = '${local.pg_user}'\" | grep -q 1 || psql -h ${var.postgres_host} -U postgres -c \"CREATE ROLE \\\"${local.pg_user}\\\" WITH LOGIN PASSWORD '${values(random_password.postgres)[0].result}'\"",
+              "psql -h ${var.postgres_host} -U postgres -c \"ALTER ROLE \\\"${local.pg_user}\\\" WITH PASSWORD '${values(random_password.postgres)[0].result}'\"",
               "psql -h ${var.postgres_host} -U postgres -c \"GRANT ALL PRIVILEGES ON DATABASE \\\"${local.pg_database}\\\" TO \\\"${local.pg_user}\\\"\"",
               "psql -h ${var.postgres_host} -U postgres -d ${local.pg_database} -c \"GRANT ALL ON SCHEMA public TO \\\"${local.pg_user}\\\"\"",
             ])
@@ -547,7 +564,7 @@ resource "kubernetes_job_v1" "postgres_setup" {
 }
 
 resource "kubernetes_secret_v1" "postgres_credentials" {
-  count = local.needs_postgres ? 1 : 0
+  for_each = local.pg_default_instances
 
   depends_on = [kubernetes_job_v1.postgres_setup]
 
@@ -561,17 +578,139 @@ resource "kubernetes_secret_v1" "postgres_credentials" {
     PG_PORT      = "5432"
     PG_DATABASE  = local.pg_database
     PG_USER      = local.pg_user
-    PG_PASSWORD  = random_password.postgres[0].result
-    DATABASE_URL = "postgres://${local.pg_user}:${random_password.postgres[0].result}@${var.postgres_host}:5432/${local.pg_database}"
+    PG_PASSWORD  = values(random_password.postgres)[0].result
+    DATABASE_URL = "postgres://${local.pg_user}:${values(random_password.postgres)[0].result}@${var.postgres_host}:5432/${local.pg_database}"
+  }
+}
+
+# ── PostgreSQL: per-namespace EXTRA databases (multi-DB tenants) ──────────────
+#
+# Triggered by `shared_services.postgres.extra_databases: [<key>, ...]`
+# in the domain yaml. Each key materialises an independent
+# DB + role + Secret in this namespace, named `<ns>_<key>` (DB and
+# role) and `<key>-postgres-credentials` (Secret). The role gets the
+# same `GRANT ALL ON SCHEMA public` we hand out to the default DB —
+# chart-side schema migrations own the ddl.
+#
+# Use case: one chart-managed app needs more than one logical
+# Postgres database in the same tenant namespace (e.g. mm-core +
+# Synapse share a tenant ns but each owns its own schema). The
+# default DB controlled by `enabled` is independent — set
+# `enabled: false` if every database the chart needs is named.
+#
+# Naming uses underscore separators because Postgres identifiers
+# can't carry dashes without quoting; same convention as the default
+# `pg_database` / `pg_user` already use.
+
+resource "random_password" "postgres_extra" {
+  for_each = local.pg_extra_databases
+
+  length  = 24
+  special = false
+}
+
+resource "kubernetes_job_v1" "postgres_setup_extra" {
+  for_each = local.pg_extra_databases
+
+  depends_on = [kubernetes_namespace_v1.this]
+
+  metadata {
+    name      = "postgres-setup-${local.namespace}-${each.key}"
+    namespace = var.postgres_namespace
+    labels = {
+      "app.kubernetes.io/managed-by" = "terraform"
+      "project-namespace"            = local.namespace
+      "extra-database"               = each.key
+    }
+  }
+
+  spec {
+    backoff_limit = 3
+
+    template {
+      metadata {
+        labels = {
+          job = "postgres-setup-${local.namespace}-${each.key}"
+        }
+      }
+
+      spec {
+        restart_policy = "Never"
+
+        container {
+          name  = "postgres-setup"
+          image = "postgres:16-alpine"
+
+          env_from {
+            secret_ref {
+              name = var.postgres_superuser_secret
+            }
+          }
+
+          env {
+            name  = "PGPASSWORD"
+            value = "$(POSTGRES_PASSWORD)"
+          }
+
+          resources {
+            requests = {
+              cpu    = "50m"
+              memory = "64Mi"
+            }
+            limits = {
+              cpu    = "200m"
+              memory = "256Mi"
+            }
+          }
+
+          command = [
+            "sh", "-c",
+            join(" && ", [
+              "psql -h ${var.postgres_host} -U postgres -tc \"SELECT 1 FROM pg_database WHERE datname = '${local.pg_database}_${each.key}'\" | grep -q 1 || psql -h ${var.postgres_host} -U postgres -c \"CREATE DATABASE \\\"${local.pg_database}_${each.key}\\\"\"",
+              "psql -h ${var.postgres_host} -U postgres -tc \"SELECT 1 FROM pg_roles WHERE rolname = '${local.pg_user}_${each.key}'\" | grep -q 1 || psql -h ${var.postgres_host} -U postgres -c \"CREATE ROLE \\\"${local.pg_user}_${each.key}\\\" WITH LOGIN PASSWORD '${random_password.postgres_extra[each.key].result}'\"",
+              "psql -h ${var.postgres_host} -U postgres -c \"ALTER ROLE \\\"${local.pg_user}_${each.key}\\\" WITH PASSWORD '${random_password.postgres_extra[each.key].result}'\"",
+              "psql -h ${var.postgres_host} -U postgres -c \"GRANT ALL PRIVILEGES ON DATABASE \\\"${local.pg_database}_${each.key}\\\" TO \\\"${local.pg_user}_${each.key}\\\"\"",
+              "psql -h ${var.postgres_host} -U postgres -d ${local.pg_database}_${each.key} -c \"GRANT ALL ON SCHEMA public TO \\\"${local.pg_user}_${each.key}\\\"\"",
+            ])
+          ]
+        }
+      }
+    }
+  }
+
+  wait_for_completion = true
+
+  timeouts {
+    create = "2m"
+  }
+}
+
+resource "kubernetes_secret_v1" "postgres_credentials_extra" {
+  for_each = local.pg_extra_databases
+
+  depends_on = [kubernetes_job_v1.postgres_setup_extra]
+
+  metadata {
+    name      = "${each.key}-postgres-credentials"
+    namespace = kubernetes_namespace_v1.this.metadata[0].name
+  }
+
+  data = {
+    PG_HOST      = var.postgres_host
+    PG_PORT      = "5432"
+    PG_DATABASE  = "${local.pg_database}_${each.key}"
+    PG_USER      = "${local.pg_user}_${each.key}"
+    PG_PASSWORD  = random_password.postgres_extra[each.key].result
+    DATABASE_URL = "postgres://${local.pg_user}_${each.key}:${random_password.postgres_extra[each.key].result}@${var.postgres_host}:5432/${local.pg_database}_${each.key}"
   }
 }
 
 # ── Redis: per-namespace ACL user + key-prefix (only when needed) ─────────────
 
 resource "random_password" "redis" {
-  count   = local.needs_redis ? 1 : 0
-  length  = 24
-  special = false
+  for_each = local.needs_redis ? toset(["enabled"]) : toset([])
+  length   = 24
+  special  = false
 }
 
 # Creates an ACL user on the shared Redis limited to the tenant's key
@@ -583,7 +722,7 @@ resource "random_password" "redis" {
 # The user name is NOT deleted on terraform destroy — same policy as
 # MySQL, so data isn't lost if a project is removed and re-added.
 resource "kubernetes_job_v1" "redis_setup" {
-  count = local.needs_redis ? 1 : 0
+  for_each = local.needs_redis ? toset(["enabled"]) : toset([])
 
   depends_on = [kubernetes_namespace_v1.this]
 
@@ -655,7 +794,7 @@ resource "kubernetes_job_v1" "redis_setup" {
               "redis-cli -h ${var.redis_host} -a \"$REDIS_PASSWORD\"",
               "ACL SETUSER ${local.redis_user}",
               "on",
-              "\\>${random_password.redis[0].result}",
+              "\\>${values(random_password.redis)[0].result}",
               "resetkeys",
               "~${local.redis_key_prefix}*",
               # Reset + scope pub/sub channels to the same prefix.
@@ -699,7 +838,7 @@ resource "kubernetes_job_v1" "redis_setup" {
 }
 
 resource "kubernetes_secret_v1" "redis_credentials" {
-  count = local.needs_redis ? 1 : 0
+  for_each = local.needs_redis ? toset(["enabled"]) : toset([])
 
   depends_on = [kubernetes_job_v1.redis_setup]
 
@@ -712,7 +851,7 @@ resource "kubernetes_secret_v1" "redis_credentials" {
     REDIS_HOST       = var.redis_host
     REDIS_PORT       = "6379"
     REDIS_USER       = local.redis_user
-    REDIS_PASSWORD   = random_password.redis[0].result
+    REDIS_PASSWORD   = values(random_password.redis)[0].result
     REDIS_KEY_PREFIX = local.redis_key_prefix
   }
 }
@@ -726,7 +865,7 @@ resource "kubernetes_secret_v1" "redis_credentials" {
 # modules/component works the same way as for `db_secret_name`.
 
 resource "kubernetes_secret_v1" "ollama_endpoint" {
-  count = local.needs_ollama ? 1 : 0
+  for_each = local.needs_ollama ? toset(["enabled"]) : toset([])
 
   metadata {
     name      = "ollama-endpoint"
@@ -960,19 +1099,19 @@ module "component" {
 
   db_env_mapping = try(each.value.env, {})
   db_secret_name = try(each.value.db, false) && local.needs_db ? (
-    kubernetes_secret_v1.db_credentials[0].metadata[0].name
+    values(kubernetes_secret_v1.db_credentials)[0].metadata[0].name
   ) : null
 
   postgres_secret_name = try(each.value.postgres, false) && local.needs_postgres ? (
-    kubernetes_secret_v1.postgres_credentials[0].metadata[0].name
+    values(kubernetes_secret_v1.postgres_credentials)[0].metadata[0].name
   ) : null
 
   redis_secret_name = try(each.value.redis, false) && local.needs_redis ? (
-    kubernetes_secret_v1.redis_credentials[0].metadata[0].name
+    values(kubernetes_secret_v1.redis_credentials)[0].metadata[0].name
   ) : null
 
   ollama_secret_name = try(each.value.ollama, false) && local.needs_ollama ? (
-    kubernetes_secret_v1.ollama_endpoint[0].metadata[0].name
+    values(kubernetes_secret_v1.ollama_endpoint)[0].metadata[0].name
   ) : null
 
   # OIDC Secret wiring — two ways the component can opt in:

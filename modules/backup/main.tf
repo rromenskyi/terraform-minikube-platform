@@ -69,7 +69,7 @@ locals {
   instances = var.enabled ? toset(["enabled"]) : toset([])
 
   passphrase = var.passphrase != "" ? var.passphrase : (
-    var.enabled ? random_password.backup_passphrase[0].result : ""
+    var.enabled ? values(random_password.backup_passphrase)[0].result : ""
   )
 
   # restic repo URL = `s3:<endpoint>/<bucket>`. Same encoding the
@@ -107,7 +107,12 @@ locals {
 # ── Passphrase generation ─────────────────────────────────────────────────
 
 resource "random_password" "backup_passphrase" {
-  count = var.enabled && var.passphrase == "" ? 1 : 0
+  # `nonsensitive()` is needed because `var.passphrase` is sensitive
+  # — the `==` check derives from it, and TF refuses to use derived-
+  # sensitive values as for_each keys (would leak the sensitivity to
+  # the resource instance key). The resulting bool ("is the passphrase
+  # empty") is safe to expose; only the value itself is secret.
+  for_each = var.enabled && nonsensitive(var.passphrase) == "" ? toset(["enabled"]) : toset([])
 
   length  = 32
   special = false
