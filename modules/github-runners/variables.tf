@@ -1,3 +1,9 @@
+variable "context" {
+  description = "Serialised parent context from `terraform-null-label`. Caller passes `module.platform_label.context` from the root stack so this module can chain its own label off the platform-wide context — tags propagate down, keeping every k8s resource the module emits consistent with the rest of the engine. Default `null` means the module produces a label with no inherited context."
+  type        = string
+  default     = null
+}
+
 variable "enabled" {
   description = "Whether to install ARC controller + any scale sets. False collapses every resource."
   type        = bool
