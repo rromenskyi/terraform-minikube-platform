@@ -18,6 +18,7 @@ module "metallb" {
   source     = "./modules/metallb"
   depends_on = [module.addons]
 
+  context                  = module.platform_label.context
   enabled                  = local.platform.services.metallb.enabled
   controller_node_selector = local.platform.services.metallb.controller_node_selector
   controller_tolerations   = local.platform.services.metallb.controller_tolerations
