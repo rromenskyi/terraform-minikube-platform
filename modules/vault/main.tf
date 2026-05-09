@@ -52,55 +52,6 @@ terraform {
 # Variables
 # -----------------------------------------------------------------------------
 
-variable "enabled" {
-  description = "Deploy Vault. When false, no resources are created."
-  type        = bool
-  default     = false
-}
-
-variable "namespace" {
-  description = "Namespace Vault lives in. Expected to exist already (typically `platform`)."
-  type        = string
-  default     = "platform"
-}
-
-variable "hostname" {
-  description = "Public hostname Vault answers on (e.g. `vault.example.com`). Used for the IngressRoute Host(...) match (`config/components/vault.yaml` is `kind: external`, the operator's domain yaml supplies the route)."
-  type        = string
-  default     = ""
-}
-
-variable "image" {
-  description = "Vault container image. Pin a specific tag — `:latest` would silently pull schema changes between restarts. `hashicorp/vault` is the upstream repo (community edition)."
-  type        = string
-  default     = "hashicorp/vault:1.18.4"
-}
-
-variable "volume_base_path" {
-  description = "Parent path used verbatim by the hostPath PV. Vault's raft storage lands at `<volume_base_path>/<namespace>/vault/data/`. Survives `./tf bootstrap-k3s` on purpose — losing this dir wipes the secret store entirely."
-  type        = string
-  default     = "/data/vol"
-}
-
-variable "memory_request" {
-  type    = string
-  default = "256Mi"
-}
-
-variable "memory_limit" {
-  type    = string
-  default = "1Gi"
-}
-
-variable "cpu_request" {
-  type    = string
-  default = "100m"
-}
-
-variable "cpu_limit" {
-  type    = string
-  default = "1"
-}
 
 # -----------------------------------------------------------------------------
 # Locals
@@ -742,30 +693,6 @@ resource "kubernetes_job_v1" "vault_init" {
 # Outputs
 # -----------------------------------------------------------------------------
 
-output "enabled" {
-  value = var.enabled
-}
-
-output "namespace" {
-  value = var.namespace
-}
-
-output "hostname" {
-  value = var.hostname
-}
-
-output "service_name" {
-  value = var.enabled ? kubernetes_service_v1.vault["enabled"].metadata[0].name : null
-}
-
-output "port" {
-  value = 8200
-}
-
-output "url" {
-  description = "Public Vault URL — `terraform output -raw vault_url`."
-  value       = var.enabled && var.hostname != "" ? "https://${var.hostname}" : null
-}
 
 # Lookup for the bootstrap Secret AFTER the init Job has populated it.
 # `data.kubernetes_secret_v1` reads the live Secret on every plan,
@@ -780,16 +707,4 @@ data "kubernetes_secret_v1" "vault_bootstrap" {
     name      = kubernetes_secret_v1.vault_bootstrap["enabled"].metadata[0].name
     namespace = var.namespace
   }
-}
-
-output "root_token" {
-  description = "Root token emitted by `vault operator init`. Use as break-glass when OIDC is broken or before Phase 1 lands. Read with `terraform output -raw vault_root_token`. Empty until the init Job has run + plan picks up the populated Secret on the second apply (k8s data sources are read at plan time)."
-  value       = var.enabled ? try(data.kubernetes_secret_v1.vault_bootstrap["enabled"].data["root-token"], "") : null
-  sensitive   = true
-}
-
-output "unseal_key" {
-  description = "Single unseal key (secret_shares=1, secret_threshold=1 — single-operator home cluster, no shamir benefit). Used by the StatefulSet's postStart hook to auto-unseal on every pod start. Read with `terraform output -raw vault_unseal_key` if you need to unseal manually for some reason."
-  value       = var.enabled ? try(data.kubernetes_secret_v1.vault_bootstrap["enabled"].data["unseal-key"], "") : null
-  sensitive   = true
 }

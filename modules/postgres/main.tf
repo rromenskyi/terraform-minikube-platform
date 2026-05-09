@@ -11,41 +11,6 @@ terraform {
   }
 }
 
-variable "enabled" {
-  description = "Deploy the PostgreSQL StatefulSet. When `false`, no resources are created and every output collapses to null."
-  type        = bool
-  default     = true
-}
-
-variable "namespace" {
-  description = "Namespace the PostgreSQL StatefulSet lives in. Expected to exist already — the root-level `kubernetes_namespace_v1.platform` resource owns it. Null when `enabled = false`."
-  type        = string
-  default     = null
-}
-
-variable "volume_base_path" {
-  description = "Parent path used verbatim by the hostPath PersistentVolume for PostgreSQL data. Lands at <volume_base_path>/<namespace>/postgres/."
-  type        = string
-  default     = "/data/vol"
-}
-
-variable "node_selector" {
-  description = "Node-selector labels the Postgres pod must match. Empty = scheduler picks. Set to pin the pod on the node that owns the hostPath data dir (e.g. `{ workload-tier = stateful }`)."
-  type        = map(string)
-  default     = {}
-}
-
-variable "tolerations" {
-  description = "Taints the Postgres pod tolerates. Empty list = pod cannot land on any tainted node."
-  type = list(object({
-    key                = optional(string)
-    operator           = optional(string)
-    value              = optional(string)
-    effect             = optional(string)
-    toleration_seconds = optional(string)
-  }))
-  default = []
-}
 
 locals {
   instances = var.enabled ? toset(["enabled"]) : toset([])
@@ -398,39 +363,3 @@ resource "kubernetes_service_v1" "postgres" {
   }
 }
 
-# ── Outputs ───────────────────────────────────────────────────────────────────
-
-output "enabled" {
-  value = var.enabled
-}
-
-output "namespace" {
-  value       = var.enabled ? var.namespace : null
-  description = "Namespace where PostgreSQL is deployed, or null if disabled."
-}
-
-output "host" {
-  value       = one([for s in kubernetes_service_v1.postgres : "${s.metadata[0].name}.${var.namespace}.svc.cluster.local"])
-  description = "PostgreSQL in-cluster hostname, or null if disabled."
-}
-
-output "service_name" {
-  value       = one([for s in kubernetes_service_v1.postgres : s.metadata[0].name])
-  description = "PostgreSQL Service name, or null if disabled."
-}
-
-output "port" {
-  value       = one([for s in kubernetes_service_v1.postgres : s.spec[0].port[0].port])
-  description = "PostgreSQL Service port, or null if disabled."
-}
-
-output "superuser_password" {
-  value       = one([for p in random_password.superuser : p.result])
-  sensitive   = true
-  description = "Password for the `postgres` superuser (also in the postgres-superuser Secret). Null if disabled."
-}
-
-output "superuser_secret_name" {
-  value       = one([for s in kubernetes_secret_v1.superuser : s.metadata[0].name])
-  description = "Name of the Secret holding the superuser password. The tenant-provisioner Job reads it when creating per-tenant DBs. Null if disabled."
-}
