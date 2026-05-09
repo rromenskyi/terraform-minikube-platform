@@ -41,10 +41,29 @@ locals {
   cluster_role   = "${var.namespace}-${local.app_name}"
   port_container = 3000
   port_service   = 80
-  labels = {
+  # The local labels block is consumed by every k8s resource this
+  # module emits AND by the Deployment's pod-template selector.
+  # `merge(module.label.tags, <existing>)` adds the propagated
+  # null-label tag set with existing keys winning on collision —
+  # `app.kubernetes.io/name` (the Service selector key) and
+  # `app.kubernetes.io/managed-by` are explicitly preserved.
+  labels = merge(module.label.tags, {
     "app.kubernetes.io/name"       = local.app_name
     "app.kubernetes.io/managed-by" = "terraform"
     "app.kubernetes.io/part-of"    = "platform"
+  })
+}
+
+# Module-tier label, chained off `var.context` (root passes
+# `module.platform_label.context` from `_label.tf`).
+module "label" {
+  source = "git::https://github.com/rromenskyi/terraform-null-label.git?ref=v0.1.0"
+
+  context   = var.context
+  namespace = var.namespace
+  name      = local.app_name
+  tags = {
+    "app.kubernetes.io/component" = "platform-dash"
   }
 }
 

@@ -99,6 +99,7 @@ module "platform_dash" {
   source     = "./modules/platform-dash"
   depends_on = [module.platform_dash_oidc]
 
+  context              = module.platform_label.context
   enabled              = local.platform.services.platform_dash.enabled
   namespace            = kubernetes_namespace_v1.platform.metadata[0].name
   image                = local.platform.services.platform_dash.image
