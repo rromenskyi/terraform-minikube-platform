@@ -980,14 +980,45 @@ check "zitadel_provider_authenticated_when_chart_oidc_used" {
   }
 }
 
+# Naming for chart_oidc_apps entries.
+#
+# The yaml key (e.g. `sipmesh-frontend-oidc`) is descriptive of the
+# Secret it produces (k8s Secret carrying `AUTH_ZITADEL_*`), but
+# defaulting the Zitadel project + app name to the same string
+# leaves operators reading the Zitadel UI unable to tell which
+# environment they're looking at — `sipmesh-frontend-oidc` could be
+# dev, prod, staging.
+#
+# Solution: route naming through `terraform-null-label` so the
+# Zitadel project + app name auto-include the env (`sipmesh-frontend
+# -dev`), while the k8s Secret name keeps the descriptive `-oidc`
+# suffix the chart's `envFrom` references. Operators can override
+# every output via explicit `project_name` / `app_name` /
+# `secret_name` fields per entry — `try(each.value.X, default)`
+# preserves the override-wins semantics.
+#
+# `trimsuffix(each.key, "-oidc")` strips the operator's descriptive
+# Secret-naming convention before composing the project / app id —
+# the engine's strong opinion is that yaml keys SHOULD end in
+# `-oidc` (matches what the pod's envFrom references) but the
+# Zitadel-side names SHOULD NOT (operators read those in the
+# Zitadel console where `-oidc` is just noise).
+module "chart_oidc_label" {
+  for_each = var.chart_oidc_apps
+
+  source     = "git::https://github.com/rromenskyi/terraform-null-label.git?ref=v0.1.0"
+  name       = trimsuffix(each.key, "-oidc")
+  attributes = [local.env]
+}
+
 module "chart_oidc" {
   for_each = var.chart_oidc_apps
 
   source = "../zitadel-app"
 
   org_id           = var.zitadel_org_id
-  project_name     = each.key
-  app_name         = try(each.value.app_name, each.key)
+  project_name     = try(each.value.project_name, module.chart_oidc_label[each.key].id)
+  app_name         = try(each.value.app_name, module.chart_oidc_label[each.key].id)
   issuer_url       = var.zitadel_issuer_url
   redirect_uris    = try(each.value.redirect_uris, [])
   post_logout_uris = try(each.value.post_logout_uris, [])
@@ -995,7 +1026,7 @@ module "chart_oidc" {
   roles            = try(each.value.roles, [])
 
   secret_namespace = kubernetes_namespace_v1.this.metadata[0].name
-  secret_name      = each.key
+  secret_name      = try(each.value.secret_name, each.key)
   secret_formats   = try(each.value.secret_formats, ["auth_js"])
 }
 
