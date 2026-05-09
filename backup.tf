@@ -188,6 +188,7 @@ data "kubernetes_secret_v1" "vault_bootstrap" {
 module "backup" {
   source = "./modules/backup"
 
+  context = module.platform_label.context
   enabled = local.platform.services.backup.enabled
 
   b2_bucket            = var.backup_b2_bucket

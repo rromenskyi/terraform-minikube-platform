@@ -68,6 +68,15 @@ terraform {
 locals {
   instances = var.enabled ? toset(["enabled"]) : toset([])
 
+  # Shorthand for the propagated null-label tag set used by every
+  # backup-emitted k8s resource via `merge(local.tags, { … })`. The
+  # per-resource block keeps its `app.kubernetes.io/component`
+  # discriminator (`backup`, `backup-init`, `backup-postgres`,
+  # `backup-mysql`, `backup-redis`, `backup-vault`, `backup-pv`,
+  # `backup-prune`) — existing-wins on key collision so the
+  # discriminator never gets overwritten.
+  tags = module.label.tags
+
   passphrase = var.passphrase != "" ? var.passphrase : (
     var.enabled ? values(random_password.backup_passphrase)[0].result : ""
   )
@@ -126,6 +135,21 @@ resource "random_password" "backup_passphrase" {
   }
 }
 
+# Module-tier label, chained off `var.context` (root passes
+# `module.platform_label.context` from `_label.tf`). Output `tags`
+# is exposed via `local.tags` (above) for every resource in the
+# module.
+module "label" {
+  source = "git::https://github.com/rromenskyi/terraform-null-label.git?ref=v0.1.0"
+
+  context   = var.context
+  namespace = var.namespace
+  name      = "backup"
+  tags = {
+    "app.kubernetes.io/component" = "backup"
+  }
+}
+
 # ── Namespace + Secret ────────────────────────────────────────────────────
 
 resource "kubernetes_namespace_v1" "backup" {
@@ -133,10 +157,10 @@ resource "kubernetes_namespace_v1" "backup" {
 
   metadata {
     name = var.namespace
-    labels = {
+    labels = merge(local.tags, {
       "app.kubernetes.io/managed-by" = "terraform"
       "app.kubernetes.io/component"  = "backup"
-    }
+    })
   }
 }
 
@@ -150,6 +174,7 @@ resource "kubernetes_secret_v1" "backup_creds" {
   metadata {
     name      = "backup-creds"
     namespace = kubernetes_namespace_v1.backup["enabled"].metadata[0].name
+    labels    = local.tags
   }
 
   data = {
@@ -170,6 +195,7 @@ resource "kubernetes_config_map_v1" "restore_scripts" {
   metadata {
     name      = "backup-restore-scripts"
     namespace = kubernetes_namespace_v1.backup["enabled"].metadata[0].name
+    labels    = local.tags
   }
 
   data = local.restore_scripts
@@ -189,9 +215,9 @@ resource "kubernetes_job_v1" "restic_init" {
   metadata {
     name      = "backup-restic-init"
     namespace = kubernetes_namespace_v1.backup["enabled"].metadata[0].name
-    labels = {
+    labels = merge(local.tags, {
       "app.kubernetes.io/component" = "backup-init"
-    }
+    })
   }
 
   spec {
@@ -200,7 +226,7 @@ resource "kubernetes_job_v1" "restic_init" {
 
     template {
       metadata {
-        labels = { "app.kubernetes.io/component" = "backup-init" }
+        labels = merge(local.tags, { "app.kubernetes.io/component" = "backup-init" })
       }
 
       spec {
@@ -281,7 +307,7 @@ resource "kubernetes_cron_job_v1" "postgres" {
 
     job_template {
       metadata {
-        labels = { "app.kubernetes.io/component" = "backup-postgres" }
+        labels = merge(local.tags, { "app.kubernetes.io/component" = "backup-postgres" })
       }
       spec {
         backoff_limit              = 2
@@ -289,7 +315,7 @@ resource "kubernetes_cron_job_v1" "postgres" {
 
         template {
           metadata {
-            labels = { "app.kubernetes.io/component" = "backup-postgres" }
+            labels = merge(local.tags, { "app.kubernetes.io/component" = "backup-postgres" })
           }
           spec {
             restart_policy = "OnFailure"
@@ -383,7 +409,7 @@ resource "kubernetes_cron_job_v1" "mysql" {
 
     job_template {
       metadata {
-        labels = { "app.kubernetes.io/component" = "backup-mysql" }
+        labels = merge(local.tags, { "app.kubernetes.io/component" = "backup-mysql" })
       }
       spec {
         backoff_limit              = 2
@@ -391,7 +417,7 @@ resource "kubernetes_cron_job_v1" "mysql" {
 
         template {
           metadata {
-            labels = { "app.kubernetes.io/component" = "backup-mysql" }
+            labels = merge(local.tags, { "app.kubernetes.io/component" = "backup-mysql" })
           }
           spec {
             restart_policy = "OnFailure"
@@ -497,7 +523,7 @@ resource "kubernetes_cron_job_v1" "redis" {
 
     job_template {
       metadata {
-        labels = { "app.kubernetes.io/component" = "backup-redis" }
+        labels = merge(local.tags, { "app.kubernetes.io/component" = "backup-redis" })
       }
       spec {
         backoff_limit              = 2
@@ -505,7 +531,7 @@ resource "kubernetes_cron_job_v1" "redis" {
 
         template {
           metadata {
-            labels = { "app.kubernetes.io/component" = "backup-redis" }
+            labels = merge(local.tags, { "app.kubernetes.io/component" = "backup-redis" })
           }
           spec {
             restart_policy = "OnFailure"
@@ -585,7 +611,7 @@ resource "kubernetes_cron_job_v1" "vault" {
 
     job_template {
       metadata {
-        labels = { "app.kubernetes.io/component" = "backup-vault" }
+        labels = merge(local.tags, { "app.kubernetes.io/component" = "backup-vault" })
       }
       spec {
         backoff_limit              = 2
@@ -593,7 +619,7 @@ resource "kubernetes_cron_job_v1" "vault" {
 
         template {
           metadata {
-            labels = { "app.kubernetes.io/component" = "backup-vault" }
+            labels = merge(local.tags, { "app.kubernetes.io/component" = "backup-vault" })
           }
           spec {
             restart_policy = "OnFailure"
@@ -673,7 +699,7 @@ resource "kubernetes_cron_job_v1" "pv" {
 
     job_template {
       metadata {
-        labels = { "app.kubernetes.io/component" = "backup-pv" }
+        labels = merge(local.tags, { "app.kubernetes.io/component" = "backup-pv" })
       }
       spec {
         backoff_limit              = 2
@@ -681,7 +707,7 @@ resource "kubernetes_cron_job_v1" "pv" {
 
         template {
           metadata {
-            labels = { "app.kubernetes.io/component" = "backup-pv" }
+            labels = merge(local.tags, { "app.kubernetes.io/component" = "backup-pv" })
           }
           spec {
             restart_policy = "OnFailure"
@@ -808,7 +834,7 @@ resource "kubernetes_cron_job_v1" "prune" {
 
     job_template {
       metadata {
-        labels = { "app.kubernetes.io/component" = "backup-prune" }
+        labels = merge(local.tags, { "app.kubernetes.io/component" = "backup-prune" })
       }
       spec {
         backoff_limit              = 2
@@ -816,7 +842,7 @@ resource "kubernetes_cron_job_v1" "prune" {
 
         template {
           metadata {
-            labels = { "app.kubernetes.io/component" = "backup-prune" }
+            labels = merge(local.tags, { "app.kubernetes.io/component" = "backup-prune" })
           }
           spec {
             restart_policy = "OnFailure"
