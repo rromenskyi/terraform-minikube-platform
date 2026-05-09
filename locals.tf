@@ -182,16 +182,40 @@ locals {
         # Cluster-internal BuildKit daemon for self-hosted runner
         # image builds. Disabled by default — opt in only when ARC
         # runners need a remote buildx driver.
-        enabled        = false
-        image_tag      = "v0.16.0-rootless"
-        cache_size     = "20Gi"
-        storage_class  = ""
-        cpu_request    = "200m"
-        cpu_limit      = "4"
-        memory_request = "512Mi"
-        memory_limit   = "8Gi"
-        node_selector  = {}
-        tolerations    = []
+        #
+        # Trust model: CERN userns pattern. Container runs
+        # `privileged: true` BUT under `hostUsers: false`, so the
+        # privileged uid 0 inside the container is remapped to an
+        # unprivileged uid on the host (kernel userns isolation).
+        # See `buildkitd.tf` header for the full rationale.
+        #
+        # `host_path` is the cluster-node directory the cache slabs
+        # land in (hostPath volume — survives Pod restarts but not
+        # node moves; buildkitd is a single-replica daemon so node
+        # affinity via `node_selector` keeps the cache pinned).
+        # `mount_path` is the in-container path; defaults to the
+        # rootful buildkit data dir.
+        #
+        # Readiness-probe knobs are exposed because the default
+        # `period_seconds = 10` + `timeout_seconds = 1` killed the
+        # Pod mid-build on busy clusters (`buildctl debug workers`
+        # contends with the active build for the OCI worker lock).
+        # Defaults below are the values that survived a real ARC
+        # build cycle on this cluster.
+        enabled                         = false
+        image_tag                       = "v0.29.0"
+        host_path                       = "/data/vol/buildkit-cache"
+        mount_path                      = "/var/lib/buildkit"
+        cpu_request                     = "200m"
+        cpu_limit                       = "4"
+        memory_request                  = "512Mi"
+        memory_limit                    = "8Gi"
+        readiness_initial_delay_seconds = 5
+        readiness_period_seconds        = 60
+        readiness_timeout_seconds       = 15
+        readiness_failure_threshold     = 5
+        node_selector                   = {}
+        tolerations                     = []
       }
     }
   }

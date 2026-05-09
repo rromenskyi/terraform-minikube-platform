@@ -3,8 +3,11 @@
 # `tcp://buildkitd.arc-buildkitd.svc.cluster.local:1234` —
 # workflows on ARC-managed runners hit it via
 # `docker buildx create --driver remote --use --bootstrap` +
-# `docker buildx build`. Cache slabs live on a PVC so sequential
-# builds reuse layers across runner pods (which are ephemeral).
+# `docker buildx build`. Cache slabs live on a hostPath so
+# sequential builds reuse layers across runner pods (which are
+# ephemeral). hostPath survives Pod restarts but pins the daemon
+# to one node — single-replica + node_selector keeps the cache
+# stable.
 #
 # Why standalone vs `--driver kubernetes` (per-job buildkitd Pod):
 # the kubernetes driver creates / destroys a buildkitd Pod per
@@ -14,11 +17,31 @@
 # possible cache poisoning if untrusted code runs in CI) for
 # warm-cache build speed and zero RBAC delegation.
 #
-# Image: `moby/buildkit:<ver>-rootless`. Rootless mode runs as
-# uid 1000, no `privileged: true` on the Pod, no host kernel
-# capabilities. User-namespace remapping inside the container
-# isolates the build; that's enough for our trust boundary
-# (single-operator cluster, no untrusted PRs in our CI today).
+# Trust model: CERN userns pattern. The container runs with
+# `securityContext.privileged: true` (buildkit's OCI worker
+# needs CAP_SYS_ADMIN to set up overlayfs / mount the build
+# rootfs) BUT under `hostUsers: false` — the privileged uid 0
+# inside the container is remapped through a user-namespace to
+# an unprivileged uid on the host. The Pod is "privileged inside
+# its userns, unprivileged on the host", and the kernel — not
+# PSA — is what limits the blast radius. This needs:
+#   - `pod-security.kubernetes.io/enforce: privileged` on the ns
+#     (PSA admission lets `privileged: true` through)
+#   - `hostUsers: false` in the Pod spec (Kubernetes 1.30 alpha,
+#     1.34 beta — k3s on this cluster runs 1.34.6)
+#
+# Why `kubectl_manifest` and not `kubernetes_deployment_v1`: the
+# upstream `hashicorp/kubernetes` provider 2.x has no schema
+# field for `pod.spec.hostUsers`, so the only way to set the
+# field is the raw-YAML resource type from the `gavinbunney/
+# kubectl` provider.
+#
+# Image: `moby/buildkit:<ver>` — rootful. The rootless variant
+# (`-rootless` tag) needs unprivileged user-namespace creation,
+# which Ubuntu 23.10+ blocks by default at the AppArmor
+# `userns_create` LSM hook unless that hook is opened up
+# host-wide via sysctl. CERN privileged-in-userns sidesteps the
+# hook and is the upstream-documented production pattern.
 
 locals {
   buildkitd_enabled   = local.platform.services.buildkitd.enabled
@@ -33,166 +56,107 @@ resource "kubernetes_namespace_v1" "buildkitd" {
     labels = {
       "app.kubernetes.io/managed-by" = "terraform"
       "app.kubernetes.io/component"  = "buildkitd"
-      # Rootless buildkit needs `restricted` PSA exemption for
-      # `procMount: Unmasked` on the user-namespace setup. Use
-      # `baseline` so the Pod's seccomp / unprivileged userns
-      # capabilities aren't blocked at admission.
-      "pod-security.kubernetes.io/enforce" = "baseline"
+      # Privileged because the container sets `privileged: true`.
+      # The blast radius is contained by `hostUsers: false`
+      # (kernel userns remapping), not by PSA — see file header
+      # for the trust model.
+      "pod-security.kubernetes.io/enforce" = "privileged"
     }
   }
 }
 
-resource "kubernetes_persistent_volume_claim_v1" "buildkitd_cache" {
+resource "kubectl_manifest" "buildkitd" {
   count = local.buildkitd_enabled ? 1 : 0
 
-  metadata {
-    name      = "buildkitd-cache"
-    namespace = kubernetes_namespace_v1.buildkitd[0].metadata[0].name
-  }
-
-  spec {
-    access_modes = ["ReadWriteOnce"]
-    resources {
-      requests = {
-        storage = local.platform.services.buildkitd.cache_size
+  yaml_body = yamlencode({
+    apiVersion = "apps/v1"
+    kind       = "Deployment"
+    metadata = {
+      name      = "buildkitd"
+      namespace = kubernetes_namespace_v1.buildkitd[0].metadata[0].name
+      labels = {
+        "app.kubernetes.io/name"      = "buildkitd"
+        "app.kubernetes.io/component" = "buildkitd"
       }
     }
-    storage_class_name = local.platform.services.buildkitd.storage_class != "" ? local.platform.services.buildkitd.storage_class : null
-  }
-
-  wait_until_bound = false
-}
-
-resource "kubernetes_deployment_v1" "buildkitd" {
-  count = local.buildkitd_enabled ? 1 : 0
-
-  metadata {
-    name      = "buildkitd"
-    namespace = kubernetes_namespace_v1.buildkitd[0].metadata[0].name
-    labels = {
-      "app.kubernetes.io/name"      = "buildkitd"
-      "app.kubernetes.io/component" = "buildkitd"
-    }
-  }
-
-  spec {
-    # Single replica — one shared cache. Scaling out loses cache
-    # locality (each replica's PVC is independent on RWO).
-    replicas = 1
-
-    selector {
-      match_labels = {
-        "app.kubernetes.io/name" = "buildkitd"
+    spec = {
+      # Single replica — one shared cache. Scaling out fragments
+      # cache locality (each Pod's hostPath is independent on its
+      # node) and would need a session-affinity layer in front of
+      # the Service to keep a build pinned to its warm replica.
+      replicas = 1
+      selector = {
+        matchLabels = { "app.kubernetes.io/name" = "buildkitd" }
       }
-    }
-
-    strategy {
-      # Recreate (not RollingUpdate) because PVC is RWO — a new
-      # replica can't attach while the old one holds the volume.
-      type = "Recreate"
-    }
-
-    template {
-      metadata {
-        labels = {
-          "app.kubernetes.io/name" = "buildkitd"
-        }
-        annotations = {
-          # Rootless buildkit needs the seccomp + apparmor
-          # profiles relaxed for unprivileged-user-namespace
-          # creation. `unconfined` is broad but not privileged.
-          "container.apparmor.security.beta.kubernetes.io/buildkitd" = "unconfined"
-        }
+      strategy = {
+        # Recreate not RollingUpdate: hostPath cache is
+        # node-pinned and we don't want two Pods racing on the
+        # same files during a rollover.
+        type = "Recreate"
       }
-
-      spec {
-        node_selector = local.platform.services.buildkitd.node_selector
-
-        dynamic "toleration" {
-          for_each = local.platform.services.buildkitd.tolerations
-          content {
-            key      = toleration.value.key
-            operator = toleration.value.operator
-            value    = toleration.value.value
-            effect   = toleration.value.effect
-          }
+      template = {
+        metadata = {
+          labels = { "app.kubernetes.io/name" = "buildkitd" }
         }
-
-        security_context {
-          run_as_user     = 1000
-          run_as_group    = 1000
-          fs_group        = 1000
-          run_as_non_root = true
-          seccomp_profile {
-            type = "Unconfined"
-          }
-        }
-
-        container {
-          name  = "buildkitd"
-          image = "moby/buildkit:${local.platform.services.buildkitd.image_tag}"
-
-          args = [
-            "--addr",
-            "unix:///run/user/1000/buildkit/buildkitd.sock",
-            "--addr",
-            "tcp://0.0.0.0:1234",
-            # OCI worker — standard, no `--oci-worker-no-process-sandbox`
-            # so unprivileged user-namespace isolation kicks in
-            # automatically.
-            "--oci-worker-no-process-sandbox=false",
-          ]
-
-          port {
-            container_port = 1234
-            name           = "grpc"
-            protocol       = "TCP"
-          }
-
-          security_context {
-            run_as_user                = 1000
-            run_as_group               = 1000
-            run_as_non_root            = true
-            allow_privilege_escalation = false
-            seccomp_profile {
-              type = "Unconfined"
+        spec = {
+          hostUsers    = false
+          nodeSelector = local.platform.services.buildkitd.node_selector
+          tolerations  = local.platform.services.buildkitd.tolerations
+          containers = [{
+            name  = "buildkitd"
+            image = "moby/buildkit:${local.platform.services.buildkitd.image_tag}"
+            args = [
+              "--addr",
+              "unix:///run/buildkit/buildkitd.sock",
+              "--addr",
+              "tcp://0.0.0.0:1234",
+            ]
+            ports = [{
+              containerPort = 1234
+              name          = "grpc"
+              protocol      = "TCP"
+            }]
+            securityContext = {
+              privileged = true
             }
-          }
-
-          readiness_probe {
-            exec {
-              command = ["buildctl", "debug", "workers"]
+            readinessProbe = {
+              exec = {
+                command = ["buildctl", "debug", "workers"]
+              }
+              initialDelaySeconds = local.platform.services.buildkitd.readiness_initial_delay_seconds
+              periodSeconds       = local.platform.services.buildkitd.readiness_period_seconds
+              timeoutSeconds      = local.platform.services.buildkitd.readiness_timeout_seconds
+              failureThreshold    = local.platform.services.buildkitd.readiness_failure_threshold
             }
-            initial_delay_seconds = 5
-            period_seconds        = 30
-          }
-
-          volume_mount {
-            name       = "cache"
-            mount_path = "/home/user/.local/share/buildkit"
-          }
-
-          resources {
-            requests = {
-              cpu    = local.platform.services.buildkitd.cpu_request
-              memory = local.platform.services.buildkitd.memory_request
+            volumeMounts = [{
+              name      = "cache"
+              mountPath = local.platform.services.buildkitd.mount_path
+            }]
+            resources = {
+              requests = {
+                cpu    = local.platform.services.buildkitd.cpu_request
+                memory = local.platform.services.buildkitd.memory_request
+              }
+              limits = {
+                cpu    = local.platform.services.buildkitd.cpu_limit
+                memory = local.platform.services.buildkitd.memory_limit
+              }
             }
-            limits = {
-              cpu    = local.platform.services.buildkitd.cpu_limit
-              memory = local.platform.services.buildkitd.memory_limit
+          }]
+          volumes = [{
+            name = "cache"
+            hostPath = {
+              path = local.platform.services.buildkitd.host_path
+              type = "DirectoryOrCreate"
             }
-          }
-        }
-
-        volume {
-          name = "cache"
-          persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim_v1.buildkitd_cache[0].metadata[0].name
-          }
+          }]
         }
       }
     }
-  }
+  })
+
+  wait_for_rollout = true
+  depends_on       = [kubernetes_namespace_v1.buildkitd]
 }
 
 resource "kubernetes_service_v1" "buildkitd" {
