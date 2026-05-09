@@ -58,12 +58,28 @@ locals {
   instances = var.enabled ? toset(["enabled"]) : toset([])
 }
 
+# Module-tier label, chained off `var.context` (root passes
+# `module.platform_label.context` from `_label.tf`). Tags propagate
+# down — operator-stamped tags at the platform tier land on every
+# resource this module emits via `module.label.tags` in
+# `metadata.labels`.
+module "label" {
+  source = "git::https://github.com/rromenskyi/terraform-null-label.git?ref=v0.1.0"
+
+  context   = var.context
+  namespace = var.namespace
+  name      = "buildkitd"
+  tags = {
+    "app.kubernetes.io/component" = "buildkitd"
+  }
+}
+
 resource "kubernetes_namespace_v1" "this" {
   for_each = local.instances
 
   metadata {
     name = var.namespace
-    labels = {
+    labels = merge(module.label.tags, {
       "app.kubernetes.io/managed-by" = "terraform"
       "app.kubernetes.io/component"  = "buildkitd"
       # Privileged because the container sets `privileged: true`.
@@ -71,7 +87,7 @@ resource "kubernetes_namespace_v1" "this" {
       # (kernel userns remapping), not by PSA — see file header
       # for the trust model.
       "pod-security.kubernetes.io/enforce" = "privileged"
-    }
+    })
   }
 }
 
@@ -84,10 +100,10 @@ resource "kubectl_manifest" "this" {
     metadata = {
       name      = "buildkitd"
       namespace = kubernetes_namespace_v1.this["enabled"].metadata[0].name
-      labels = {
+      labels = merge(module.label.tags, {
         "app.kubernetes.io/name"      = "buildkitd"
         "app.kubernetes.io/component" = "buildkitd"
-      }
+      })
     }
     spec = {
       # Single replica — one shared cache. Scaling out fragments
@@ -175,10 +191,10 @@ resource "kubernetes_service_v1" "this" {
   metadata {
     name      = "buildkitd"
     namespace = kubernetes_namespace_v1.this["enabled"].metadata[0].name
-    labels = {
+    labels = merge(module.label.tags, {
       "app.kubernetes.io/name"      = "buildkitd"
       "app.kubernetes.io/component" = "buildkitd"
-    }
+    })
   }
 
   spec {
