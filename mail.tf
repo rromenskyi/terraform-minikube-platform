@@ -19,7 +19,7 @@
 # sets `mail.primary: true`.
 
 resource "kubernetes_namespace_v1" "mail" {
-  count = local.mail == null ? 0 : 1
+  for_each = local.mail == null ? toset([]) : toset(["enabled"])
 
   metadata {
     name = "mail"
@@ -40,11 +40,11 @@ resource "kubernetes_namespace_v1" "mail" {
 # expected mailbox count is one digit. 2Gi memory + 2 CPU leaves
 # enough room without blowing past a typical home-lab node.
 resource "kubernetes_resource_quota_v1" "mail" {
-  count = local.mail == null ? 0 : 1
+  for_each = local.mail == null ? toset([]) : toset(["enabled"])
 
   metadata {
     name      = "mail-budget"
-    namespace = kubernetes_namespace_v1.mail[0].metadata[0].name
+    namespace = kubernetes_namespace_v1.mail["enabled"].metadata[0].name
     labels = {
       "app.kubernetes.io/managed-by" = "terraform"
     }
@@ -66,7 +66,7 @@ module "stalwart" {
   depends_on = [module.addons, module.zitadel, kubernetes_resource_quota_v1.mail]
 
   enabled          = local.mail != null
-  namespace        = local.mail == null ? "" : kubernetes_namespace_v1.mail[0].metadata[0].name
+  namespace        = local.mail == null ? "" : kubernetes_namespace_v1.mail["enabled"].metadata[0].name
   volume_base_path = var.host_volume_path
 
   # Primary domain + matching Cloudflare zone come from the domain
@@ -90,7 +90,7 @@ module "stalwart" {
   # creates an OIDC app + role + the bootstrap plan attaches Zitadel
   # as the authentication directory. When off, Stalwart still comes
   # up with internal directory + recovery admin only.
-  zitadel_org_id                 = local.platform.services.zitadel.enabled ? data.zitadel_orgs.platform_org[0].ids[0] : ""
+  zitadel_org_id                 = local.platform.services.zitadel.enabled ? data.zitadel_orgs.platform_org["enabled"].ids[0] : ""
   zitadel_issuer_url             = local.platform.services.zitadel.enabled ? "https://${local.platform.services.zitadel.external_domain}" : ""
   zitadel_provider_authenticated = var.zitadel_pat != ""
 
@@ -127,11 +127,11 @@ module "roundcube" {
   depends_on = [module.stalwart]
 
   enabled          = local.mail != null && local.platform.services.zitadel.enabled
-  namespace        = local.mail == null ? "" : kubernetes_namespace_v1.mail[0].metadata[0].name
+  namespace        = local.mail == null ? "" : kubernetes_namespace_v1.mail["enabled"].metadata[0].name
   hostname         = try(local.mail.hostname, "")
   volume_base_path = var.host_volume_path
 
-  zitadel_org_id                 = local.platform.services.zitadel.enabled ? data.zitadel_orgs.platform_org[0].ids[0] : ""
+  zitadel_org_id                 = local.platform.services.zitadel.enabled ? data.zitadel_orgs.platform_org["enabled"].ids[0] : ""
   zitadel_issuer_url             = local.platform.services.zitadel.enabled ? "https://${local.platform.services.zitadel.external_domain}" : ""
   zitadel_provider_authenticated = var.zitadel_pat != ""
   zitadel_project_id             = local.platform.services.zitadel.enabled ? module.stalwart.zitadel_project_id : ""
@@ -144,7 +144,7 @@ module "roundcube" {
 # `enabled` would pull org_id resolution into the apply phase and
 # every dependent resource would re-plan as "must replace".
 data "zitadel_orgs" "platform_org" {
-  count = local.platform.services.zitadel.enabled ? 1 : 0
+  for_each = local.platform.services.zitadel.enabled ? toset(["enabled"]) : toset([])
 
   name        = "ZITADEL"
   name_method = "TEXT_QUERY_METHOD_EQUALS"

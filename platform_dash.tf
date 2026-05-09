@@ -39,8 +39,8 @@ check "platform_dash_image_set" {
 # AUTH_ZITADEL_ISSUER / AUTH_ZITADEL_ID / AUTH_ZITADEL_SECRET /
 # AUTH_SECRET — the module's Deployment mounts it via env_from.
 module "platform_dash_oidc" {
-  source = "./modules/zitadel-app"
-  count  = local.platform.services.platform_dash.enabled && local.platform.services.zitadel.enabled ? 1 : 0
+  source   = "./modules/zitadel-app"
+  for_each = local.platform.services.platform_dash.enabled && local.platform.services.zitadel.enabled ? toset(["enabled"]) : toset([])
   # `depends_on = [module.zitadel]` is intentionally absent. With
   # `org_id` flowing in from `data.zitadel_orgs.platform_org` at root
   # the module no longer queries Zitadel itself, so the module-level
@@ -55,7 +55,7 @@ module "platform_dash_oidc" {
     random     = random
   }
 
-  org_id       = local.platform.services.zitadel.enabled ? data.zitadel_orgs.platform_org[0].ids[0] : ""
+  org_id       = local.platform.services.zitadel.enabled ? data.zitadel_orgs.platform_org["enabled"].ids[0] : ""
   project_name = "platform-dash"
   app_name     = "platform-dash"
   issuer_url   = "https://${local.platform.services.zitadel.external_domain}"
@@ -105,8 +105,8 @@ module "platform_dash" {
   replicas             = local.platform.services.platform_dash.replicas
   resources            = local.platform.services.platform_dash.resources
   hostname             = local.platform.services.platform_dash.hostname
-  oidc_secret_name     = try(module.platform_dash_oidc[0].secret_name, "platform-dash-oidc")
-  oidc_secret_checksum = try(module.platform_dash_oidc[0].secret_checksum, "no-oidc")
+  oidc_secret_name     = try(module.platform_dash_oidc["enabled"].secret_name, "platform-dash-oidc")
+  oidc_secret_checksum = try(module.platform_dash_oidc["enabled"].secret_checksum, "no-oidc")
 
   node_selector = local.platform.services.platform_dash.node_selector
   tolerations   = local.platform.services.platform_dash.tolerations
