@@ -41,16 +41,26 @@ locals {
   cluster_role   = "${var.namespace}-${local.app_name}"
   port_container = 3000
   port_service   = 80
-  # The local labels block is consumed by every k8s resource this
-  # module emits AND by the Deployment's pod-template selector.
-  # `merge(module.label.tags, <existing>)` adds the propagated
-  # null-label tag set with existing keys winning on collision —
-  # `app.kubernetes.io/name` (the Service selector key) and
-  # `app.kubernetes.io/managed-by` are explicitly preserved.
+  # Local labels merged with the propagated null-label tag set
+  # (root → platform_label → module.label). Local-side hardcoding is
+  # kept ONLY for keys that null-label doesn't naturally cover or
+  # whose value is module-specific:
+  #   - `app.kubernetes.io/name` = the in-cluster name of THIS app
+  #     (k8s convention; null-label uses the bare `name` key, a
+  #     different label namespace, so both coexist intentionally —
+  #     the Service selector binds on `app.kubernetes.io/name`, the
+  #     null-label `name` is for cross-tier filtering)
+  #
+  # Removed (now sourced from `module.platform_label.tags`):
+  #   - `app.kubernetes.io/managed-by` — root tag, never varies
+  #   - `app.kubernetes.io/part-of`    — root tag set to
+  #     `terraform-minikube-platform` so a single
+  #     `kubectl … -l 'app.kubernetes.io/part-of=terraform-minikube-platform'`
+  #     filter catches every engine-managed resource. Previously
+  #     hardcoded to `platform` here, which broke the unified
+  #     filter for this module.
   labels = merge(module.label.tags, {
-    "app.kubernetes.io/name"       = local.app_name
-    "app.kubernetes.io/managed-by" = "terraform"
-    "app.kubernetes.io/part-of"    = "platform"
+    "app.kubernetes.io/name" = local.app_name
   })
 }
 
