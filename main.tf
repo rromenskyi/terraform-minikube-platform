@@ -150,6 +150,14 @@ module "project" {
   default_limits   = local.default_limits
   volume_base_path = var.host_volume_path
 
+  # Serialised parent context from `terraform-null-label` (see
+  # `_label.tf`). The project module chains its own `project_label`
+  # off this context, and per-feature labels inside the module
+  # (chart_oidc, pg credentials, postgres extras, …) chain in turn
+  # off the project label. Tags accumulate down the tree; ids stay
+  # under per-module explicit control.
+  context = module.platform_label.context
+
   # Argo CD wiring — the project module emits an AppProject + one
   # bootstrap Application per `argocd_bootstraps:` entry in the domain
   # yaml, plus DNS+tunnel records per `argocd_hostnames:` entry. All

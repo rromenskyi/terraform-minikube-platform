@@ -1,3 +1,9 @@
+variable "context" {
+  description = "Serialised parent context from `terraform-null-label`. Caller passes `module.platform_label.context` from the root stack so this module can chain its own `project_label` off the platform-wide context — tags propagate down, ids stay under per-feature explicit control. Default `null` means the project module produces a label with no inherited context (still works, just doesn't carry the platform-tier tags)."
+  type        = string
+  default     = null
+}
+
 variable "project_config" {
   description = "Expanded project/env entry from locals.projects"
   type        = any

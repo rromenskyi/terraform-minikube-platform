@@ -1,0 +1,35 @@
+# Operator-private identifiers the pre-commit scrub check
+# (`tools/check-scrub.sh`) will refuse to commit. Copy to
+# `config/.scrub-list` (gitignored) and fill in the values that are
+# specific to YOUR setup — tenant slugs, app names, internal node
+# names, public IPs you own. The live file never lands in the public
+# repo; this `.example` ships only the format.
+#
+# Format:
+#   - one regex per line (extended POSIX, case-insensitive at match time)
+#   - `#` starts a comment
+#   - blank lines ignored
+#
+# Examples (delete and replace with your real values):
+
+# Tenant slugs / app names — never bake these into engine .tf, .md,
+# .example, or .gitignore. Engine stays generic; operator config
+# (gitignored) carries the real names.
+# my-app
+# my-tenant
+# acme-frontend
+
+# Internal node names visible only inside the operator's cluster.
+# bigbox
+# edge-node-7
+
+# Public IPs the operator owns. Listing them here keeps them out of
+# README diagrams, .tf comments, PR descriptions.
+# 203\.0\.113\.42
+# 198\.51\.100\.7
+
+# Subdomains that double as tenant identifiers (e.g. `<tenant>.dev` /
+# `<tenant>-staging`). Engine never spells these out; route maps in
+# gitignored domain yaml carry them.
+# my-app-dev
+# my-app-staging
