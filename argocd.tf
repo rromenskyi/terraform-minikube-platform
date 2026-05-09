@@ -31,7 +31,7 @@ check "argocd_hostname_set" {
 # step would have run. The chart's `create_namespace = false` below
 # expects the namespace to already exist.
 resource "kubernetes_namespace_v1" "argocd" {
-  count = local.platform.services.argocd.enabled ? 1 : 0
+  for_each = local.platform.services.argocd.enabled ? toset(["enabled"]) : toset([])
 
   metadata {
     name = local.platform.services.argocd.namespace
@@ -46,7 +46,7 @@ resource "kubernetes_namespace_v1" "argocd" {
 # downstream only consume `client_id` / `client_secret` directly.
 module "argocd_oidc" {
   source     = "./modules/zitadel-app"
-  count      = local.platform.services.argocd.enabled && local.platform.services.zitadel.enabled ? 1 : 0
+  for_each   = local.platform.services.argocd.enabled && local.platform.services.zitadel.enabled ? toset(["enabled"]) : toset([])
   depends_on = [kubernetes_namespace_v1.argocd]
   # No `depends_on = [module.zitadel]` — the org_id input below is
   # resolved at root via `data.zitadel_orgs.platform_org`, so the
@@ -60,7 +60,7 @@ module "argocd_oidc" {
     random     = random
   }
 
-  org_id       = local.platform.services.zitadel.enabled ? data.zitadel_orgs.platform_org[0].ids[0] : ""
+  org_id       = local.platform.services.zitadel.enabled ? data.zitadel_orgs.platform_org["enabled"].ids[0] : ""
   project_name = "argocd"
   app_name     = "argocd"
   issuer_url   = "https://${local.platform.services.zitadel.external_domain}"
@@ -95,8 +95,8 @@ module "argocd" {
   hostname = local.platform.services.argocd.hostname
 
   oidc_issuer        = local.platform.services.zitadel.enabled ? "https://${local.platform.services.zitadel.external_domain}" : ""
-  oidc_client_id     = try(module.argocd_oidc[0].client_id, "")
-  oidc_client_secret = try(module.argocd_oidc[0].client_secret, "")
+  oidc_client_id     = try(module.argocd_oidc["enabled"].client_id, "")
+  oidc_client_secret = try(module.argocd_oidc["enabled"].client_secret, "")
   oidc_admin_groups  = ["argocd_admin"]
 
   node_selector = local.platform.services.argocd.node_selector

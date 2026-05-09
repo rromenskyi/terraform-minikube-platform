@@ -196,7 +196,7 @@ module "project" {
   # `module.project` don't have to query Zitadel themselves (which
   # would re-introduce the data-source-defer cascade described on
   # `resource "zitadel_default_login_policy"` in zitadel.tf).
-  zitadel_org_id                 = local.platform.services.zitadel.enabled ? data.zitadel_orgs.platform_org[0].ids[0] : ""
+  zitadel_org_id                 = local.platform.services.zitadel.enabled ? data.zitadel_orgs.platform_org["enabled"].ids[0] : ""
   zitadel_issuer_url             = local.platform.services.zitadel.enabled ? "https://${local.platform.services.zitadel.external_domain}" : null
   zitadel_provider_authenticated = var.zitadel_pat != ""
 

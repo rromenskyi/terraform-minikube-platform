@@ -26,9 +26,9 @@
 # tokens without the bridged claim.
 
 resource "zitadel_action" "groups_claim" {
-  count = local.platform.services.zitadel.enabled ? 1 : 0
+  for_each = local.platform.services.zitadel.enabled ? toset(["enabled"]) : toset([])
 
-  org_id  = data.zitadel_orgs.platform_org[0].ids[0]
+  org_id  = data.zitadel_orgs.platform_org["enabled"].ids[0]
   name    = "groups_claim_from_project_roles"
   timeout = "10s"
   # `allowed_to_fail = true` — defensive default for an Action that
@@ -85,13 +85,13 @@ resource "zitadel_action" "groups_claim" {
 # "complement_token" in older docs was renamed; the trigger types
 # stayed `PRE_*_CREATION`.)
 resource "zitadel_trigger_actions" "groups_claim_userinfo" {
-  count = local.platform.services.zitadel.enabled ? 1 : 0
+  for_each = local.platform.services.zitadel.enabled ? toset(["enabled"]) : toset([])
 
-  org_id       = data.zitadel_orgs.platform_org[0].ids[0]
+  org_id       = data.zitadel_orgs.platform_org["enabled"].ids[0]
   flow_type    = "FLOW_TYPE_CUSTOMISE_TOKEN"
   trigger_type = "TRIGGER_TYPE_PRE_USERINFO_CREATION"
 
-  action_ids = [zitadel_action.groups_claim[0].id]
+  action_ids = [zitadel_action.groups_claim["enabled"].id]
 }
 
 # Same script also runs on access-token issuance so service-side
@@ -100,11 +100,11 @@ resource "zitadel_trigger_actions" "groups_claim_userinfo" {
 # Trigger is independent — tokens go through a separate Zitadel
 # pipeline.
 resource "zitadel_trigger_actions" "groups_claim_access_token" {
-  count = local.platform.services.zitadel.enabled ? 1 : 0
+  for_each = local.platform.services.zitadel.enabled ? toset(["enabled"]) : toset([])
 
-  org_id       = data.zitadel_orgs.platform_org[0].ids[0]
+  org_id       = data.zitadel_orgs.platform_org["enabled"].ids[0]
   flow_type    = "FLOW_TYPE_CUSTOMISE_TOKEN"
   trigger_type = "TRIGGER_TYPE_PRE_ACCESS_TOKEN_CREATION"
 
-  action_ids = [zitadel_action.groups_claim[0].id]
+  action_ids = [zitadel_action.groups_claim["enabled"].id]
 }

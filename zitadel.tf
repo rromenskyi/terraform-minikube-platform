@@ -144,7 +144,7 @@ module "zitadel" {
 # data-source-defer condition can no longer fire, so this resource
 # lives at the level that owns the lookup.
 resource "zitadel_default_login_policy" "main" {
-  count      = local.platform.services.zitadel.enabled ? 1 : 0
+  for_each   = local.platform.services.zitadel.enabled ? toset(["enabled"]) : toset([])
   depends_on = [module.zitadel]
 
   allow_register     = local.platform.services.zitadel.login_policy.allow_register
@@ -188,7 +188,7 @@ resource "zitadel_default_login_policy" "main" {
 # within one token-lifetime cycle instead of being stuck on a
 # cached pre-grant token until LRU eviction or pod restart.
 resource "zitadel_default_oidc_settings" "main" {
-  count      = local.platform.services.zitadel.enabled ? 1 : 0
+  for_each   = local.platform.services.zitadel.enabled ? toset(["enabled"]) : toset([])
   depends_on = [module.zitadel]
 
   access_token_lifetime         = local.platform.services.zitadel.oidc_settings.access_token_lifetime

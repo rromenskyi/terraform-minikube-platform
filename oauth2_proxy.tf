@@ -43,7 +43,7 @@ module "oauth2_proxy" {
   enabled                        = local.platform.services.zitadel.enabled
   namespace                      = "ingress-controller"
   zitadel_provider_authenticated = var.zitadel_pat != ""
-  zitadel_org_id                 = local.platform.services.zitadel.enabled ? data.zitadel_orgs.platform_org[0].ids[0] : ""
+  zitadel_org_id                 = local.platform.services.zitadel.enabled ? data.zitadel_orgs.platform_org["enabled"].ids[0] : ""
 
   issuer_url    = local.platform.services.zitadel.enabled ? "https://${local.platform.services.zitadel.external_domain}" : ""
   auth_hostname = local._oauth2_parent_domain == "" ? "" : "auth.${local._oauth2_parent_domain}"

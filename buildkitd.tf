@@ -49,7 +49,7 @@ locals {
 }
 
 resource "kubernetes_namespace_v1" "buildkitd" {
-  count = local.buildkitd_enabled ? 1 : 0
+  for_each = local.buildkitd_enabled ? toset(["enabled"]) : toset([])
 
   metadata {
     name = local.buildkitd_namespace
@@ -66,14 +66,14 @@ resource "kubernetes_namespace_v1" "buildkitd" {
 }
 
 resource "kubectl_manifest" "buildkitd" {
-  count = local.buildkitd_enabled ? 1 : 0
+  for_each = local.buildkitd_enabled ? toset(["enabled"]) : toset([])
 
   yaml_body = yamlencode({
     apiVersion = "apps/v1"
     kind       = "Deployment"
     metadata = {
       name      = "buildkitd"
-      namespace = kubernetes_namespace_v1.buildkitd[0].metadata[0].name
+      namespace = kubernetes_namespace_v1.buildkitd["enabled"].metadata[0].name
       labels = {
         "app.kubernetes.io/name"      = "buildkitd"
         "app.kubernetes.io/component" = "buildkitd"
@@ -160,11 +160,11 @@ resource "kubectl_manifest" "buildkitd" {
 }
 
 resource "kubernetes_service_v1" "buildkitd" {
-  count = local.buildkitd_enabled ? 1 : 0
+  for_each = local.buildkitd_enabled ? toset(["enabled"]) : toset([])
 
   metadata {
     name      = "buildkitd"
-    namespace = kubernetes_namespace_v1.buildkitd[0].metadata[0].name
+    namespace = kubernetes_namespace_v1.buildkitd["enabled"].metadata[0].name
     labels = {
       "app.kubernetes.io/name"      = "buildkitd"
       "app.kubernetes.io/component" = "buildkitd"
@@ -189,5 +189,5 @@ resource "kubernetes_service_v1" "buildkitd" {
 
 output "buildkitd_endpoint" {
   description = "In-cluster BuildKit gRPC endpoint for `docker buildx create --driver remote --endpoint <this>`. Empty when buildkitd is disabled."
-  value       = local.buildkitd_enabled ? "tcp://${kubernetes_service_v1.buildkitd[0].metadata[0].name}.${kubernetes_namespace_v1.buildkitd[0].metadata[0].name}.svc.cluster.local:1234" : ""
+  value       = local.buildkitd_enabled ? "tcp://${kubernetes_service_v1.buildkitd["enabled"].metadata[0].name}.${kubernetes_namespace_v1.buildkitd["enabled"].metadata[0].name}.svc.cluster.local:1234" : ""
 }

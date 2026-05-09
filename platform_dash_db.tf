@@ -66,21 +66,21 @@ locals {
 # Symbol-free so the URI doesn't need URL-encoding (the dashboard
 # pg / ioredis clients consume raw connection strings).
 resource "random_password" "dashboard_ro_pg" {
-  count   = local.dash_pg_enabled ? 1 : 0
-  length  = 32
-  special = false
+  for_each = local.dash_pg_enabled ? toset(["enabled"]) : toset([])
+  length   = 32
+  special  = false
 }
 
 resource "random_password" "dashboard_ro_redis" {
-  count   = local.dash_red_enabled ? 1 : 0
-  length  = 32
-  special = false
+  for_each = local.dash_red_enabled ? toset(["enabled"]) : toset([])
+  length   = 32
+  special  = false
 }
 
 resource "random_password" "dashboard_ro_mysql" {
-  count   = local.dash_mysql_enabled ? 1 : 0
-  length  = 32
-  special = false
+  for_each = local.dash_mysql_enabled ? toset(["enabled"]) : toset([])
+  length   = 32
+  special  = false
 }
 
 # ── Postgres: provision dashboard_ro via psql Job ────────────────────────────
@@ -89,7 +89,7 @@ resource "random_password" "dashboard_ro_mysql" {
 # need (all stat queries can run against any single db on a
 # pg_monitor connection).
 resource "kubernetes_job_v1" "pg_dashboard_ro_setup" {
-  count      = local.dash_pg_enabled ? 1 : 0
+  for_each   = local.dash_pg_enabled ? toset(["enabled"]) : toset([])
   depends_on = [module.postgres]
 
   metadata {
@@ -127,7 +127,7 @@ resource "kubernetes_job_v1" "pg_dashboard_ro_setup" {
           }
           env {
             name  = "RO_PASSWORD"
-            value = random_password.dashboard_ro_pg[0].result
+            value = random_password.dashboard_ro_pg["enabled"].result
           }
 
           resources {
@@ -161,7 +161,7 @@ resource "kubernetes_job_v1" "pg_dashboard_ro_setup" {
 # `~*` allows access to all keys (read-only); `&*` allows all
 # pub/sub channels (subscribe is read in spirit). No write categories.
 resource "kubernetes_job_v1" "redis_dashboard_ro_setup" {
-  count      = local.dash_red_enabled ? 1 : 0
+  for_each   = local.dash_red_enabled ? toset(["enabled"]) : toset([])
   depends_on = [module.redis]
 
   metadata {
@@ -199,7 +199,7 @@ resource "kubernetes_job_v1" "redis_dashboard_ro_setup" {
           }
           env {
             name  = "RO_PASSWORD"
-            value = random_password.dashboard_ro_redis[0].result
+            value = random_password.dashboard_ro_redis["enabled"].result
           }
 
           resources {
@@ -240,7 +240,7 @@ resource "kubernetes_job_v1" "redis_dashboard_ro_setup" {
 # only. dashboard_ro@'%' so the role works from the dashboard pod
 # regardless of source IP.
 resource "kubernetes_job_v1" "mysql_dashboard_ro_setup" {
-  count      = local.dash_mysql_enabled ? 1 : 0
+  for_each   = local.dash_mysql_enabled ? toset(["enabled"]) : toset([])
   depends_on = [module.mysql]
 
   metadata {
@@ -274,7 +274,7 @@ resource "kubernetes_job_v1" "mysql_dashboard_ro_setup" {
           }
           env {
             name  = "RO_PASSWORD"
-            value = random_password.dashboard_ro_mysql[0].result
+            value = random_password.dashboard_ro_mysql["enabled"].result
           }
 
           resources {
@@ -316,7 +316,7 @@ resource "kubernetes_job_v1" "mysql_dashboard_ro_setup" {
 # without per-namespace RoleBindings. Rotating the password = next
 # terraform apply rebuilds both the user and this Secret atomically.
 resource "kubernetes_secret_v1" "platform_pg_dashboard" {
-  count      = local.dash_pg_enabled ? 1 : 0
+  for_each   = local.dash_pg_enabled ? toset(["enabled"]) : toset([])
   depends_on = [kubernetes_job_v1.pg_dashboard_ro_setup]
 
   metadata {
@@ -327,12 +327,12 @@ resource "kubernetes_secret_v1" "platform_pg_dashboard" {
     }
   }
   data = {
-    URI = "postgres://dashboard_ro:${random_password.dashboard_ro_pg[0].result}@${module.postgres.host}:${module.postgres.port}/postgres?sslmode=disable"
+    URI = "postgres://dashboard_ro:${random_password.dashboard_ro_pg["enabled"].result}@${module.postgres.host}:${module.postgres.port}/postgres?sslmode=disable"
   }
 }
 
 resource "kubernetes_secret_v1" "platform_redis_dashboard" {
-  count      = local.dash_red_enabled ? 1 : 0
+  for_each   = local.dash_red_enabled ? toset(["enabled"]) : toset([])
   depends_on = [kubernetes_job_v1.redis_dashboard_ro_setup]
 
   metadata {
@@ -343,12 +343,12 @@ resource "kubernetes_secret_v1" "platform_redis_dashboard" {
     }
   }
   data = {
-    URI = "redis://dashboard_ro:${random_password.dashboard_ro_redis[0].result}@${module.redis.host}:${module.redis.port}/0"
+    URI = "redis://dashboard_ro:${random_password.dashboard_ro_redis["enabled"].result}@${module.redis.host}:${module.redis.port}/0"
   }
 }
 
 resource "kubernetes_secret_v1" "platform_mysql_dashboard" {
-  count      = local.dash_mysql_enabled ? 1 : 0
+  for_each   = local.dash_mysql_enabled ? toset(["enabled"]) : toset([])
   depends_on = [kubernetes_job_v1.mysql_dashboard_ro_setup]
 
   metadata {
@@ -359,7 +359,7 @@ resource "kubernetes_secret_v1" "platform_mysql_dashboard" {
     }
   }
   data = {
-    URI = "mysql://dashboard_ro:${random_password.dashboard_ro_mysql[0].result}@${module.mysql.host}:${module.mysql.port}/mysql"
+    URI = "mysql://dashboard_ro:${random_password.dashboard_ro_mysql["enabled"].result}@${module.mysql.host}:${module.mysql.port}/mysql"
   }
 }
 
@@ -367,7 +367,7 @@ resource "kubernetes_secret_v1" "platform_mysql_dashboard" {
 # Single source of truth the dashboard's lib/db-targets.server.ts
 # reads via its SA. `targets.yaml` is the documented schema.
 resource "kubernetes_config_map_v1" "platform_dash_db_targets" {
-  count = local.dash_namespace != null && length(local.dash_db_targets) > 0 ? 1 : 0
+  for_each = local.dash_namespace != null && length(local.dash_db_targets) > 0 ? toset(["enabled"]) : toset([])
 
   metadata {
     name      = "platform-dash-db-targets"

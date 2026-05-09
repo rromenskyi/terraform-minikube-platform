@@ -72,7 +72,7 @@ check "backup_inputs_set_when_enabled" {
 # rotation in the source namespace propagates on the next apply.
 
 resource "kubernetes_secret_v1" "backup_postgres_superuser" {
-  count = local.platform.services.backup.enabled && local.platform.services.postgres.enabled ? 1 : 0
+  for_each = local.platform.services.backup.enabled && local.platform.services.postgres.enabled ? toset(["enabled"]) : toset([])
 
   depends_on = [module.backup]
 
@@ -86,12 +86,12 @@ resource "kubernetes_secret_v1" "backup_postgres_superuser" {
   }
 
   data = {
-    POSTGRES_PASSWORD = data.kubernetes_secret_v1.postgres_superuser[0].data["POSTGRES_PASSWORD"]
+    POSTGRES_PASSWORD = data.kubernetes_secret_v1.postgres_superuser["enabled"].data["POSTGRES_PASSWORD"]
   }
 }
 
 data "kubernetes_secret_v1" "postgres_superuser" {
-  count = local.platform.services.backup.enabled && local.platform.services.postgres.enabled ? 1 : 0
+  for_each = local.platform.services.backup.enabled && local.platform.services.postgres.enabled ? toset(["enabled"]) : toset([])
 
   metadata {
     name      = module.postgres.superuser_secret_name
@@ -100,7 +100,7 @@ data "kubernetes_secret_v1" "postgres_superuser" {
 }
 
 resource "kubernetes_secret_v1" "backup_mysql_root" {
-  count = local.platform.services.backup.enabled && local.platform.services.mysql.enabled ? 1 : 0
+  for_each = local.platform.services.backup.enabled && local.platform.services.mysql.enabled ? toset(["enabled"]) : toset([])
 
   depends_on = [module.backup]
 
@@ -114,12 +114,12 @@ resource "kubernetes_secret_v1" "backup_mysql_root" {
   }
 
   data = {
-    MYSQL_ROOT_PASSWORD = data.kubernetes_secret_v1.mysql_root[0].data["MYSQL_ROOT_PASSWORD"]
+    MYSQL_ROOT_PASSWORD = data.kubernetes_secret_v1.mysql_root["enabled"].data["MYSQL_ROOT_PASSWORD"]
   }
 }
 
 data "kubernetes_secret_v1" "mysql_root" {
-  count = local.platform.services.backup.enabled && local.platform.services.mysql.enabled ? 1 : 0
+  for_each = local.platform.services.backup.enabled && local.platform.services.mysql.enabled ? toset(["enabled"]) : toset([])
 
   metadata {
     name      = module.mysql.root_secret_name
@@ -128,7 +128,7 @@ data "kubernetes_secret_v1" "mysql_root" {
 }
 
 resource "kubernetes_secret_v1" "backup_redis_default" {
-  count = local.platform.services.backup.enabled && local.platform.services.redis.enabled ? 1 : 0
+  for_each = local.platform.services.backup.enabled && local.platform.services.redis.enabled ? toset(["enabled"]) : toset([])
 
   depends_on = [module.backup]
 
@@ -142,12 +142,12 @@ resource "kubernetes_secret_v1" "backup_redis_default" {
   }
 
   data = {
-    REDIS_PASSWORD = data.kubernetes_secret_v1.redis_default[0].data["REDIS_PASSWORD"]
+    REDIS_PASSWORD = data.kubernetes_secret_v1.redis_default["enabled"].data["REDIS_PASSWORD"]
   }
 }
 
 data "kubernetes_secret_v1" "redis_default" {
-  count = local.platform.services.backup.enabled && local.platform.services.redis.enabled ? 1 : 0
+  for_each = local.platform.services.backup.enabled && local.platform.services.redis.enabled ? toset(["enabled"]) : toset([])
 
   metadata {
     name      = module.redis.default_secret_name
@@ -156,7 +156,7 @@ data "kubernetes_secret_v1" "redis_default" {
 }
 
 resource "kubernetes_secret_v1" "backup_vault_token" {
-  count = local.platform.services.backup.enabled && local.platform.services.vault.enabled ? 1 : 0
+  for_each = local.platform.services.backup.enabled && local.platform.services.vault.enabled ? toset(["enabled"]) : toset([])
 
   depends_on = [module.backup]
 
@@ -170,12 +170,12 @@ resource "kubernetes_secret_v1" "backup_vault_token" {
   }
 
   data = {
-    "root-token" = data.kubernetes_secret_v1.vault_bootstrap[0].data["root-token"]
+    "root-token" = data.kubernetes_secret_v1.vault_bootstrap["enabled"].data["root-token"]
   }
 }
 
 data "kubernetes_secret_v1" "vault_bootstrap" {
-  count = local.platform.services.backup.enabled && local.platform.services.vault.enabled ? 1 : 0
+  for_each = local.platform.services.backup.enabled && local.platform.services.vault.enabled ? toset(["enabled"]) : toset([])
 
   metadata {
     name      = "vault-bootstrap"
