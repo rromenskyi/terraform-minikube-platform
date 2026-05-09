@@ -9,6 +9,7 @@
 module "buildkitd" {
   source = "./modules/buildkitd"
 
+  context        = module.platform_label.context
   enabled        = local.platform.services.buildkitd.enabled
   image_tag      = local.platform.services.buildkitd.image_tag
   host_path      = local.platform.services.buildkitd.host_path

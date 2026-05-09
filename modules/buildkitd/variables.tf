@@ -1,3 +1,9 @@
+variable "context" {
+  description = "Serialised parent context from `terraform-null-label`. Caller passes `module.platform_label.context` from the root stack so this module can chain its own label off the platform-wide context — tags propagate down, keeping every k8s resource the module emits consistent with the rest of the engine. Default `null` means the module produces a label with no inherited context (still works, just doesn't carry the platform-tier tags)."
+  type        = string
+  default     = null
+}
+
 variable "enabled" {
   description = "Whether to install the buildkitd Pod + Service. False collapses every resource to zero — namespace, kubectl_manifest Deployment, and ClusterIP all disappear, and the `endpoint` output resolves to an empty string."
   type        = bool
