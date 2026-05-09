@@ -113,13 +113,22 @@ variable "distributed" {
 }
 
 variable "buckets" {
-  description = "Buckets the engine pre-creates and exposes via per-bucket Secrets. Map key is the bucket name (must match S3 naming rules: lowercase + dash). Each entry: `consumer_namespace` (where the engine emits the credentials Secret — engine assumes the namespace already exists), `secret_name` (the Secret's name in that namespace), `region` (string the SDK expects in `S3_REGION`; MinIO ignores it but boto3 / aws-sdk-go demand a value — default `auto` is universally accepted). Each bucket gets a dedicated MinIO service-account key — leakage of one Secret limits blast radius to that bucket. Empty map = MinIO server runs but no buckets are pre-created (unusual; only fits an operator who'll manage buckets externally)."
+  description = "Buckets the engine pre-creates and exposes via per-consumer Secrets. Map key is the bucket name (must match S3 naming rules: lowercase + dash). Each entry: `region` (string the SDK expects in `S3_REGION`; MinIO ignores it but boto3 / aws-sdk-go demand a value — default `auto` is universally accepted), `consumers` (list of `{namespace, secret_name}` — every consumer gets its own MinIO service-account key + its own Secret in its own namespace, so leakage of one Secret limits blast radius to that service-account and is revocable without bucket recreation; multiple consumers on the same bucket share data — same `s3:*` policy on the bucket per service-account, no per-consumer prefix scoping yet). Empty map = MinIO server runs but no buckets are pre-created."
   type = map(object({
-    consumer_namespace = string
-    secret_name        = string
-    region             = optional(string, "auto")
+    region = optional(string, "auto")
+    consumers = list(object({
+      namespace   = string
+      secret_name = string
+    }))
   }))
   default = {}
+
+  validation {
+    condition = alltrue([
+      for _, b in var.buckets : length(b.consumers) > 0
+    ])
+    error_message = "Every bucket must declare at least one consumer — a bucket with no consumers gets no Secret and is unreachable from any tenant."
+  }
 }
 
 # ── Locals ─────────────────────────────────────────────────────────────────
@@ -129,6 +138,24 @@ locals {
   standalone_instances  = (var.enabled && !try(var.distributed.enabled, false)) ? toset(["enabled"]) : toset([])
   distributed_instances = (var.enabled && try(var.distributed.enabled, false)) ? toset(["enabled"]) : toset([])
   bucket_targets        = var.enabled ? var.buckets : {}
+
+  # Flattened (bucket, consumer) pairs for `for_each` on the
+  # per-consumer credential resources. Key is `<bucket>/<secret_name>`
+  # so the same secret_name can repeat across different buckets
+  # without collision.
+  bucket_consumers = {
+    for pair in flatten([
+      for bucket_name, bucket in local.bucket_targets : [
+        for c in bucket.consumers : {
+          key         = "${bucket_name}/${c.secret_name}"
+          bucket_name = bucket_name
+          namespace   = c.namespace
+          secret_name = c.secret_name
+          region      = bucket.region
+        }
+      ]
+    ]) : pair.key => pair
+  }
 
   service_name          = "minio"
   headless_service_name = "minio-headless"
@@ -603,16 +630,17 @@ resource "kubernetes_service_v1" "minio" {
   }
 }
 
-# ── Per-bucket access keys ─────────────────────────────────────────────────
+# ── Per-consumer access keys ───────────────────────────────────────────────
 #
 # MinIO supports per-user access keys via service accounts. Engine
-# generates one (access_key, secret_key) pair per bucket, hands the
-# pair to a Job that mc-creates the user + bucket + read/write
-# policy + svcacct binding. The pair lands as a Secret in the
-# consumer namespace.
+# generates one (access_key, secret_key) pair per (bucket, consumer)
+# pair — multiple consumers on the same bucket get distinct keys,
+# blast radius of any one leaked Secret stays scoped to that
+# service-account, revocable without touching the bucket. The pair
+# lands as a Secret in the consumer's namespace.
 
-resource "random_password" "bucket_access_key" {
-  for_each = local.bucket_targets
+resource "random_password" "consumer_access_key" {
+  for_each = local.bucket_consumers
 
   length  = 20
   special = false
@@ -621,32 +649,32 @@ resource "random_password" "bucket_access_key" {
   numeric = true
 }
 
-resource "random_password" "bucket_secret_key" {
-  for_each = local.bucket_targets
+resource "random_password" "consumer_secret_key" {
+  for_each = local.bucket_consumers
 
   length  = 40
   special = false
 }
 
-resource "kubernetes_secret_v1" "bucket" {
-  for_each = local.bucket_targets
+resource "kubernetes_secret_v1" "consumer" {
+  for_each = local.bucket_consumers
 
   metadata {
     name      = each.value.secret_name
-    namespace = each.value.consumer_namespace
+    namespace = each.value.namespace
     labels = {
       "app.kubernetes.io/name"      = "minio"
       "app.kubernetes.io/component" = "bucket-credentials"
-      "platform.bucket"             = each.key
+      "platform.bucket"             = each.value.bucket_name
     }
   }
 
   data = {
-    S3_ACCESS_KEY_ID     = random_password.bucket_access_key[each.key].result
-    S3_SECRET_ACCESS_KEY = random_password.bucket_secret_key[each.key].result
+    S3_ACCESS_KEY_ID     = random_password.consumer_access_key[each.key].result
+    S3_SECRET_ACCESS_KEY = random_password.consumer_secret_key[each.key].result
     S3_ENDPOINT          = local.endpoint
     S3_REGION            = each.value.region
-    S3_BUCKET            = each.key
+    S3_BUCKET            = each.value.bucket_name
     S3_PATH_STYLE        = "true"
   }
 }
@@ -717,19 +745,23 @@ resource "kubernetes_job_v1" "buckets" {
             value = local.endpoint
           }
 
+          # One env var per consumer for AK + SK. Job-side script
+          # references them by `<bucket>_<secret_name>`-derived
+          # variable name so the inner loop stays a simple `eval`-free
+          # lookup.
           dynamic "env" {
-            for_each = local.bucket_targets
+            for_each = local.bucket_consumers
             content {
-              name  = "BUCKET_${replace(upper(env.key), "-", "_")}_AK"
-              value = random_password.bucket_access_key[env.key].result
+              name  = "CONSUMER_${replace(upper(env.value.bucket_name), "-", "_")}_${replace(upper(env.value.secret_name), "-", "_")}_AK"
+              value = random_password.consumer_access_key[env.key].result
             }
           }
 
           dynamic "env" {
-            for_each = local.bucket_targets
+            for_each = local.bucket_consumers
             content {
-              name  = "BUCKET_${replace(upper(env.key), "-", "_")}_SK"
-              value = random_password.bucket_secret_key[env.key].result
+              name  = "CONSUMER_${replace(upper(env.value.bucket_name), "-", "_")}_${replace(upper(env.value.secret_name), "-", "_")}_SK"
+              value = random_password.consumer_secret_key[env.key].result
             }
           }
 
@@ -738,14 +770,13 @@ resource "kubernetes_job_v1" "buckets" {
             join("\n", concat(
               [
                 "until mc alias set local \"$MINIO_ENDPOINT\" \"$MINIO_ROOT_USER\" \"$MINIO_ROOT_PASSWORD\" >/dev/null 2>&1; do echo 'waiting for minio'; sleep 2; done",
-                "echo 'minio reachable, provisioning buckets'",
+                "echo 'minio reachable, provisioning buckets + consumers'",
               ],
+              # Per-bucket: create bucket + RW policy (idempotent).
               [
                 for name, _ in local.bucket_targets :
                 join("\n", [
                   "BUCKET=\"${name}\"",
-                  "AK=\"$BUCKET_${replace(upper(name), "-", "_")}_AK\"",
-                  "SK=\"$BUCKET_${replace(upper(name), "-", "_")}_SK\"",
                   "mc mb --ignore-existing local/\"$BUCKET\"",
                   "POLICY_DOC=$(mktemp)",
                   "cat > \"$POLICY_DOC\" <<EOF",
@@ -753,8 +784,26 @@ resource "kubernetes_job_v1" "buckets" {
                   "EOF",
                   "POLICY_NAME=\"bucket-rw-$BUCKET\"",
                   "mc admin policy create local \"$POLICY_NAME\" \"$POLICY_DOC\" 2>/dev/null || mc admin policy update local \"$POLICY_NAME\" \"$POLICY_DOC\"",
+                  "echo \"$BUCKET bucket + policy ready\"",
+                ])
+              ],
+              # Per-consumer: one service-account per (bucket, consumer)
+              # attached to that bucket's RW policy. svcacct add is
+              # idempotent via the access-key uniqueness check.
+              [
+                for _, c in local.bucket_consumers :
+                join("\n", [
+                  "BUCKET=\"${c.bucket_name}\"",
+                  "AK_VAR=\"CONSUMER_${replace(upper(c.bucket_name), "-", "_")}_${replace(upper(c.secret_name), "-", "_")}_AK\"",
+                  "SK_VAR=\"CONSUMER_${replace(upper(c.bucket_name), "-", "_")}_${replace(upper(c.secret_name), "-", "_")}_SK\"",
+                  "AK=$(printenv \"$AK_VAR\")",
+                  "SK=$(printenv \"$SK_VAR\")",
+                  "POLICY_DOC=$(mktemp)",
+                  "cat > \"$POLICY_DOC\" <<EOF",
+                  "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:*\"],\"Resource\":[\"arn:aws:s3:::$BUCKET\",\"arn:aws:s3:::$BUCKET/*\"]}]}",
+                  "EOF",
                   "mc admin user svcacct add local \"$MINIO_ROOT_USER\" --access-key \"$AK\" --secret-key \"$SK\" --policy \"$POLICY_DOC\" 2>/dev/null || mc admin user svcacct edit local \"$AK\" --policy \"$POLICY_DOC\"",
-                  "echo \"$BUCKET ready\"",
+                  "echo \"consumer ${c.secret_name} on $BUCKET ready\"",
                 ])
               ],
             ))
