@@ -262,12 +262,25 @@ locals {
     for _, c in local.normalized_components : try(c.ollama, false)
   ]) || try(var.shared_services.ollama, false)
 
-  db_name = replace(local.namespace, "-", "_")
-  db_user = replace(local.namespace, "-", "_")
+  # Routed through `terraform-null-label` (same module already adopted
+  # by chart_oidc + postgres extras) so naming rules are uniform across
+  # the engine. The output `module.label.id` is `<namespace>` with
+  # `_` delimiter (Postgres-identifier-safe) — exactly what the prior
+  # `replace(local.namespace, "-", "_")` produced. Visible names are
+  # unchanged for every existing tenant.
+  #
+  # `id_max_length = 63` is Postgres's `NAMEDATALEN - 1`. On overflow
+  # null-label truncates to cap-9 chars + delimiter + 8-char sha256
+  # suffix to keep uniqueness. Long namespaces no longer get silently
+  # truncated by Postgres itself.
+  db_name = module.pg_credentials_label.id
+  db_user = module.pg_credentials_label.id
 
-  # PostgreSQL naming rules match MySQL's here — same safe subset.
-  pg_database = replace(local.namespace, "-", "_")
-  pg_user     = replace(local.namespace, "-", "_")
+  # PostgreSQL default-DB naming uses the same identifier — DB and
+  # role names are equal here on purpose (the module is opinionated:
+  # one DB == one role per tenant for the legacy single-DB path).
+  pg_database = module.pg_credentials_label.id
+  pg_user     = module.pg_credentials_label.id
 
   # Redis ACL user names don't allow all characters. Namespace slugs
   # already fit the safe subset (lowercase + dash). Key prefix namespaces
@@ -275,6 +288,35 @@ locals {
   # tenant can never collide with another.
   redis_user       = local.namespace
   redis_key_prefix = "${local.namespace}:"
+}
+
+# `terraform-null-label` instance for the project's tenant-credential
+# identifiers (Postgres + MySQL DB / role names). Postgres-safe `_`
+# delimiter and length cap (`NAMEDATALEN - 1 = 63`) match what the
+# `pg_extra_label` adoption in PR #102 already does for the
+# `extra_databases` path; this brings the legacy single-DB path under
+# the same engine convention.
+#
+# `name = local.namespace` produces `id = "phost_<slug>_<env>"` after
+# the underscore delimiter — byte-for-byte identical to the prior
+# `replace(local.namespace, "-", "_")`. Plan diff is zero for any
+# existing tenant. The `tags` output is wired up here and ready for
+# downstream `metadata.labels` adoption — kept unconsumed in this PR
+# so the foundation lands cleanly first; the per-resource label sweep
+# is a follow-up PR.
+module "pg_credentials_label" {
+  source = "git::https://github.com/rromenskyi/terraform-null-label.git?ref=v0.1.0"
+
+  namespace   = local.namespace
+  environment = local.env
+  # `replace(local.namespace, "-", "_")` because null-label's `delimiter`
+  # joins label components but does not transform character sets within
+  # a single component. The delimiter below would only matter when
+  # `label_order` had multiple entries.
+  name          = replace(local.namespace, "-", "_")
+  delimiter     = "_"
+  label_order   = ["name"]
+  id_max_length = 63
 }
 
 # Catch typos / missing component definitions at plan time.
