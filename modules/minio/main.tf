@@ -69,6 +69,13 @@ locals {
   console_port          = 9001
   endpoint              = "http://${local.service_name}.${var.namespace}.svc.cluster.local:${local.api_port}"
 
+  # Shorthand for the propagated null-label tag set used by every
+  # resource the module emits. The Service / StatefulSet selectors
+  # bind on `app.kubernetes.io/name=minio` (kept via existing-wins
+  # in each merge below); null-label uses different keys (`name`,
+  # `namespace`, …) so both intentionally coexist.
+  tags = module.label.tags
+
   # MINIO_VOLUMES env in distributed mode points at the per-pod
   # hostnames inside the headless Service. Bash brace-expansion
   # syntax — MinIO parses `{0...N-1}` natively into N peer URLs.
@@ -86,6 +93,21 @@ locals {
       path = "${var.distributed.hostpath_pvs.base_path}/${i}"
     }
   } : {}
+}
+
+# Module-tier label, chained off `var.context` (root passes
+# `module.platform_label.context` from `_label.tf`). Output `tags`
+# is exposed via `local.tags` (above) for every resource in the
+# module.
+module "label" {
+  source = "git::https://github.com/rromenskyi/terraform-null-label.git?ref=v0.1.0"
+
+  context   = var.context
+  namespace = var.namespace
+  name      = "minio"
+  tags = {
+    "app.kubernetes.io/component" = "minio"
+  }
 }
 
 # ── Root credentials ───────────────────────────────────────────────────────
@@ -110,10 +132,10 @@ resource "kubernetes_secret_v1" "root" {
   metadata {
     name      = "minio-root"
     namespace = var.namespace
-    labels = {
+    labels = merge(local.tags, {
       "app.kubernetes.io/name"      = "minio"
       "app.kubernetes.io/component" = "root-credentials"
-    }
+    })
   }
 
   data = {
@@ -130,6 +152,7 @@ resource "kubernetes_persistent_volume_claim_v1" "minio" {
   metadata {
     name      = "minio-data"
     namespace = var.namespace
+    labels    = local.tags
   }
 
   spec {
@@ -152,7 +175,7 @@ resource "kubernetes_deployment_v1" "minio" {
   metadata {
     name      = "minio"
     namespace = var.namespace
-    labels    = { "app.kubernetes.io/name" = "minio" }
+    labels    = merge(local.tags, { "app.kubernetes.io/name" = "minio" })
   }
 
   spec {
@@ -173,7 +196,7 @@ resource "kubernetes_deployment_v1" "minio" {
 
     template {
       metadata {
-        labels = { "app.kubernetes.io/name" = "minio" }
+        labels = merge(local.tags, { "app.kubernetes.io/name" = "minio" })
       }
 
       spec {
@@ -277,10 +300,10 @@ resource "kubernetes_service_v1" "minio_headless" {
   metadata {
     name      = local.headless_service_name
     namespace = var.namespace
-    labels = {
+    labels = merge(local.tags, {
       "app.kubernetes.io/name"      = "minio"
       "app.kubernetes.io/component" = "headless"
-    }
+    })
   }
 
   spec {
@@ -302,7 +325,7 @@ resource "kubernetes_stateful_set_v1" "minio" {
   metadata {
     name      = "minio"
     namespace = var.namespace
-    labels    = { "app.kubernetes.io/name" = "minio" }
+    labels    = merge(local.tags, { "app.kubernetes.io/name" = "minio" })
   }
 
   spec {
@@ -320,7 +343,7 @@ resource "kubernetes_stateful_set_v1" "minio" {
 
     template {
       metadata {
-        labels = { "app.kubernetes.io/name" = "minio" }
+        labels = merge(local.tags, { "app.kubernetes.io/name" = "minio" })
       }
 
       spec {
@@ -459,11 +482,11 @@ resource "kubernetes_persistent_volume_v1" "minio_static" {
 
   metadata {
     name = "minio-${each.key}"
-    labels = {
+    labels = merge(local.tags, {
       "app.kubernetes.io/name"      = "minio"
       "app.kubernetes.io/component" = "static-pv"
       "platform.minio.replica"      = each.key
-    }
+    })
   }
 
   spec {
@@ -517,7 +540,7 @@ resource "kubernetes_service_v1" "minio" {
   metadata {
     name      = local.service_name
     namespace = var.namespace
-    labels    = { "app.kubernetes.io/name" = "minio" }
+    labels    = merge(local.tags, { "app.kubernetes.io/name" = "minio" })
   }
 
   spec {
@@ -568,11 +591,11 @@ resource "kubernetes_secret_v1" "consumer" {
   metadata {
     name      = each.value.secret_name
     namespace = each.value.namespace
-    labels = {
+    labels = merge(local.tags, {
       "app.kubernetes.io/name"      = "minio"
       "app.kubernetes.io/component" = "bucket-credentials"
       "platform.bucket"             = each.value.bucket_name
-    }
+    })
   }
 
   data = {
@@ -606,10 +629,10 @@ resource "kubernetes_job_v1" "buckets" {
   metadata {
     name      = "minio-buckets-${formatdate("YYYYMMDDhhmmss", timestamp())}"
     namespace = var.namespace
-    labels = {
+    labels = merge(local.tags, {
       "app.kubernetes.io/name"      = "minio"
       "app.kubernetes.io/component" = "bucket-provisioner"
-    }
+    })
   }
 
   spec {
@@ -618,7 +641,7 @@ resource "kubernetes_job_v1" "buckets" {
 
     template {
       metadata {
-        labels = { "app.kubernetes.io/name" = "minio-buckets" }
+        labels = merge(local.tags, { "app.kubernetes.io/name" = "minio-buckets" })
       }
 
       spec {

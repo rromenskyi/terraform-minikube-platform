@@ -15,6 +15,7 @@ module "minio" {
   source     = "./modules/minio"
   depends_on = [module.addons]
 
+  context       = module.platform_label.context
   enabled       = local.platform.services.minio.enabled
   namespace     = kubernetes_namespace_v1.platform.metadata[0].name
   storage_class = local.platform.services.minio.storage_class
