@@ -1368,6 +1368,7 @@ resource "kubectl_manifest" "basic_auth_middleware" {
     metadata = {
       name      = "${each.key}-basic-auth"
       namespace = local.namespace
+      labels    = module.project_label.tags
     }
     spec = {
       basicAuth = {
@@ -1470,10 +1471,10 @@ resource "kubectl_manifest" "argocd_app_project" {
     metadata = {
       name      = local.namespace
       namespace = var.argocd_namespace
-      labels = {
+      labels = merge(module.project_label.tags, {
         "app.kubernetes.io/managed-by" = "terraform"
         "platform.tenant"              = local.namespace
-      }
+      })
     }
     spec = {
       description = "Auto-managed AppProject for TF project ${local.namespace}. Pins Application destinations to this namespace and source repos to every operator deploy repo declared under `argocd_bootstraps:`."
@@ -1527,12 +1528,12 @@ resource "kubectl_manifest" "argocd_bootstrap" {
       finalizers = [
         "resources-finalizer.argocd.argoproj.io",
       ]
-      labels = {
+      labels = merge(module.project_label.tags, {
         "app.kubernetes.io/managed-by" = "terraform"
         "platform.tenant"              = local.namespace
         "platform.role"                = "bootstrap"
         "platform.bootstrap.key"       = each.key
-      }
+      })
     }
     spec = {
       project = local.namespace
@@ -1596,6 +1597,7 @@ resource "kubectl_manifest" "ingressroute" {
     metadata = {
       name      = each.key
       namespace = local.namespace
+      labels    = module.project_label.tags
     }
     spec = merge(
       {
