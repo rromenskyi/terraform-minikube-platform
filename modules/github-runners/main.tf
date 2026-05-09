@@ -137,6 +137,21 @@ resource "helm_release" "scale_set" {
     kubernetes_secret_v1.github_pat,
   ]
 
+  # Catch the misconfiguration at plan time rather than at runtime as
+  # a CrashLoopBackOff on the listener Pod. A scale-set entry with
+  # `github_secret_name = ""` (engine-emit mode) requires a matching
+  # entry in `var.tokens` so the engine can materialise the
+  # `<key>-github-pat` Secret the chart's listener mounts. Without
+  # the token, the chart still installs but `githubConfigSecret`
+  # points at a Secret that never gets created — the listener Pod
+  # then loops on "Secret not found" until somebody notices.
+  lifecycle {
+    precondition {
+      condition     = each.value.github_secret_name != "" || contains(nonsensitive(keys(var.tokens)), each.key)
+      error_message = "Scale set `${each.key}`: no GitHub auth wired. Either set `github_secret_name` to an externally-managed Secret carrying GitHub App fields, or supply a PAT via `var.tokens[\"${each.key}\"]` (operator typically pastes into `.env` as `TF_VAR_github_runner_tokens={ ${each.key} = \"ghp_...\" }`) so the engine can emit `${each.key}-github-pat` automatically."
+    }
+  }
+
   name             = each.key
   repository       = "oci://ghcr.io/actions/actions-runner-controller-charts"
   chart            = "gha-runner-scale-set"
