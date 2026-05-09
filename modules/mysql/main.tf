@@ -11,41 +11,6 @@ terraform {
   }
 }
 
-variable "enabled" {
-  description = "Deploy the MySQL StatefulSet. When `false`, no resources are created and every output collapses to null — a disabled MySQL cleanly cascades into `modules/project` (components with `db: true` fail a precondition instead of silently deploying a broken StatefulSet)."
-  type        = bool
-  default     = true
-}
-
-variable "namespace" {
-  description = "Namespace the MySQL StatefulSet lives in. Expected to exist already — the root-level `kubernetes_namespace_v1.platform` resource owns it so the sibling Postgres/Redis/Ollama modules can share the same namespace without piggybacking on this module. Null when `enabled = false`."
-  type        = string
-  default     = null
-}
-
-variable "volume_base_path" {
-  description = "Parent path used verbatim by the hostPath PersistentVolume for MySQL data. MySQL lands at <volume_base_path>/<namespace>/mysql/. Must resolve to a real writable directory from the kubelet's point of view (native k3s / --driver=none: any host dir; macOS minikube Docker driver: /minikube-host/Shared/vol)."
-  type        = string
-  default     = "/data/vol"
-}
-
-variable "node_selector" {
-  description = "Node-selector labels the MySQL pod must match. Empty = scheduler picks. Set to pin the pod on the node that owns the hostPath data dir (e.g. `{ workload-tier = stateful }`)."
-  type        = map(string)
-  default     = {}
-}
-
-variable "tolerations" {
-  description = "Taints the MySQL pod tolerates. Empty list = pod cannot land on any tainted node."
-  type = list(object({
-    key                = optional(string)
-    operator           = optional(string)
-    value              = optional(string)
-    effect             = optional(string)
-    toleration_seconds = optional(string)
-  }))
-  default = []
-}
 
 locals {
   # Singleton-ish toggle. All resources below use `for_each =
@@ -264,47 +229,8 @@ resource "kubernetes_service_v1" "mysql" {
   }
 }
 
-# ── Outputs ───────────────────────────────────────────────────────────────────
 #
 # All outputs collapse to `null` when the module is disabled. Downstream
 # consumers (modules/project) pass these through to tenant-side
 # precondition checks, so a disabled MySQL produces a clear error the
 # first time a component asks for it instead of a silent mis-deploy.
-
-output "enabled" {
-  value = var.enabled
-}
-
-output "namespace" {
-  value       = var.enabled ? var.namespace : null
-  description = "Namespace where MySQL is deployed, or null if the module is disabled."
-}
-
-output "host" {
-  value = one([
-    for s in kubernetes_service_v1.mysql :
-    "${s.metadata[0].name}.${var.namespace}.svc.cluster.local"
-  ])
-  description = "MySQL in-cluster hostname, or null if the module is disabled."
-}
-
-output "service_name" {
-  value       = one([for s in kubernetes_service_v1.mysql : s.metadata[0].name])
-  description = "MySQL Service name, or null if the module is disabled."
-}
-
-output "port" {
-  value       = one([for s in kubernetes_service_v1.mysql : s.spec[0].port[0].port])
-  description = "MySQL Service port, or null if the module is disabled."
-}
-
-output "root_password" {
-  value       = one([for p in random_password.root : p.result])
-  sensitive   = true
-  description = "MySQL root password (also in the mysql-root Secret), or null if the module is disabled."
-}
-
-output "root_secret_name" {
-  value       = one([for s in kubernetes_secret_v1.mysql_root : s.metadata[0].name])
-  description = "Name of the Secret carrying MYSQL_ROOT_PASSWORD. Consumed by the backup module's cross-namespace mirror Secret. Null when disabled."
-}
