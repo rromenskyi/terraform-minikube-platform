@@ -169,6 +169,15 @@ locals {
         node_selector = {}
         tolerations   = []
       }
+      addons = {
+        # Pod-placement + workload-kind override for the bundled
+        # `terraform-k8s-addons` Traefik release. All three are
+        # opt-in — leaving defaults preserves the chart's stock
+        # `Deployment` with no toleration / nodeSelector.
+        traefik_deployment_kind = null
+        traefik_tolerations     = []
+        traefik_node_selector   = {}
+      }
     }
   }
   _platform_file     = "${path.module}/config/platform.yaml"
@@ -190,6 +199,7 @@ locals {
       github_runners = merge(local._platform_defaults.services.github_runners, try(local._platform_services.github_runners, {}))
       backup         = merge(local._platform_defaults.services.backup, try(local._platform_services.backup, {}))
       platform_dash  = merge(local._platform_defaults.services.platform_dash, try(local._platform_services.platform_dash, {}))
+      addons         = merge(local._platform_defaults.services.addons, try(local._platform_services.addons, {}))
     }
   }
 

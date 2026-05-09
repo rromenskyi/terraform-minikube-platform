@@ -88,6 +88,12 @@ variable "redis_default_secret" {
   default     = null
 }
 
+variable "redis_helm_revision" {
+  description = "Helm release revision counter for the shared Redis chart. Interpolated into the tenant-provisioner Job's `metadata.name`, so any chart upgrade (revision bump) renames the Job and Terraform replaces it — re-running the ACL setup against whatever the post-upgrade master happens to be. Skipping this would leave tenants on stale ACL state after a master switch (the failure mode that produces `WRONGPASS` across every consumer). Zero / null when sentinel mode is disabled (legacy single-pod path uses a different bring-up Job)."
+  type        = number
+  default     = 0
+}
+
 variable "ollama_url" {
   description = "In-cluster URL of the shared Ollama (e.g. http://ollama.platform.svc.cluster.local:11434). Injected as `OLLAMA_HOST` into any component that sets `ollama: true`. Null when `services.ollama = false`."
   type        = string
@@ -739,7 +745,14 @@ resource "kubernetes_job_v1" "redis_setup" {
   depends_on = [kubernetes_namespace_v1.this]
 
   metadata {
-    name      = "redis-setup-${local.namespace}"
+    # Job name carries the Valkey helm revision so a chart upgrade
+    # (which can switch the Sentinel master and discard the
+    # previously-applied tenant ACL) renames the Job, Terraform
+    # replaces it, and the ACL is re-applied against the post-upgrade
+    # master. Without this, tenant pods get `WRONGPASS` after every
+    # redis chart upgrade until the operator manually `terraform taint`s
+    # the Job — historic flake source documented 2026-05-09.
+    name      = "redis-setup-${local.namespace}-rev${var.redis_helm_revision}"
     namespace = var.redis_namespace
     labels = {
       "app.kubernetes.io/managed-by" = "terraform"
@@ -753,7 +766,7 @@ resource "kubernetes_job_v1" "redis_setup" {
     template {
       metadata {
         labels = {
-          job = "redis-setup-${local.namespace}"
+          job = "redis-setup-${local.namespace}-rev${var.redis_helm_revision}"
         }
       }
 

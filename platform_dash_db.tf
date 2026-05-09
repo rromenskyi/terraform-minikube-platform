@@ -165,7 +165,11 @@ resource "kubernetes_job_v1" "redis_dashboard_ro_setup" {
   depends_on = [module.redis]
 
   metadata {
-    name      = "redis-dashboard-ro-setup"
+    # Job name carries the Valkey helm revision so a chart upgrade
+    # auto-replaces this Job and re-applies the read-only ACL against
+    # the post-upgrade Sentinel master. Same pattern as the
+    # per-tenant `redis_setup` Jobs in modules/project.
+    name      = "redis-dashboard-ro-setup-rev${module.redis.helm_revision}"
     namespace = module.redis.namespace
     labels = {
       "managed-by" = "platform-dash-db-discovery"
