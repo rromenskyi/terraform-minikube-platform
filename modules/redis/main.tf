@@ -454,7 +454,7 @@ resource "kubernetes_config_map_v1" "haproxy_config" {
       backend redis_back
         option tcp-check
         tcp-check connect
-        tcp-check send AUTH\ ${random_password.default["enabled"].result}\r\n
+        tcp-check send AUTH\ $${REDIS_PASSWORD}\r\n
         tcp-check expect string +OK
         tcp-check send PING\r\n
         tcp-check expect string +PONG
