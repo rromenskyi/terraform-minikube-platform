@@ -216,30 +216,67 @@ terraform output -json projects | jq .
 
 ### Platform-service toggles (`config/platform.yaml`)
 
-The shared platform services are opt-in. The repo's `.example` ships everything off; copy it and flip the bits you want.
+The shared platform services are all opt-in. The repo's `.example` ships everything off; copy it, flip the bits you want, and re-apply:
 
-```yaml
-services:
-  mysql:
-    enabled: true
-  postgres:
-    enabled: true
-  redis:
-    enabled: true
-  ollama:
-    enabled: true
-    models:
-      - qwen3.5:0.8b        # tiny — instant single-shot prompts
-      - qwen3.5:2b          # small playground sibling
-      - qwen3.5:9b          # chat LLM default
-      - all-minilm:latest   # embeddings — used by chat component RAG
-    memory_request: 4Gi
-    memory_limit:   16Gi
-    cpu_request:    200m
-    cpu_limit:      "10"
+```bash
+cp config/platform.yaml.example config/platform.yaml
+$EDITOR config/platform.yaml
+./tf apply
 ```
 
-Each module (`modules/mysql`, `modules/postgres`, `modules/redis`, `modules/ollama`) collapses to zero resources when its `enabled` flag is off. Outputs resolve to null; tenants that ask for a disabled service fail a precondition with a clear error.
+Every service collapses to zero resources when its `enabled` flag is off — disabling a service after-the-fact deletes its workload + namespace + outputs. Outputs from disabled services resolve to `null`; tenant components that depend on one (`db: true`, `redis: true`, …) fail a `precondition` at plan time with an actionable error.
+
+| Service | What it provisions | Tenant-facing handle |
+| --- | --- | --- |
+| `mysql` | Single-replica StatefulSet + per-tenant DB / user / grant Job | `db: true` on a component |
+| `postgres` | Single-replica StatefulSet + per-tenant DB / role / grant Job | `postgres: true` on a component |
+| `redis` | Standalone StatefulSet OR Sentinel HA (helm chart) + HAProxy front + per-tenant ACL user Job | `redis: true` on a component |
+| `ollama` | StatefulSet for shared LLM inference; CPU-only or GPU-offloaded (Vulkan / CUDA) | `ollama: true` (auto-injects `OLLAMA_HOST` / `OLLAMA_BASE_URL`) |
+| `vault` | Vault CE StatefulSet with raft single-node, auto-unseal init Job, optional Zitadel OIDC | platform-internal (Phase 2 will expose tenant-scoped Secret reads via VSO) |
+| `zitadel` | Identity provider — Postgres-backed StatefulSet + init Job + Login UI v2 sidecar | OIDC issuer for `oidc:` components, Argo CD, platform-dash |
+| `argocd` | GitOps controller (upstream chart) with Dex+Zitadel SSO; route emitted as `kind: external` | manual app sync via Argo UI / CLI |
+| `kured` | Kubernetes Reboot Daemon — drains + reboots a node when `/var/run/reboot-required` appears | n/a (cluster maintenance) |
+| `longhorn` | Distributed block-storage StorageClass(es) replicated across cluster nodes; native B2 backup | use `longhorn-<pool>` SC name on `storage:` of a component |
+| `metallb` | Bare-metal `LoadBalancer` controller in L2 mode + per-pool address pools + L2 advertisements | tenant Services with `type: LoadBalancer` + `spec.loadBalancerIP` |
+| `minio` | Single-replica Deployment OR distributed StatefulSet (4+ erasure-coded replicas); per-bucket consumer Secrets | engine emits `S3_*` env-var Secret per consumer namespace; component `envFrom`s it |
+| `github_runners` | ARC v0.9+ controller + N scale sets (each its own namespace + chart release) | runner pools registered with org / repo / enterprise GitHub URLs |
+| `buildkitd` | Cluster-internal BuildKit daemon (`kubectl_manifest` Deployment with CERN userns: privileged-in-userns + `hostUsers: false`); hostPath cache; ClusterIP `tcp://buildkitd.arc-buildkitd.svc.cluster.local:1234` | ARC workflows hit it via `docker buildx create --driver remote --endpoint <that>` |
+| `backup` | restic + B2 — per-target CronJobs for Postgres / MySQL / Redis / Vault / hostPath PVs; weekly prune | operator-driven (`postgres_databases`, `mysql_databases`, `pv_paths` lists) |
+| `platform_dash` | Operator dashboard (SvelteKit) Deployment + Service in `platform` ns; Zitadel-OIDC-only authn | operator UI at `dash.<your-domain>` |
+| `addons` | Knobs for the bundled `terraform-k8s-addons` releases (currently Traefik `Deployment` ↔ `DaemonSet` + tolerations / nodeSelector) | n/a (changes ingress wiring) |
+
+The full schema for every service (every field, defaults, sub-block shapes, worked GPU / runner / metallb examples) lives in **`config/platform.yaml.example`** — that file is the canonical reference and the tracked-in-repo source of truth. The README does not duplicate it; consult `.example` when authoring `config/platform.yaml`.
+
+Notable cross-cutting fields every service supports:
+
+- `node_selector: { <label>: <value> }` — pin the workload to nodes with the matching label. Empty (default) lets the scheduler pick.
+- `tolerations: [{ key, operator, value, effect }]` — opt the workload into scheduling on tainted nodes.
+- `affinity: {...}` (ollama, redis-sentinel) — full k8s `pod.spec.affinity` shape for richer node / pod (anti-)affinity.
+
+### Root variables (`TF_VAR_…`)
+
+Variables read by the root stack from environment / `.env`. Sensitive values stay in the operator's gitignored `.env` (BWS migration is on the ops backlog).
+
+| Variable | Required when | Purpose |
+| --- | --- | --- |
+| `TF_VAR_cluster_name` | minikube | Minikube profile name (default `minikube`) |
+| `TF_VAR_memory` | minikube | Memory in MB allocated to the minikube VM (default `4096`) |
+| `TF_VAR_kubernetes_version` | minikube | k8s tag passed to minikube (default `v1.34.4`); k3s ignores this |
+| `TF_VAR_ssh_host` | k3s | Host where k3s is installed (default `127.0.0.1` for local) |
+| `TF_VAR_ssh_port` | k3s | SSH port (default `22`) |
+| `TF_VAR_ssh_user` | k3s | SSH user with passwordless sudo (no default) |
+| `TF_VAR_ssh_private_key_path` | k3s | Path to the SSH private key (no default) |
+| `LETSENCRYPT_EMAIL` | always | Let's Encrypt registration email (the cert-manager addon issues certs for any non-Cloudflare-Origin route) |
+| `CLOUDFLARE_API_TOKEN` | always | Token with `Account → Cloudflare Tunnel: Edit` + `Zone → DNS: Edit` on every domain (NOT the Global API Key — see "First-time Cloudflare setup" above) |
+| `CLOUDFLARE_ACCOUNT_ID` | always | Cloudflare Account ID for the tunnel resource |
+| `HOST_VOLUME_PATH` | always | Parent path that hostPath PVs land in on the cluster node (default `/data/vol`); macOS Docker-driver minikube needs `/minikube-host/Shared/vol` |
+| `TF_VAR_namespace_prefix` | optional | Prepended to every tenant namespace from `config/domains/*.yaml` (default `phost-`); set to `""` to disable |
+| `TF_VAR_github_runner_tokens` | when ARC engine-emit mode is used | Sensitive map keyed by `services.github_runners.scale_sets` map key, value is a GitHub PAT — engine materialises `<key>-github-pat` Secret automatically |
+| `TF_VAR_operator_secret_values` | when a domain yaml declares `secrets:` with literal data | Sensitive map of `{<secret-name>: {<key>: <value>}}` for credentials the engine cannot synthesize (third-party storage, OIDC client, vendor API keys) |
+| `TF_VAR_zitadel_pat` | after first apply with Zitadel enabled | PAT for the Zitadel TF provider — bootstrapped automatically on first apply, then exposed as `terraform output -raw zitadel_pat`; paste into `.env` to unblock subsequent applies that provision `kind: app` components |
+| `TF_VAR_zitadel_login_client_pat` | when Zitadel pod restarts persistently | PAT for the Zitadel `login-client` machine user — paste once to harden against pod-restart "waiting for login-client.pat..." regression (generation steps in `variables.tf`) |
+
+Backend credentials (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_REGION` / `B2_BUCKET` / `B2_ENDPOINT`) for the S3-API-compatible backend that holds `terraform.tfstate` are also `.env`-supplied and consumed by the `./tf` wrapper before invoking `terraform`.
 
 ### Domain configuration (`config/domains/*.yaml`)
 
