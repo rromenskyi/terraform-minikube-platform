@@ -66,35 +66,33 @@ module "platform_dash_oidc" {
   secret_name      = "platform-dash-oidc"
   secret_namespace = kubernetes_namespace_v1.platform.metadata[0].name
 
-  # Role keys mirror what the dashboard's authz code checks for —
-  # global admin/sre + per-cluster overrides + per-tenant-namespace
-  # delegations. Add cluster_<name>_* entries as more clusters land
-  # in DASH_CLUSTERS_JSON. Add namespace_phost-<slug>-<env>_*
-  # entries as more tenant namespaces become delegable. System
-  # namespaces (`platform`, `mail`, `ops`, `monitoring`,
-  # `ingress-controller`) are intentionally NOT delegable — they
-  # hold shared platform infra (Vault, Postgres, MySQL, Redis,
-  # Zitadel, Stalwart, Roundcube, cloudflared, Traefik). Only
-  # `phost-<slug>-<env>` tenant namespaces are listed here.
-  roles = [
-    { key = "platform_admin", display_name = "Platform Admin" },
-    { key = "platform_sre", display_name = "Platform SRE" },
-    { key = "user", display_name = "User" },
-    { key = "cluster_local_admin", display_name = "Cluster local Admin" },
-    { key = "cluster_local_sre", display_name = "Cluster local SRE" },
-    { key = "namespace_phost-ipsupport-us-dev_admin", display_name = "Namespace phost-ipsupport-us-dev Admin" },
-    { key = "namespace_phost-ipsupport-us-dev_sre", display_name = "Namespace phost-ipsupport-us-dev SRE" },
-    { key = "namespace_phost-ipsupport-us-prod_admin", display_name = "Namespace phost-ipsupport-us-prod Admin" },
-    { key = "namespace_phost-ipsupport-us-prod_sre", display_name = "Namespace phost-ipsupport-us-prod SRE" },
-    { key = "namespace_phost-jagdterrier-club-prod_admin", display_name = "Namespace phost-jagdterrier-club-prod Admin" },
-    { key = "namespace_phost-jagdterrier-club-prod_sre", display_name = "Namespace phost-jagdterrier-club-prod SRE" },
-    { key = "namespace_phost-paseka-co-dev_admin", display_name = "Namespace phost-paseka-co-dev Admin" },
-    { key = "namespace_phost-paseka-co-dev_sre", display_name = "Namespace phost-paseka-co-dev SRE" },
-    { key = "namespace_phost-paseka-co-prod_admin", display_name = "Namespace phost-paseka-co-prod Admin" },
-    { key = "namespace_phost-paseka-co-prod_sre", display_name = "Namespace phost-paseka-co-prod SRE" },
-    { key = "namespace_phost-priroda-kharkov-ua-prod_admin", display_name = "Namespace phost-priroda-kharkov-ua-prod Admin" },
-    { key = "namespace_phost-priroda-kharkov-ua-prod_sre", display_name = "Namespace phost-priroda-kharkov-ua-prod SRE" }
-  ]
+  # Role keys the dashboard's authz code checks for. Three layers:
+  #
+  #   1. Global  — `platform_admin`, `platform_sre`, `user`.
+  #   2. Cluster — `cluster_<name>_{admin,sre}` for each entry in
+  #      `DASH_CLUSTERS_JSON` (only `local` today).
+  #   3. Per-namespace — `namespace_<ns>_{admin,sre}` derived from
+  #      `local.projects` so the engine stays generic; tenant slugs
+  #      live in `config/domains/*.yaml` and are never named here.
+  #      System namespaces (`platform`, `mail`, `ops`, `monitoring`,
+  #      `ingress-controller`) are intentionally NOT delegable — they
+  #      hold shared platform infra and are admin-only via the global
+  #      `platform_admin` role.
+  roles = concat(
+    [
+      { key = "platform_admin", display_name = "Platform Admin" },
+      { key = "platform_sre", display_name = "Platform SRE" },
+      { key = "user", display_name = "User" },
+      { key = "cluster_local_admin", display_name = "Cluster local Admin" },
+      { key = "cluster_local_sre", display_name = "Cluster local SRE" },
+    ],
+    flatten([
+      for _, p in local.projects : [
+        { key = "namespace_${p.namespace}_admin", display_name = "Namespace ${p.namespace} Admin" },
+        { key = "namespace_${p.namespace}_sre", display_name = "Namespace ${p.namespace} SRE" },
+      ]
+    ]),
+  )
 }
 
 module "platform_dash" {
