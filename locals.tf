@@ -178,6 +178,21 @@ locals {
         traefik_tolerations     = []
         traefik_node_selector   = {}
       }
+      buildkitd = {
+        # Cluster-internal BuildKit daemon for self-hosted runner
+        # image builds. Disabled by default — opt in only when ARC
+        # runners need a remote buildx driver.
+        enabled        = false
+        image_tag      = "v0.16.0-rootless"
+        cache_size     = "20Gi"
+        storage_class  = ""
+        cpu_request    = "200m"
+        cpu_limit      = "4"
+        memory_request = "512Mi"
+        memory_limit   = "8Gi"
+        node_selector  = {}
+        tolerations    = []
+      }
     }
   }
   _platform_file     = "${path.module}/config/platform.yaml"
@@ -200,6 +215,7 @@ locals {
       backup         = merge(local._platform_defaults.services.backup, try(local._platform_services.backup, {}))
       platform_dash  = merge(local._platform_defaults.services.platform_dash, try(local._platform_services.platform_dash, {}))
       addons         = merge(local._platform_defaults.services.addons, try(local._platform_services.addons, {}))
+      buildkitd      = merge(local._platform_defaults.services.buildkitd, try(local._platform_services.buildkitd, {}))
     }
   }
 
