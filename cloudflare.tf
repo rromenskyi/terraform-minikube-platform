@@ -146,12 +146,16 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "main" {
           }
         }
       ],
-      # Argo CD-managed hostnames opted into the tunnel. Same shape
-      # as legacy entries above; backend always Traefik on `web`.
+      # Argo CD-managed hostnames opted into the tunnel. Backend
+      # defaults to the cluster Traefik (`web` entrypoint) — the
+      # standard path for any chart-managed IngressRoute. Operator
+      # can override per-entry via `service:` in the yaml when an
+      # Argo-managed app exposes a Service the tunnel should hit
+      # directly without going through Traefik.
       [
         for hostname, cfg in local.tunnel_argocd_hostnames : {
           hostname = hostname
-          service  = cfg.service
+          service  = try(cfg.service, "https://traefik.ingress-controller.svc:443")
           origin_request = {
             origin_server_name = hostname
             http2_origin       = false
