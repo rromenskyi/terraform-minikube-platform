@@ -399,11 +399,11 @@ check "oauth2_proxy_available_when_zitadel_auth_used" {
 resource "kubernetes_namespace_v1" "this" {
   metadata {
     name = local.namespace
-    labels = {
+    labels = merge(module.project_label.tags, {
       "app.kubernetes.io/managed-by" = "terraform"
       "project"                      = local.domain
       "environment"                  = local.env
-    }
+    })
   }
 }
 
@@ -413,6 +413,7 @@ resource "kubernetes_resource_quota_v1" "limits" {
   metadata {
     name      = "limits"
     namespace = kubernetes_namespace_v1.this.metadata[0].name
+    labels    = module.project_label.tags
   }
 
   spec {
@@ -445,10 +446,10 @@ resource "kubernetes_job_v1" "mysql_setup" {
   metadata {
     name      = "db-setup-${local.namespace}"
     namespace = var.mysql_namespace
-    labels = {
+    labels = merge(module.project_label.tags, {
       "app.kubernetes.io/managed-by" = "terraform"
       "project-namespace"            = local.namespace
-    }
+    })
   }
 
   spec {
@@ -520,6 +521,7 @@ resource "kubernetes_secret_v1" "db_credentials" {
   metadata {
     name      = "db-credentials"
     namespace = kubernetes_namespace_v1.this.metadata[0].name
+    labels    = module.project_label.tags
   }
 
   data = {
@@ -551,10 +553,10 @@ resource "kubernetes_job_v1" "postgres_setup" {
   metadata {
     name      = "postgres-setup-${local.namespace}"
     namespace = var.postgres_namespace
-    labels = {
+    labels = merge(module.project_label.tags, {
       "app.kubernetes.io/managed-by" = "terraform"
       "project-namespace"            = local.namespace
-    }
+    })
   }
 
   spec {
@@ -633,6 +635,7 @@ resource "kubernetes_secret_v1" "postgres_credentials" {
   metadata {
     name      = "postgres-credentials"
     namespace = kubernetes_namespace_v1.this.metadata[0].name
+    labels    = module.project_label.tags
   }
 
   data = {
@@ -828,10 +831,10 @@ resource "kubernetes_job_v1" "redis_setup" {
     # the Job — historic flake source documented 2026-05-09.
     name      = "redis-setup-${local.namespace}-rev${var.redis_helm_revision}"
     namespace = var.redis_namespace
-    labels = {
+    labels = merge(module.project_label.tags, {
       "app.kubernetes.io/managed-by" = "terraform"
       "project-namespace"            = local.namespace
-    }
+    })
   }
 
   spec {
@@ -937,6 +940,7 @@ resource "kubernetes_secret_v1" "redis_credentials" {
   metadata {
     name      = "redis-credentials"
     namespace = kubernetes_namespace_v1.this.metadata[0].name
+    labels    = module.project_label.tags
   }
 
   data = {
@@ -962,6 +966,7 @@ resource "kubernetes_secret_v1" "ollama_endpoint" {
   metadata {
     name      = "ollama-endpoint"
     namespace = kubernetes_namespace_v1.this.metadata[0].name
+    labels    = module.project_label.tags
   }
 
   # Different Ollama clients read different env names: the official
@@ -1026,10 +1031,10 @@ resource "kubernetes_secret_v1" "operator_secret" {
   metadata {
     name      = each.key
     namespace = kubernetes_namespace_v1.this.metadata[0].name
-    labels = {
+    labels = merge(module.project_label.tags, {
       "app.kubernetes.io/managed-by" = "terraform"
       "app.kubernetes.io/part-of"    = local.namespace
-    }
+    })
   }
 
   data = (
@@ -1340,6 +1345,7 @@ resource "kubernetes_secret_v1" "basic_auth" {
   metadata {
     name      = "${each.key}-basic-auth"
     namespace = kubernetes_namespace_v1.this.metadata[0].name
+    labels    = module.project_label.tags
   }
 
   data = {
@@ -1398,6 +1404,7 @@ resource "kubernetes_secret_v1" "env_random" {
   metadata {
     name      = "${each.key}-random-env"
     namespace = kubernetes_namespace_v1.this.metadata[0].name
+    labels    = module.project_label.tags
   }
 
   data = {
