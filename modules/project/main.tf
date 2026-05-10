@@ -1102,7 +1102,7 @@ resource "kubernetes_secret_v1" "operator_secret" {
 # VSO fails reconcile with "ServiceAccount X not found" and never
 # materialises the Secret.
 resource "kubernetes_service_account_v1" "vso_proxy" {
-  for_each = length(local.operator_secret_vault_set) > 0 ? toset(["enabled"]) : toset([])
+  for_each = (length(local.operator_secret_vault_set) > 0 || length(var.git_deploy_keys) > 0) ? toset(["enabled"]) : toset([])
 
   metadata {
     name      = "vault-secrets-operator-controller-manager"
@@ -1153,6 +1153,77 @@ resource "kubectl_manifest" "operator_secret_vault" {
       # 30s catches a rotation in Vault UI within half a minute.
       # Pod restart on rotation is consumer's concern (checksum
       # annotation pattern — see feedback_secret_consumer_needs_checksum_annotation).
+      refreshAfter = "30s"
+    }
+  })
+}
+
+# ── git-sync deploy keys (Vault-backed) ──────────────────────────────────────
+#
+# Per-env yaml block `git_deploy_keys: { <id>: { host: github.com } }` →
+# engine emits one `VaultStaticSecret` per entry pointing at the
+# convention path `secret/data/tenants/<slug>/git-deploy-keys/<id>`.
+# VSO reconciles into a `kubernetes.io/ssh-auth` Secret named
+# `git-deploy-key-<id>` in the project namespace, with templating
+# that combines the operator-supplied `sshPrivateKey` (from Vault)
+# with the engine-known `known_hosts` line for `<host>`. Components
+# reference the Secret via `git_sync.ssh_key_secret_name: git-deploy-key-<id>`.
+#
+# Curated `known_hosts` mirrors the static table the legacy
+# root-level `git_deploy_keys.tf` carried — saves the operator from
+# scraping `ssh-keyscan` for every common host. Add to the local
+# below when a new host gets used.
+
+locals {
+  _git_known_hosts = {
+    "github.com"    = "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"
+    "gitlab.com"    = "gitlab.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAfuCHKVTjquxvt6CM6tdG4SLp1Btn/nOeHHE5UOzRdf"
+    "bitbucket.org" = "bitbucket.org ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIazEu89wgQZ4bqs3d63QSMzYVa0MuJ2e2gKTKqu+UUO"
+  }
+}
+
+resource "kubectl_manifest" "git_deploy_key_vault" {
+  for_each = var.git_deploy_keys
+
+  depends_on = [kubernetes_service_account_v1.vso_proxy]
+
+  yaml_body = yamlencode({
+    apiVersion = "secrets.hashicorp.com/v1beta1"
+    kind       = "VaultStaticSecret"
+    metadata = {
+      name      = "git-deploy-key-${each.key}"
+      namespace = kubernetes_namespace_v1.this.metadata[0].name
+      labels = merge(module.project_label.tags, {
+        "app.kubernetes.io/managed-by" = "terraform"
+        "app.kubernetes.io/component"  = "git-deploy-key"
+      })
+    }
+    spec = {
+      vaultAuthRef = ""
+      mount        = "secret"
+      type         = "kv-v2"
+      path         = "tenants/${var.project_config.slug}/git-deploy-keys/${each.key}"
+      destination = {
+        name   = "git-deploy-key-${each.key}"
+        create = true
+        type   = "kubernetes.io/ssh-auth"
+        # Combine Vault's `sshPrivateKey` with the engine's static
+        # `known_hosts` line for the chosen host. `excludeRaw` drops
+        # VSO's default `_raw` JSON dump (k8s.io/ssh-auth Secret
+        # schema would reject the extra field).
+        transformation = {
+          excludeRaw = true
+          excludes   = [".*"]
+          templates = {
+            "ssh-privatekey" = { text = "{{- get .Secrets \"sshPrivateKey\" -}}" }
+            "known_hosts" = { text = "${lookup(
+              local._git_known_hosts,
+              try(each.value.host, "github.com"),
+              "${try(each.value.host, "github.com")} ssh-rsa <unknown — add this host to local._git_known_hosts in modules/project/main.tf>"
+            )}\n" }
+          }
+        }
+      }
       refreshAfter = "30s"
     }
   })

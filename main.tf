@@ -189,6 +189,7 @@ module "project" {
   argocd_bootstraps = try(each.value.argocd_bootstraps, {})
   shared_services   = try(each.value.shared_services, {})
   secrets           = try(each.value.secrets, {})
+  git_deploy_keys   = try(each.value.git_deploy_keys, {})
   chart_oidc_apps   = try(each.value.chart_oidc_apps, {})
 
   # Operator-supplied literal data for entries declared in this
