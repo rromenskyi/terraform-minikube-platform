@@ -20,6 +20,22 @@ locals {
   instances          = var.enabled ? toset(["enabled"]) : toset([])
   single_instances   = (var.enabled && !var.sentinel.enabled) ? toset(["enabled"]) : toset([])
   sentinel_instances = (var.enabled && var.sentinel.enabled) ? toset(["enabled"]) : toset([])
+
+  # Shorthand for the propagated null-label tag set.
+  tags = module.label.tags
+}
+
+# Module-tier label, chained off `var.context` (root passes
+# `module.platform_label.context` from `_label.tf`).
+module "label" {
+  source = "git::https://github.com/rromenskyi/terraform-null-label.git?ref=v0.1.0"
+
+  context   = var.context
+  namespace = var.namespace
+  name      = "redis"
+  tags = {
+    "app.kubernetes.io/component" = "redis"
+  }
 }
 
 # ── Default (root) password ───────────────────────────────────────────────────
@@ -41,6 +57,7 @@ resource "kubernetes_secret_v1" "default" {
   metadata {
     name      = "redis-default"
     namespace = var.namespace
+    labels    = local.tags
   }
 
   data = {
@@ -70,6 +87,7 @@ resource "kubernetes_persistent_volume_claim_v1" "redis" {
   metadata {
     name      = "redis-data"
     namespace = var.namespace
+    labels    = local.tags
   }
 
   spec {
@@ -92,7 +110,7 @@ resource "kubernetes_stateful_set_v1" "redis" {
   metadata {
     name      = "redis"
     namespace = var.namespace
-    labels    = { app = "redis" }
+    labels    = merge(local.tags, { app = "redis" })
   }
 
   spec {
@@ -105,7 +123,7 @@ resource "kubernetes_stateful_set_v1" "redis" {
 
     template {
       metadata {
-        labels = { app = "redis" }
+        labels = merge(local.tags, { app = "redis" })
       }
 
       spec {
@@ -288,7 +306,7 @@ resource "kubernetes_service_v1" "redis" {
   metadata {
     name      = "redis"
     namespace = var.namespace
-    labels    = { app = "redis" }
+    labels    = merge(local.tags, { app = "redis" })
   }
 
   spec {
@@ -426,6 +444,7 @@ resource "kubernetes_config_map_v1" "haproxy_config" {
   metadata {
     name      = "redis-haproxy-config"
     namespace = var.namespace
+    labels    = local.tags
   }
 
   data = {
@@ -475,7 +494,7 @@ resource "kubernetes_deployment_v1" "haproxy" {
   metadata {
     name      = "redis-haproxy"
     namespace = var.namespace
-    labels    = { app = "redis", component = "haproxy" }
+    labels    = merge(local.tags, { app = "redis", component = "haproxy" })
   }
 
   spec {
@@ -487,7 +506,7 @@ resource "kubernetes_deployment_v1" "haproxy" {
 
     template {
       metadata {
-        labels = { app = "redis", component = "haproxy" }
+        labels = merge(local.tags, { app = "redis", component = "haproxy" })
       }
 
       spec {

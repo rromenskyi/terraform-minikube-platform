@@ -18,8 +18,16 @@ terraform {
 
 # ── Locals ────────────────────────────────────────────────────────────────────
 
+module "label" {
+  source  = "github.com/rromenskyi/terraform-null-label?ref=v0.1.0"
+  context = var.context
+  name    = "zitadel"
+}
+
 locals {
   instances = var.enabled ? toset(["enabled"]) : toset([])
+
+  tags = module.label.tags
 
   db_name = "platform_zitadel"
   db_user = "platform_zitadel"
@@ -65,6 +73,7 @@ resource "kubernetes_secret_v1" "zitadel" {
   metadata {
     name      = "zitadel"
     namespace = var.namespace
+    labels    = local.tags
   }
 
   data = {
@@ -86,6 +95,7 @@ resource "kubernetes_secret_v1" "login_client_pat" {
   metadata {
     name      = "zitadel-login-client-pat"
     namespace = var.namespace
+    labels    = local.tags
   }
 
   data = {
@@ -105,10 +115,10 @@ resource "kubernetes_job_v1" "postgres_setup" {
   metadata {
     name      = "zitadel-postgres-setup"
     namespace = var.namespace
-    labels = {
+    labels = merge(local.tags, {
       "app.kubernetes.io/managed-by" = "terraform"
       "app"                          = "zitadel"
-    }
+    })
   }
 
   spec {
@@ -116,7 +126,7 @@ resource "kubernetes_job_v1" "postgres_setup" {
 
     template {
       metadata {
-        labels = { job = "zitadel-postgres-setup" }
+        labels = merge(local.tags, { job = "zitadel-postgres-setup" })
       }
 
       spec {
@@ -192,7 +202,7 @@ resource "kubernetes_deployment_v1" "zitadel" {
   metadata {
     name      = "zitadel"
     namespace = var.namespace
-    labels    = { app = "zitadel" }
+    labels    = merge(local.tags, { app = "zitadel" })
   }
 
   spec {
@@ -210,7 +220,7 @@ resource "kubernetes_deployment_v1" "zitadel" {
 
     template {
       metadata {
-        labels = { app = "zitadel" }
+        labels = merge(local.tags, { app = "zitadel" })
       }
 
       spec {
@@ -683,6 +693,7 @@ resource "kubernetes_config_map_v1" "steps" {
   metadata {
     name      = "zitadel-steps"
     namespace = var.namespace
+    labels    = local.tags
   }
 
   data = {
@@ -744,6 +755,7 @@ resource "kubernetes_service_account_v1" "pat_broker" {
   metadata {
     name      = "zitadel-pat-broker"
     namespace = var.namespace
+    labels    = local.tags
   }
 }
 
@@ -753,6 +765,7 @@ resource "kubernetes_role_v1" "pat_broker" {
   metadata {
     name      = "zitadel-pat-broker"
     namespace = var.namespace
+    labels    = local.tags
   }
 
   rule {
@@ -768,6 +781,7 @@ resource "kubernetes_role_binding_v1" "pat_broker" {
   metadata {
     name      = "zitadel-pat-broker"
     namespace = var.namespace
+    labels    = local.tags
   }
 
   role_ref {
@@ -791,7 +805,7 @@ resource "kubernetes_service_v1" "zitadel" {
   metadata {
     name      = "zitadel"
     namespace = var.namespace
-    labels    = { app = "zitadel" }
+    labels    = merge(local.tags, { app = "zitadel" })
   }
 
   spec {
@@ -814,7 +828,7 @@ resource "kubernetes_service_v1" "zitadel_login" {
   metadata {
     name      = "zitadel-login"
     namespace = var.namespace
-    labels    = { app = "zitadel" }
+    labels    = merge(local.tags, { app = "zitadel" })
   }
 
   spec {
@@ -849,6 +863,7 @@ resource "kubectl_manifest" "login_ingress_route" {
     metadata = {
       name      = "zitadel-login"
       namespace = var.namespace
+      labels    = local.tags
     }
     spec = {
       entryPoints = ["web"]

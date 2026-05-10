@@ -17,6 +17,7 @@ module "longhorn" {
   source     = "./modules/longhorn"
   depends_on = [module.addons]
 
+  context               = module.platform_label.context
   enabled               = local.platform.services.longhorn.enabled
   default_replica_count = local.platform.services.longhorn.replica_count
   tolerations           = local.platform.services.longhorn.tolerations

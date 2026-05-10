@@ -105,6 +105,7 @@ module "zitadel" {
   source     = "./modules/zitadel"
   depends_on = [module.addons, module.postgres]
 
+  context                   = module.platform_label.context
   enabled                   = local.platform.services.zitadel.enabled
   namespace                 = kubernetes_namespace_v1.platform.metadata[0].name
   postgres_host             = module.postgres.host

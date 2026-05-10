@@ -30,6 +30,22 @@ locals {
   # Model-pull Job is separately gated — skipped when the module is off
   # OR when the operator explicitly supplies an empty models list.
   pull_instances = var.enabled && length(var.models) > 0 ? toset(["enabled"]) : toset([])
+
+  # Shorthand for the propagated null-label tag set.
+  tags = module.label.tags
+}
+
+# Module-tier label, chained off `var.context` (root passes
+# `module.platform_label.context` from `_label.tf`).
+module "label" {
+  source = "git::https://github.com/rromenskyi/terraform-null-label.git?ref=v0.1.0"
+
+  context   = var.context
+  namespace = var.namespace
+  name      = "ollama"
+  tags = {
+    "app.kubernetes.io/component" = "ollama"
+  }
 }
 
 # ── Persistent storage (models cache) ─────────────────────────────────────────
@@ -38,7 +54,8 @@ resource "kubernetes_persistent_volume_v1" "ollama" {
   for_each = local.instances
 
   metadata {
-    name = "platform-ollama-data"
+    name   = "platform-ollama-data"
+    labels = local.tags
   }
 
   spec {
@@ -64,6 +81,7 @@ resource "kubernetes_persistent_volume_claim_v1" "ollama" {
   metadata {
     name      = "ollama-data"
     namespace = var.namespace
+    labels    = local.tags
   }
 
   spec {
@@ -87,7 +105,7 @@ resource "kubernetes_stateful_set_v1" "ollama" {
   metadata {
     name      = "ollama"
     namespace = var.namespace
-    labels    = { app = "ollama" }
+    labels    = merge(local.tags, { app = "ollama" })
   }
 
   spec {
@@ -100,7 +118,7 @@ resource "kubernetes_stateful_set_v1" "ollama" {
 
     template {
       metadata {
-        labels = { app = "ollama" }
+        labels = merge(local.tags, { app = "ollama" })
       }
 
       spec {
@@ -344,7 +362,7 @@ resource "kubernetes_service_v1" "ollama" {
   metadata {
     name      = "ollama"
     namespace = var.namespace
-    labels    = { app = "ollama" }
+    labels    = merge(local.tags, { app = "ollama" })
   }
 
   spec {
@@ -381,10 +399,10 @@ resource "kubernetes_job_v1" "pull_models" {
     # otherwise produce `field is immutable` errors.
     name      = "ollama-pull-${substr(sha1(join(",", var.models)), 0, 10)}"
     namespace = var.namespace
-    labels = {
+    labels = merge(local.tags, {
       "app.kubernetes.io/managed-by" = "terraform"
       "app"                          = "ollama-pull"
-    }
+    })
   }
 
   spec {
@@ -392,7 +410,7 @@ resource "kubernetes_job_v1" "pull_models" {
 
     template {
       metadata {
-        labels = { job = "ollama-pull" }
+        labels = merge(local.tags, { job = "ollama-pull" })
       }
 
       spec {
