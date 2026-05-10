@@ -1138,12 +1138,37 @@ resource "kubernetes_secret_v1" "vault_oidc" {
   }
 }
 
+resource "kubectl_manifest" "oidc_auth_mount" {
+  for_each = local.oidc_instances
+
+  depends_on = [helm_release.vault_config_operator]
+
+  yaml_body = yamlencode({
+    apiVersion = "redhatcop.redhat.io/v1alpha1"
+    kind       = "AuthEngineMount"
+    metadata = {
+      name      = "oidc"
+      namespace = kubernetes_namespace_v1.vault_config_operator["enabled"].metadata[0].name
+    }
+    spec = {
+      authentication = local.vco_authentication
+      connection     = local.vco_connection
+      path           = "" # mount AT `oidc` (path of name)
+      name           = "oidc"
+      type           = "oidc"
+    }
+  })
+}
+
 resource "kubectl_manifest" "oidc_config" {
   for_each = local.oidc_instances
 
   depends_on = [
     helm_release.vault_config_operator,
     kubernetes_secret_v1.vault_oidc,
+    # JWTOIDCAuthEngineConfig writes to /v1/auth/oidc/config — only
+    # exists after AuthEngineMount enables `oidc/` first.
+    kubectl_manifest.oidc_auth_mount,
   ]
 
   yaml_body = yamlencode({
