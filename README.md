@@ -85,8 +85,9 @@ terraform-minikube-platform/
 │
 ├── mysql.tf, postgres.tf, redis.tf, ollama.tf  # Shared service wiring (each calls modules/<name>)
 ├── vault.tf, zitadel.tf, zitadel_actions.tf    # Identity + secrets stack
-├── argocd.tf, argocd_repos.tf                  # Argo CD core + per-tenant deploy-key Secrets
-├── git_deploy_keys.tf                          # SSH key generation per `git_deploy_keys:` map
+├── argocd.tf, argocd_repos.tf                  # Argo CD core + per-tenant Vault-backed deploy-key Secrets
+├── cert_manager.tf                             # cert-manager extras (DNS-01 ACME token Secret when enabled)
+├── git_deploy_keys.tf                          # Sentinel-comment file — `git_deploy_keys:` now declared per-env in domain yaml, materialised via Vault
 ├── mail.tf                                     # Stalwart + Roundcube mail stack
 ├── monitoring.tf                               # kube-prometheus-stack overrides
 ├── platform_dash.tf, platform_dash_db.tf       # Operator dashboard + per-DB read-only roles
@@ -288,7 +289,7 @@ Every service collapses to zero resources when its `enabled` flag is off — dis
 | `postgres` | Single-replica StatefulSet + per-tenant DB / role / grant Job | `postgres: true` on a component |
 | `redis` | Standalone StatefulSet OR Sentinel HA (helm chart) + HAProxy front + per-tenant ACL user Job | `redis: true` on a component |
 | `ollama` | StatefulSet for shared LLM inference; CPU-only or GPU-offloaded (Vulkan / CUDA) | `ollama: true` (auto-injects `OLLAMA_HOST` / `OLLAMA_BASE_URL`) |
-| `vault` | Vault CE StatefulSet with raft single-node, auto-unseal init Job, optional Zitadel OIDC | platform-internal (Phase 2 will expose tenant-scoped Secret reads via VSO) |
+| `vault` | Vault CE StatefulSet with raft single-node, auto-unseal init Job, `vault-config-operator` (vco) for declarative CRD-managed config, Vault Secrets Operator (VSO) for k8s Secret materialisation, Zitadel OIDC for operator + per-tenant SSO | per-tenant subtree at `secret/data/tenants/<slug>/...`; tenants self-serve via Zitadel `tenant_<slug>` role, k8s Secrets emitted by `VaultStaticSecret` CRs the engine renders for any `secrets.<name>: { vault: true }` entry plus the `argocd_repo_ssh_keys` / `git_deploy_keys` flows |
 | `zitadel` | Identity provider — Postgres-backed StatefulSet + init Job + Login UI v2 sidecar | OIDC issuer for `oidc:` components, Argo CD, platform-dash |
 | `argocd` | GitOps controller (upstream chart) with Dex+Zitadel SSO; route emitted as `kind: external` | manual app sync via Argo UI / CLI |
 | `kured` | Kubernetes Reboot Daemon — drains + reboots a node when `/var/run/reboot-required` appears | n/a (cluster maintenance) |
@@ -585,6 +586,88 @@ Per-project override via the domain YAML's top-level `limits:` block still works
          www: web
    ```
 6. `./tf apply`
+
+## Secret management
+
+Operator-supplied secrets (third-party API keys, SMTP creds, deploy keys, etc.) live in **Vault** by default. The cluster runs Vault CE (single-node raft, auto-unsealed) plus two operators:
+
+- **`vault-config-operator` (vco)** reconciles Vault config (mounts, auth methods, policies, OIDC roles) from CRDs the engine renders. Operator never touches Vault config by hand.
+- **`vault-secrets-operator` (VSO)** syncs values from Vault paths into k8s Secrets in tenant namespaces, where chart pods consume them via the usual `envFrom: secretRef`.
+
+### Path convention
+
+Every secret-like artefact the engine emits in vault mode lives under a per-tenant prefix:
+
+```
+secret/data/tenants/<slug>/<kind>/<id>
+```
+
+- `<slug>` — the project's `slug` field from the domain yaml (= the domain part of `<slug>-<env>` in the namespace name).
+- `<kind>` — one of `argocd-deploy-keys`, `git-deploy-keys`, or an arbitrary name from the project's `secrets:` block (then `<id>` is the same as the secret name).
+
+Vault policies + Zitadel roles match this layout 1:1. Granting a Zitadel user the `tenant_<slug>` project role under the `vault` Zitadel project hands them ownership of an entire tenant subtree — they self-serve from then on, operator out of the loop.
+
+### Operator-supplied per-project secrets
+
+Declare a `secrets:` block under an env in the domain yaml. Three modes per entry, picked by the entry's shape:
+
+```yaml
+envs:
+  prod:
+    secrets:
+      app-shared-key:                     # mode 1 — random shared
+        keys: [APP_KEY_A, APP_KEY_B]      # both keys get the same engine-generated random value
+      vendor-api-key:                     # mode 2 — literal (legacy)
+        keys: [VENDOR_API_KEY]            # value supplied via TF_VAR_operator_secret_values in .env
+      tenant-managed-secrets:             # mode 3 — vault
+        vault: true                       # value(s) lives in Vault at secret/data/tenants/<slug>/tenant-managed-secrets
+```
+
+Mode 3 (`vault: true`) is the default for new work. The engine emits a `VaultStaticSecret` CR pointing at the convention path; VSO syncs whatever's at that Vault path into a k8s Secret with the same name in the project namespace. Operator declares the entry in yaml; tenant uploads values to Vault via UI / CLI through the `tenant_<slug>` Zitadel role grant.
+
+### Argo CD repo deploy keys
+
+Each `argocd_bootstraps:` entry's `repo_ssh_key_id:` resolves implicitly:
+
+- If id is in the legacy `var.argocd_repo_ssh_keys` map (set via `TF_VAR_argocd_repo_ssh_keys` in `.env`), engine emits a literal `kubernetes_secret_v1` in `argocd` namespace (legacy fallback).
+- Otherwise → vault mode: engine emits `VaultStaticSecret` pointing at `secret/data/tenants/<project_slug>/argocd-deploy-keys/<id>`. VSO templating combines the operator-supplied `sshPrivateKey` from Vault with the engine-known `type=git` + `url=<repo_url>` so the rendered Secret matches Argo CD's repository-Secret schema.
+
+### git-sync deploy keys
+
+Per-env yaml block on each project:
+
+```yaml
+envs:
+  prod:
+    git_deploy_keys:
+      <id>:
+        host: github.com    # optional, default github.com; gitlab.com / bitbucket.org also recognised
+```
+
+Engine emits `VaultStaticSecret` per entry → VSO syncs into a `kubernetes.io/ssh-auth` Secret named `git-deploy-key-<id>` in the project namespace. Components reference it via `git_sync.ssh_key_secret_name: git-deploy-key-<id>` exactly as before — Vault path is wholly invisible to consumer charts.
+
+### Vault storage
+
+`services.vault.storage_class` in `config/platform.yaml` picks the storage backend:
+
+- `""` (default) → static hostPath PV pinned to whichever node first attached. Survives pod restart, NOT node loss.
+- `longhorn` (or any dynamic-provisioning SC the cluster has) → cluster provisions a network-backed volume, Vault survives node loss + reschedules cleanly.
+
+Switching is destructive (new PVC binds an empty volume; raft data on the old hostPath is no longer referenced). Take a `vault operator raft snapshot save` before flipping. Note that shamir keys don't survive a cross-storage restore — a fresh init is required after switch, vco re-pushes every CRD-managed config + policy + role automatically afterwards, only operator-uploaded KV data needs re-paste.
+
+### Cloudflare DNS-01 ACME solver
+
+For Certificates on hosts that can't satisfy HTTP-01 (direct LB endpoints with no port-80 listener — UDP/raw-TCP services bound to a MetalLB VIP):
+
+```yaml
+# config/platform.yaml
+services:
+  dns01_cloudflare:
+    enabled: true
+    dns_zones: [<zone>]
+```
+
+Engine adds a `dns01.cloudflare` solver alongside the existing `http01` on both Let's Encrypt ClusterIssuers, gated by cert-manager's `selector.dnsZones`. HTTP-01 stays the default for hosts outside the listed zones. Reuses the existing `TF_VAR_cloudflare_api_token` value — no separate token to provision.
 
 ## Persistent storage
 

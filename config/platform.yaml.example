@@ -114,6 +114,29 @@ services:
   vault:
     enabled: false
     hostname: vault.example.com
+    # Optional storage backend override. Default `""` keeps the
+    # static hostPath PV (node-local; survives pod restart, NOT
+    # node loss; pinned to whichever node first attached). Set to
+    # `longhorn` (or any dynamic-provisioning SC the cluster has)
+    # to drop the hostPath PV and let the cluster provision a
+    # network-backed volume — Vault then survives node loss +
+    # reschedules cleanly. **Switching is destructive** — new PVC
+    # binds an empty volume; raft data on the old hostPath is no
+    # longer referenced. Take a `vault operator raft snapshot save`
+    # before flipping; vco re-pushes every CRD-managed config +
+    # policy + role automatically after a fresh init, only operator-
+    # uploaded KV data needs re-paste.
+    # storage_class: longhorn
+
+  # Optional Cloudflare DNS-01 ACME solver on the Let's Encrypt
+  # ClusterIssuers. Required for hosts that can't satisfy HTTP-01
+  # (direct LB endpoints with no port-80 listener — UDP/raw-TCP
+  # services bound to a MetalLB VIP). HTTP-01 stays the default for
+  # hosts outside `dns_zones`. Reuses TF_VAR_cloudflare_api_token —
+  # no separate token to provision.
+  dns01_cloudflare:
+    enabled: false
+    dns_zones: []     # e.g. [example.com]
 
   # Argo CD — GitOps controller for application-layer deploys.
   # Phase 0 ships the upstream chart with Zitadel OIDC SSO wired
