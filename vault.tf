@@ -73,9 +73,13 @@ module "vault_oidc" {
   # in `urn:zitadel:iam:org:project:roles` claim at login. Vault's
   # JWTOIDCAuthEngineRole CRs (in modules/vault) bound_claims match
   # against these keys.
+  # `distinct()` because `local.projects` is keyed `<slug>-<env>` —
+  # multi-env projects (e.g. ipsupport-us in prod/dev/mm-dev) repeat
+  # the same slug; without dedup `for_each` in modules/zitadel-app
+  # crashes with "Duplicate object key".
   roles = concat(
     [{ key = "operator", display_name = "Vault Operator (full admin)" }],
-    [for slug in sort([for p in values(local.projects) : p.slug]) :
+    [for slug in sort(distinct([for p in values(local.projects) : p.slug])) :
       { key = "tenant_${replace(slug, "-", "_")}", display_name = "Vault Tenant — ${slug}" }
     ],
   )
@@ -103,7 +107,10 @@ module "vault" {
   oidc_issuer_url    = local.platform.services.zitadel.enabled ? "https://${local.platform.services.zitadel.external_domain}" : ""
   oidc_client_id     = local.platform.services.vault.enabled && local.platform.services.zitadel.enabled ? module.vault_oidc["enabled"].client_id : ""
   oidc_client_secret = local.platform.services.vault.enabled && local.platform.services.zitadel.enabled ? module.vault_oidc["enabled"].client_secret : ""
-  tenants            = sort([for p in values(local.projects) : p.slug])
+  # `distinct()` per the same reason the `roles` list above — multi-
+  # env projects share a slug; vault module's `for_each` over tenants
+  # would otherwise crash on the duplicates.
+  tenants = sort(distinct([for p in values(local.projects) : p.slug]))
 
   # Phase 2 — VSO. Tied to vault.enabled (no separate config knob;
   # VSO is part of the Vault story — installing it without Vault
