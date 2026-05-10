@@ -53,3 +53,33 @@ variable "cpu_limit" {
   type    = string
   default = "1"
 }
+
+# -----------------------------------------------------------------------------
+# Phase 1 — bootstrap step that lets vault-config-operator take over.
+# The bootstrap Job (post-init, post-unseal) creates the minimum needed for
+# vault-config-operator to authenticate and start reconciling its CRDs:
+#   - kubernetes auth method enabled + configured
+#   - admin policy `vault-config-operator-admin`
+#   - kubernetes-auth role binding vco's ServiceAccount → admin policy
+# Everything else (KV-v2 mount, VSO read-only policy, OIDC auth method,
+# per-tenant policies + OIDC roles) lands as `kubectl_manifest`-managed CRDs
+# in subsequent PRs.
+# -----------------------------------------------------------------------------
+
+variable "vault_config_operator_namespace" {
+  description = "Namespace where vault-config-operator's ServiceAccount lives. The Phase 1 bootstrap Job pre-configures Vault's kubernetes auth method to trust this `<ns>:<sa>` so that vault-config-operator (installed via Helm release in this same module) can authenticate against Vault and reconcile its CRDs."
+  type        = string
+  default     = "vault-config-operator"
+}
+
+variable "vault_config_operator_service_account" {
+  description = "ServiceAccount name vault-config-operator authenticates with against Vault's kubernetes auth method. The Phase 1 bootstrap Job binds this SA to the `vault-config-operator-admin` policy via a kubernetes-auth role."
+  type        = string
+  default     = "vault-config-operator-controller-manager"
+}
+
+variable "vault_config_operator_chart_version" {
+  description = "Chart version for the vault-config-operator Helm release. Pinned so apply-at-time is deterministic; bump deliberately."
+  type        = string
+  default     = "0.8.48"
+}

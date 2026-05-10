@@ -8,20 +8,39 @@ terraform {
       source  = "hashicorp/random"
       version = "~> 3.0"
     }
+    helm = {
+      source  = "hashicorp/helm"
+      version = "~> 3.0"
+    }
+    kubectl = {
+      source  = "gavinbunney/kubectl"
+      version = "~> 1.14"
+    }
   }
 }
 
 # =============================================================================
-# Vault community — Phase 0: brings the server up + auto-unseals + emits root
-# token to a TF-managed Secret. No KV mounts, no auth methods, no policies.
+# Vault community — server, auto-unseal, and post-init configuration plumbing.
 # =============================================================================
 #
-# Phase 0 success: `services.vault.enabled: true` brings up a working
-# Vault you can log into in the UI as the root user (token from
-# `terraform output -raw vault_root_token`). Phase 1 (deferred PR)
-# wires the Zitadel JWT auth method + admin/operator policies. Phase
-# 2 introduces the Vault Secrets Operator + first migrated secret.
-# Phase 3 bulk-migrates the cheatsheet-bound TF outputs.
+# Phase 0 (live): server StatefulSet + raft single-node + bootstrap-Secret-
+# driven auto-unseal. Operator can log into the UI with the root token
+# (`terraform output -raw vault_root_token`). Nothing is mounted yet, no
+# auth methods enabled.
+#
+# Phase 1 (this module, current state): post-init bootstrap Job +
+# vault-config-operator Helm release + base CRDs (KV-v2 mount at `secret/`,
+# read-only policy `vso-tenant-read`, kubernetes-auth role for VSO). The
+# Job's only purpose is to give vault-config-operator's ServiceAccount
+# admin rights via Vault's kubernetes auth method; from there vco reconciles
+# every other Vault-side concern via CRDs.
+#
+# Phase 2 (next PR): Zitadel app for Vault + OIDC auth method (CR
+# `JWTOIDCAuthEngineConfig`) + per-tenant policies + per-tenant OIDC roles
+# (CRs derived from the engine's tenant list). The hashicorp/vault-secrets-
+# operator (VSO) Helm release lands here too, plus the engine integration
+# in `modules/project` that emits `VaultStaticSecret` instead of literal
+# `kubernetes_secret_v1` when `operator_secret_values[<x>] = { vault_path }`.
 #
 # Storage: built-in raft single-node (no external Postgres/Consul).
 # RocksDB-style on-disk store. hostPath PV survives pod replace and
@@ -95,6 +114,67 @@ locals {
       tls_disable = "true"
     }
   HCL
+
+  # Phase 1 bootstrap script — minimum needed before vault-config-operator
+  # can take over the rest of the configuration via CRDs:
+  #   1. Enable kubernetes auth method.
+  #   2. Configure it with the in-cluster API + this Job's SA JWT for
+  #      TokenReview.
+  #   3. Write a `vault-config-operator-admin` policy (full sudo on
+  #      every path — vco needs to manage mounts, auth methods, roles,
+  #      policies on the operator's behalf).
+  #   4. Bind the vco ServiceAccount to that policy via a kubernetes-
+  #      auth role.
+  # That's it. KV-v2 mount, VSO's read-only policy + role, OIDC auth
+  # method, per-tenant policies + roles — all become CRDs reconciled by
+  # vault-config-operator (next PR phase wires them).
+  #
+  # All operations idempotent: `auth enable` tolerates "path is already
+  # in use", `auth/.../config` and `policy write` and `auth/.../role/<x>`
+  # are PUT semantics so re-applies converge.
+  configure_script = <<-EOT
+    set -eu
+
+    export VAULT_TOKEN=$(cat /etc/vault-bootstrap/root-token)
+    if [ -z "$VAULT_TOKEN" ]; then
+      echo "[vault-bootstrap] ERROR: root token empty — bootstrap Secret not yet populated"
+      exit 1
+    fi
+
+    echo "[vault-bootstrap] waiting for vault unsealed+active..."
+    until vault status -format=json 2>/dev/null | grep -q '"sealed": false'; do
+      sleep 2
+    done
+    echo "[vault-bootstrap] vault active"
+
+    enable_ok() {
+      out=$(vault "$@" 2>&1) && return 0
+      echo "$out" | grep -q "path is already in use" && return 0
+      echo "$out" >&2
+      return 1
+    }
+
+    echo "[vault-bootstrap] enable + configure kubernetes auth"
+    enable_ok auth enable kubernetes
+    vault write auth/kubernetes/config \
+      kubernetes_host="https://kubernetes.default.svc.cluster.local" \
+      kubernetes_ca_cert=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
+      token_reviewer_jwt=@/var/run/secrets/kubernetes.io/serviceaccount/token
+
+    echo "[vault-bootstrap] write vault-config-operator-admin policy"
+    vault policy write vault-config-operator-admin - <<'POLICY'
+    path "*" { capabilities = ["create","read","update","delete","list","sudo"] }
+    POLICY
+
+    echo "[vault-bootstrap] bind k8s role for vault-config-operator SA → admin policy"
+    vault write auth/kubernetes/role/vault-config-operator \
+      bound_service_account_names="${var.vault_config_operator_service_account}" \
+      bound_service_account_namespaces="${var.vault_config_operator_namespace}" \
+      policies=vault-config-operator-admin \
+      ttl=24h
+
+    echo "[vault-bootstrap] done — vault-config-operator can now take over via CRDs"
+  EOT
 }
 
 # -----------------------------------------------------------------------------
@@ -700,6 +780,278 @@ resource "kubernetes_job_v1" "vault_init" {
   timeouts {
     create = "5m"
   }
+}
+
+# -----------------------------------------------------------------------------
+# Phase 1 — vault_bootstrap Job
+#
+# Runs after vault_init, mounts the bootstrap Secret to read the root token,
+# performs the minimum configuration needed before vault-config-operator can
+# take over via CRDs:
+#   - Enables kubernetes auth method, configures it with the in-cluster API
+#     server URL + this Job's SA JWT (TokenReview path).
+#   - Writes the `vault-config-operator-admin` policy (full sudo).
+#   - Binds vault-config-operator's ServiceAccount to that policy through a
+#     kubernetes-auth role.
+#
+# Everything else (KV-v2 mount, VSO read-only policy, OIDC config, per-tenant
+# policies + OIDC roles) lives as kubectl_manifest-managed CRDs reconciled by
+# vault-config-operator — see CRD section below.
+#
+# RBAC: the Job uses the same `vault` ServiceAccount as the StatefulSet. That
+# SA also needs `system:auth-delegator` so Vault can call TokenReview against
+# JWTs presented by k8s-auth clients (vault-config-operator, VSO, ...).
+# -----------------------------------------------------------------------------
+
+resource "kubernetes_cluster_role_binding_v1" "vault_token_reviewer" {
+  for_each = local.instances
+
+  metadata {
+    name   = "vault-token-reviewer-${var.namespace}"
+    labels = local.tags
+  }
+
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "ClusterRole"
+    name      = "system:auth-delegator"
+  }
+
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account_v1.vault["enabled"].metadata[0].name
+    namespace = var.namespace
+  }
+}
+
+resource "kubernetes_job_v1" "vault_bootstrap" {
+  for_each = local.instances
+
+  depends_on = [
+    kubernetes_job_v1.vault_init,
+    kubernetes_cluster_role_binding_v1.vault_token_reviewer,
+  ]
+
+  metadata {
+    # Suffix forces a NEW Job on every input change — k8s Jobs are immutable
+    # post-create, so the only way to re-run on script change is a new name.
+    name      = "vault-bootstrap-${substr(sha256(local.configure_script), 0, 10)}"
+    namespace = var.namespace
+    labels = merge(local.tags, {
+      "app.kubernetes.io/managed-by" = "terraform"
+      "app"                          = "vault"
+    })
+  }
+
+  spec {
+    backoff_limit = 3
+    # Auto-cleanup completed Jobs after 10 minutes — keeps `kubectl get jobs`
+    # from accumulating one entry per apply over weeks.
+    ttl_seconds_after_finished = 600
+
+    template {
+      metadata {
+        labels = merge(local.tags, { job = "vault-bootstrap" })
+      }
+
+      spec {
+        restart_policy       = "Never"
+        service_account_name = kubernetes_service_account_v1.vault["enabled"].metadata[0].name
+
+        volume {
+          name = "bootstrap"
+          secret {
+            secret_name = kubernetes_secret_v1.vault_bootstrap["enabled"].metadata[0].name
+          }
+        }
+
+        container {
+          name = "bootstrap"
+          # Same image as the StatefulSet — has the `vault` CLI built in,
+          # avoids dragging in a separate image layer.
+          image = var.image
+
+          resources {
+            requests = { cpu = "10m", memory = "32Mi" }
+            limits   = { cpu = "200m", memory = "128Mi" }
+          }
+
+          volume_mount {
+            name       = "bootstrap"
+            mount_path = "/etc/vault-bootstrap"
+            read_only  = true
+          }
+
+          env {
+            name  = "VAULT_ADDR"
+            value = "http://vault.${var.namespace}.svc.cluster.local:8200"
+          }
+
+          command = ["sh", "-c", local.configure_script]
+        }
+      }
+    }
+  }
+
+  wait_for_completion = true
+
+  timeouts {
+    create = "5m"
+  }
+}
+
+# -----------------------------------------------------------------------------
+# Phase 1 — vault-config-operator (RedHat-COP)
+#
+# Declarative Vault management via CRDs. After the bootstrap Job above gives
+# its ServiceAccount admin rights, vco logs into Vault via kubernetes auth
+# and reconciles every CRD this module emits below: SecretEngineMount, Policy,
+# KubernetesAuthEngineRole, JWTOIDCAuthEngineConfig, JWTOIDCAuthEngineRole.
+#
+# Repo + docs: https://github.com/redhat-cop/vault-config-operator
+#
+# Operator namespace is dedicated (`vault-config-operator`) so its RBAC and
+# leader-election lock don't tangle with the platform namespace.
+# -----------------------------------------------------------------------------
+
+resource "kubernetes_namespace_v1" "vault_config_operator" {
+  for_each = local.instances
+
+  metadata {
+    name   = var.vault_config_operator_namespace
+    labels = local.tags
+  }
+}
+
+resource "helm_release" "vault_config_operator" {
+  for_each = local.instances
+
+  depends_on = [kubernetes_namespace_v1.vault_config_operator]
+
+  name       = "vault-config-operator"
+  repository = "https://redhat-cop.github.io/vault-config-operator"
+  chart      = "vault-config-operator"
+  version    = var.vault_config_operator_chart_version
+  namespace  = kubernetes_namespace_v1.vault_config_operator["enabled"].metadata[0].name
+
+  values = [yamlencode({
+    # Default vault address vco uses for all CR reconcile calls.
+    vaultAddress = "http://vault.${var.namespace}.svc.cluster.local:8200"
+
+    # Run the operator's controller-manager pod with a stable name so the
+    # bootstrap Job's vault role binds reliably (the kubernetes-auth role
+    # references `<vault_config_operator_service_account>` literally).
+    serviceAccount = {
+      name = var.vault_config_operator_service_account
+    }
+  })]
+}
+
+# -----------------------------------------------------------------------------
+# Phase 1 — initial CRDs reconciled by vault-config-operator.
+#
+# Three CRs land:
+#   1. KubernetesAuthEngineConfig (no-op if the bootstrap Job already wrote it,
+#      but the CR makes the config part of the engine state too — vco will
+#      re-assert if Vault drifts).
+#   2. SecretEngineMount — KV-v2 at `secret/`.
+#   3. Policy `vso-tenant-read` — read on every tenant subtree.
+#   4. KubernetesAuthEngineRole `vso` — bind VSO's ServiceAccount to the
+#      read-only policy. (VSO Helm release lands in PR-B — the role just sits
+#      idle until then, harmless.)
+#
+# Per-tenant policies + roles + OIDC config live in PR-B (needs Zitadel app).
+# -----------------------------------------------------------------------------
+
+locals {
+  # Authentication block every CR shares — points at the kubernetes auth
+  # method enabled by the bootstrap Job, role `vault-config-operator`. vco
+  # picks this up, exchanges its SA JWT for a Vault token via that role,
+  # then performs the reconcile call.
+  vco_authentication = {
+    path = "kubernetes"
+    role = "vault-config-operator"
+  }
+
+  vco_connection = {
+    address = "http://vault.${var.namespace}.svc.cluster.local:8200"
+  }
+}
+
+resource "kubectl_manifest" "kv_v2_mount" {
+  for_each = local.instances
+
+  depends_on = [helm_release.vault_config_operator]
+
+  yaml_body = yamlencode({
+    apiVersion = "redhatcop.redhat.io/v1alpha1"
+    kind       = "SecretEngineMount"
+    metadata = {
+      name      = "kv-v2-secret"
+      namespace = kubernetes_namespace_v1.vault_config_operator["enabled"].metadata[0].name
+    }
+    spec = {
+      authentication = local.vco_authentication
+      connection     = local.vco_connection
+      path           = "" # mount AT secret (root of the path is `<name>` from metadata)
+      name           = "secret"
+      type           = "kv-v2"
+    }
+  })
+}
+
+resource "kubectl_manifest" "vso_read_policy" {
+  for_each = local.instances
+
+  depends_on = [helm_release.vault_config_operator]
+
+  yaml_body = yamlencode({
+    apiVersion = "redhatcop.redhat.io/v1alpha1"
+    kind       = "Policy"
+    metadata = {
+      name      = "vso-tenant-read"
+      namespace = kubernetes_namespace_v1.vault_config_operator["enabled"].metadata[0].name
+    }
+    spec = {
+      authentication = local.vco_authentication
+      connection     = local.vco_connection
+      policy         = <<-POLICY
+        path "secret/data/tenants/*"     { capabilities = ["read"] }
+        path "secret/metadata/tenants/*" { capabilities = ["read", "list"] }
+      POLICY
+    }
+  })
+}
+
+# VSO's kubernetes-auth role binding. References the SA that the upstream
+# `hashicorp/vault-secrets-operator` Helm chart creates by default — that
+# release lands in PR-B but the role can sit ahead of time, idle until VSO
+# pods come up and start using it.
+resource "kubectl_manifest" "vso_k8s_role" {
+  for_each = local.instances
+
+  depends_on = [
+    kubectl_manifest.vso_read_policy,
+    kubectl_manifest.kv_v2_mount,
+  ]
+
+  yaml_body = yamlencode({
+    apiVersion = "redhatcop.redhat.io/v1alpha1"
+    kind       = "KubernetesAuthEngineRole"
+    metadata = {
+      name      = "vso"
+      namespace = kubernetes_namespace_v1.vault_config_operator["enabled"].metadata[0].name
+    }
+    spec = {
+      authentication                 = local.vco_authentication
+      connection                     = local.vco_connection
+      path                           = "kubernetes"
+      targetServiceAccounts          = ["vault-secrets-operator-controller-manager"]
+      targetServiceAccountNamespaces = { matchLabels = { "kubernetes.io/metadata.name" = "vault-secrets-operator" } }
+      policies                       = ["vso-tenant-read"]
+      tokenTTL                       = 86400 # 24h, vault-side cap
+    }
+  })
 }
 
 # -----------------------------------------------------------------------------
