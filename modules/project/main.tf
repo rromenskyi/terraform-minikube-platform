@@ -983,8 +983,7 @@ resource "kubernetes_secret_v1" "ollama_endpoint" {
 
 # ── Operator-defined Secrets (per-env `secrets:` block) ───────────────────────
 #
-# Two modes per entry, picked by whether the same name shows up as a
-# top-level key in `var.operator_secret_values`:
+# Three modes per entry, picked by the shape of `var.operator_secret_values[<name>]`:
 #
 #   1. Random shared (default — `var.operator_secret_values[<name>]`
 #      not set). Engine generates ONE `random_password` per entry
@@ -992,29 +991,76 @@ resource "kubernetes_secret_v1" "ollama_endpoint" {
 #      cases where a chart's `envFrom` exposes the same shared
 #      bytes under multiple env names.
 #
-#   2. Literal (`var.operator_secret_values[<name>]` present). Engine
-#      writes the supplied k:v map straight into the Secret's data.
-#      Plan-time check below rejects partial coverage so a forgotten
-#      key surfaces before apply, not at first pod boot. Fits
-#      operator-supplied credentials the engine cannot synthesize:
-#      third-party storage / OIDC client / vendor API keys.
+#   2. Literal (`var.operator_secret_values[<name>]` is a map of
+#      key → value pairs). Engine writes the supplied k:v map straight
+#      into the Secret's data. Plan-time check below rejects partial
+#      coverage so a forgotten key surfaces before apply, not at first
+#      pod boot. Fits operator-supplied credentials the engine cannot
+#      synthesize: third-party storage / OIDC client / vendor API keys.
+#
+#   3. Vault (`var.operator_secret_values[<name>] = { vault_path =
+#      "secret/<path>" }` — exactly one key named `vault_path`). Engine
+#      skips the literal `kubernetes_secret_v1` and emits a
+#      `VaultStaticSecret` CR pointing at the Vault KV-v2 path. The
+#      Vault Secrets Operator (VSO) reconciles the CR by reading every
+#      key under that path and creating a k8s Secret with the same
+#      name in the project namespace. Tenant rotates the Vault entry
+#      via UI / CLI; VSO re-syncs without TF re-apply. Vault path keys
+#      are NOT validated against `secrets.<name>.keys` — chart pods
+#      envFrom whatever VSO writes.
 #
 # `random_password.operator_secret` is generated for every entry
 # regardless of mode — cheap, kept in state, and lets an operator
-# flip an entry from literal to random by deleting its
-# `var.operator_secret_values` key without re-planning the random.
+# flip an entry to random by deleting its `var.operator_secret_values`
+# key without re-planning the random.
+
+locals {
+  # Per-entry mode: "vault" (vault_path indirection), "literal" (operator
+  # supplied k:v map), or "random" (engine-generated shared password).
+  operator_secret_mode = {
+    for name in keys(var.secrets) :
+    name => (
+      contains(keys(var.operator_secret_values), name)
+      ? (
+        length(var.operator_secret_values[name]) == 1
+        && contains(keys(var.operator_secret_values[name]), "vault_path")
+        ? "vault"
+        : "literal"
+      )
+      : "random"
+    )
+  }
+
+  # nonsensitive() because for_each can't take a sensitive value (the
+  # set membership reveals nothing — entry NAMES are config-yaml-public,
+  # only the inner values are sensitive). The actual sensitive map
+  # `var.operator_secret_values[name][k]` is read inside data{} below
+  # where sensitivity stays propagated correctly.
+  operator_secret_literal_set = nonsensitive(toset([for n, m in local.operator_secret_mode : n if m == "literal"]))
+  operator_secret_vault_set   = nonsensitive(toset([for n, m in local.operator_secret_mode : n if m == "vault"]))
+  operator_secret_data_set    = nonsensitive(toset([for n, m in local.operator_secret_mode : n if m != "vault"]))
+}
 
 check "operator_secret_values_cover_yaml_keys" {
   assert {
     condition = alltrue([
-      for name, vals in var.operator_secret_values :
-      !contains(keys(var.secrets), name)
-      || alltrue([
+      for name in local.operator_secret_literal_set :
+      alltrue([
         for k in try(var.secrets[name].keys, []) :
-        contains(keys(vals), k)
+        contains(keys(var.operator_secret_values[name]), k)
       ])
     ])
-    error_message = "var.operator_secret_values supplies an entry whose inner map is missing a key declared under `secrets.<name>.keys` in the domain yaml. Project '${local.namespace}'. Each literal-mode Secret must cover every yaml-listed key. Add the missing key to terraform.tfvars or remove it from the domain yaml."
+    error_message = "var.operator_secret_values supplies a literal entry whose inner map is missing a key declared under `secrets.<name>.keys` in the domain yaml. Project '${local.namespace}'. Each literal-mode Secret must cover every yaml-listed key. Add the missing key to terraform.tfvars or remove it from the domain yaml. (Vault-mode entries — single `vault_path` key — are not subject to this check; VSO copies whatever's at the Vault path.)"
+  }
+}
+
+check "operator_secret_vault_path_well_formed" {
+  assert {
+    condition = alltrue([
+      for name in local.operator_secret_vault_set :
+      can(regex("^secret/(data/)?tenants/[a-z0-9][a-z0-9-]{0,38}[a-z0-9]/[a-zA-Z0-9._-]+$", var.operator_secret_values[name].vault_path))
+    ])
+    error_message = "operator_secret_values vault_path must look like `secret/tenants/<tenant>/<name>` (or the equivalent KV-v2 API form `secret/data/tenants/<tenant>/<name>`). Project '${local.namespace}'."
   }
 }
 
@@ -1026,10 +1072,10 @@ resource "random_password" "operator_secret" {
 }
 
 resource "kubernetes_secret_v1" "operator_secret" {
-  for_each = var.secrets
+  for_each = local.operator_secret_data_set
 
   metadata {
-    name      = each.key
+    name      = each.value
     namespace = kubernetes_namespace_v1.this.metadata[0].name
     labels = merge(module.project_label.tags, {
       "app.kubernetes.io/managed-by" = "terraform"
@@ -1038,16 +1084,57 @@ resource "kubernetes_secret_v1" "operator_secret" {
   }
 
   data = (
-    contains(keys(var.operator_secret_values), each.key)
+    local.operator_secret_mode[each.value] == "literal"
     ? {
-      for k in try(each.value.keys, []) :
-      k => var.operator_secret_values[each.key][k]
+      for k in try(var.secrets[each.value].keys, []) :
+      k => var.operator_secret_values[each.value][k]
     }
     : {
-      for k in try(each.value.keys, []) :
-      k => random_password.operator_secret[each.key].result
+      for k in try(var.secrets[each.value].keys, []) :
+      k => random_password.operator_secret[each.value].result
     }
   )
+}
+
+# Vault-mode: emit a VaultStaticSecret CR that VSO reconciles into a
+# k8s Secret with the same name in this project namespace. Path
+# accepts both `secret/<path>` (operator-friendly KV form) and
+# `secret/data/<path>` (raw KV-v2 API form); both normalise to
+# `<path>` for the CR's `path` field (VSO re-prepends the data/
+# segment when calling the Vault API).
+resource "kubectl_manifest" "operator_secret_vault" {
+  for_each = local.operator_secret_vault_set
+
+  yaml_body = yamlencode({
+    apiVersion = "secrets.hashicorp.com/v1beta1"
+    kind       = "VaultStaticSecret"
+    metadata = {
+      name      = each.value
+      namespace = kubernetes_namespace_v1.this.metadata[0].name
+      labels = merge(module.project_label.tags, {
+        "app.kubernetes.io/managed-by" = "terraform"
+        "app.kubernetes.io/part-of"    = local.namespace
+      })
+    }
+    spec = {
+      # VSO falls back to the cluster-default VaultAuth in the
+      # vault-secrets-operator namespace when vaultAuthRef is empty.
+      # The platform's vault module enables that default at install
+      # time (modules/vault/main.tf vso helm release values).
+      vaultAuthRef = ""
+      mount        = "secret"
+      type         = "kv-v2"
+      path         = trimprefix(trimprefix(var.operator_secret_values[each.value].vault_path, "secret/"), "data/")
+      destination = {
+        name   = each.value
+        create = true
+      }
+      # 30s catches a rotation in Vault UI within half a minute.
+      # Pod restart on rotation is consumer's concern (checksum
+      # annotation pattern — see feedback_secret_consumer_needs_checksum_annotation).
+      refreshAfter = "30s"
+    }
+  })
 }
 
 # ── Zitadel auto-provisioning for chart-deployed apps ────────────────────────
