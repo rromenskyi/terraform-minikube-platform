@@ -73,9 +73,9 @@ variable "vault_config_operator_namespace" {
 }
 
 variable "vault_config_operator_service_account" {
-  description = "ServiceAccount name vault-config-operator authenticates with against Vault's kubernetes auth method. The Phase 1 bootstrap Job binds this SA to the `vault-config-operator-admin` policy via a kubernetes-auth role."
+  description = "ServiceAccount name vault-config-operator authenticates with against Vault's kubernetes auth method. The Phase 1 bootstrap Job binds this SA to the `vault-config-operator-admin` policy via a kubernetes-auth role. Default `controller-manager` matches the chart's actual SA name (the chart names its SA literally `controller-manager` regardless of `serviceAccount.name` override) — using a different value here would silently break vco's auth and every CR would fail with `service account name not authorized`."
   type        = string
-  default     = "vault-config-operator-controller-manager"
+  default     = "controller-manager"
 }
 
 variable "vault_config_operator_chart_version" {
