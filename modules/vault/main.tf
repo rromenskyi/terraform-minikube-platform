@@ -987,6 +987,14 @@ locals {
   vco_authentication = {
     path = "kubernetes"
     role = "vault-config-operator"
+    # Without this, vco impersonates the CRD default SA (`default`), and
+    # Vault's k8s-auth role rejects with `service account name not
+    # authorized` because it only binds `controller-manager`. Setting
+    # this explicitly forces vco to TokenRequest a JWT for the SA the
+    # role accepts.
+    serviceAccount = {
+      name = var.vault_config_operator_service_account
+    }
   }
 
   vco_connection = {
