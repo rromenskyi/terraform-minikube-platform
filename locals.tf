@@ -60,6 +60,19 @@ locals {
       kured = {
         enabled = false
       }
+      # Optional Cloudflare DNS-01 ACME solver — adds a second solver to
+      # the Let's Encrypt ClusterIssuers gated by `dns_zones`. HTTP-01
+      # stays the default for hosts outside those zones. Required for
+      # Certificates whose hosts can't satisfy HTTP-01 (direct LB
+      # endpoints with no port-80 listener — UDP/raw-TCP services bound
+      # to a MetalLB VIP). Reuses the operator's existing
+      # `TF_VAR_cloudflare_api_token` (no separate scoped token to
+      # provision); the engine emits a Secret in `cert-manager` namespace
+      # that addons references.
+      dns01_cloudflare = {
+        enabled   = false
+        dns_zones = []
+      }
       longhorn = {
         enabled          = false
         replica_count    = 3
@@ -231,7 +244,8 @@ locals {
       zitadel        = merge(local._platform_defaults.services.zitadel, try(local._platform_services.zitadel, {}))
       vault          = merge(local._platform_defaults.services.vault, try(local._platform_services.vault, {}))
       argocd         = merge(local._platform_defaults.services.argocd, try(local._platform_services.argocd, {}))
-      kured          = merge(local._platform_defaults.services.kured, try(local._platform_services.kured, {}))
+      kured            = merge(local._platform_defaults.services.kured, try(local._platform_services.kured, {}))
+      dns01_cloudflare = merge(local._platform_defaults.services.dns01_cloudflare, try(local._platform_services.dns01_cloudflare, {}))
       longhorn       = merge(local._platform_defaults.services.longhorn, try(local._platform_services.longhorn, {}))
       metallb        = merge(local._platform_defaults.services.metallb, try(local._platform_services.metallb, {}))
       minio          = merge(local._platform_defaults.services.minio, try(local._platform_services.minio, {}))
