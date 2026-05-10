@@ -94,6 +94,7 @@ module "vault" {
   namespace        = kubernetes_namespace_v1.platform.metadata[0].name
   hostname         = local.platform.services.vault.hostname
   volume_base_path = var.host_volume_path
+  storage_class    = local.platform.services.vault.storage_class
 
   # Phase 2 — OIDC self-serve. Wired only when both Vault AND Zitadel
   # are on; otherwise the module stays in Phase 1 shape (root-token

@@ -156,10 +156,17 @@ locals {
 
     echo "[vault-bootstrap] enable + configure kubernetes auth"
     enable_ok auth enable kubernetes
+    # token_reviewer_jwt comes from a long-lived SA token Secret
+    # (/etc/vault-token-reviewer/token), NOT the Job's projected
+    # token (1h TTL — Vault rejects post-expiry, leaving the field
+    # effectively unset). With a non-bound long-lived JWT here,
+    # Vault uses its OWN identity (vault SA, has system:auth-delegator)
+    # to call TokenReview against incoming login JWTs, decoupling
+    # consumer auth from each consumer needing TokenReview perms.
     vault write auth/kubernetes/config \
       kubernetes_host="https://kubernetes.default.svc.cluster.local" \
       kubernetes_ca_cert=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
-      token_reviewer_jwt=@/var/run/secrets/kubernetes.io/serviceaccount/token
+      token_reviewer_jwt=@/etc/vault-token-reviewer/token
 
     echo "[vault-bootstrap] write vault-config-operator-admin policy"
     vault policy write vault-config-operator-admin - <<'POLICY'
@@ -191,6 +198,37 @@ resource "kubernetes_service_account_v1" "vault" {
     name      = "vault"
     namespace = var.namespace
     labels    = merge(local.tags, { app = "vault" })
+  }
+}
+
+# Long-lived SA token Secret for the vault SA. K8s 1.24+ no longer
+# auto-creates SA token Secrets — only short-lived projected tokens
+# (1h default). The bootstrap Job needs a long-lived JWT to write to
+# Vault's `auth/kubernetes/config.token_reviewer_jwt`; with that set,
+# Vault uses ITS OWN identity (vault SA, has system:auth-delegator)
+# to call TokenReview against incoming login JWTs, decoupling the
+# auth flow from each consuming SA needing TokenReview perms.
+# Without this, Vault falls back to using the incoming JWT for
+# TokenReview, which may or may not have auth-delegator depending
+# on the consumer.
+resource "kubernetes_secret_v1" "vault_token_reviewer" {
+  for_each = local.instances
+
+  metadata {
+    name      = "vault-token-reviewer"
+    namespace = var.namespace
+    labels    = local.tags
+    annotations = {
+      "kubernetes.io/service-account.name" = kubernetes_service_account_v1.vault["enabled"].metadata[0].name
+    }
+  }
+  type = "kubernetes.io/service-account-token"
+
+  # k8s populates `data.token` (and ca.crt + namespace) automatically
+  # once the SA exists. Fight against TF marking data drift on every
+  # plan — we never write data here, only read.
+  lifecycle {
+    ignore_changes = [data]
   }
 }
 
@@ -281,11 +319,23 @@ resource "kubernetes_config_map_v1" "vault_config" {
 }
 
 # -----------------------------------------------------------------------------
-# hostPath storage for /vault/data (raft state).
+# Storage for /vault/data (raft state).
+#
+# Two shapes, picked by `var.storage_class`:
+#   "" / "standard"  → static hostPath PV declared below + PVC bound to it.
+#                       Node-local; survives pod restart, NOT node loss.
+#   <other>          → no PV declared (dynamic provisioning); PVC requests
+#                       the named StorageClass. Used for "longhorn" — survives
+#                       node loss + reschedules cleanly.
 # -----------------------------------------------------------------------------
 
+locals {
+  use_static_hostpath = var.storage_class == "" || var.storage_class == "standard"
+  effective_sc        = local.use_static_hostpath ? "standard" : var.storage_class
+}
+
 resource "kubernetes_persistent_volume_v1" "vault" {
-  for_each = local.instances
+  for_each = local.use_static_hostpath ? local.instances : toset([])
 
   metadata {
     name   = "vault-data"
@@ -325,8 +375,11 @@ resource "kubernetes_persistent_volume_claim_v1" "vault" {
 
   spec {
     access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "standard"
-    volume_name        = kubernetes_persistent_volume_v1.vault["enabled"].metadata[0].name
+    storage_class_name = local.effective_sc
+    # In static-hostPath mode, bind explicitly to the engine-declared PV
+    # (`claim_ref` on the PV side + `volume_name` here). In dynamic mode
+    # (longhorn etc), let the provisioner pick.
+    volume_name = local.use_static_hostpath ? kubernetes_persistent_volume_v1.vault["enabled"].metadata[0].name : null
 
     resources {
       requests = {
@@ -865,6 +918,13 @@ resource "kubernetes_job_v1" "vault_bootstrap" {
           }
         }
 
+        volume {
+          name = "tokenreviewer"
+          secret {
+            secret_name = kubernetes_secret_v1.vault_token_reviewer["enabled"].metadata[0].name
+          }
+        }
+
         container {
           name = "bootstrap"
           # Same image as the StatefulSet — has the `vault` CLI built in,
@@ -879,6 +939,12 @@ resource "kubernetes_job_v1" "vault_bootstrap" {
           volume_mount {
             name       = "bootstrap"
             mount_path = "/etc/vault-bootstrap"
+            read_only  = true
+          }
+
+          volume_mount {
+            name       = "tokenreviewer"
+            mount_path = "/etc/vault-token-reviewer"
             read_only  = true
           }
 
@@ -1240,8 +1306,12 @@ resource "kubectl_manifest" "operator_oidc_role" {
       userClaim           = "sub"
       allowedRedirectURIs = local.oidc_redirect_uris
       groupsClaim         = "urn:zitadel:iam:org:project:roles"
-      policies            = ["operator"]
-      boundClaimsType     = "string"
+      # CRD field is `tokenPolicies` (not `policies` — that's
+      # KubernetesAuthEngineRole's name; vco silently ignores
+      # unrecognised fields and the role lands with empty
+      # token_policies → login authenticates but binds no policy).
+      tokenPolicies   = ["operator"]
+      boundClaimsType = "string"
       boundClaims = {
         "urn:zitadel:iam:org:project:roles" = [var.oidc_operator_zitadel_role]
       }
@@ -1305,7 +1375,7 @@ resource "kubectl_manifest" "tenant_oidc_role" {
       userClaim           = "sub"
       allowedRedirectURIs = local.oidc_redirect_uris
       groupsClaim         = "urn:zitadel:iam:org:project:roles"
-      policies            = ["tenant-${each.value}-rw"]
+      tokenPolicies       = ["tenant-${each.value}-rw"]
       boundClaimsType     = "string"
       boundClaims = {
         # Zitadel emits role KEYS (not display names) here. Caller
