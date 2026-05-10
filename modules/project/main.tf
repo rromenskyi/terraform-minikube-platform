@@ -983,62 +983,70 @@ resource "kubernetes_secret_v1" "ollama_endpoint" {
 
 # ── Operator-defined Secrets (per-env `secrets:` block) ───────────────────────
 #
-# Three modes per entry, picked by the shape of `var.operator_secret_values[<name>]`:
+# Three modes per entry, picked by yaml shape:
 #
-#   1. Random shared (default — `var.operator_secret_values[<name>]`
-#      not set). Engine generates ONE `random_password` per entry
-#      and writes it to every listed key. Fits app-key style use
-#      cases where a chart's `envFrom` exposes the same shared
-#      bytes under multiple env names.
+#   1. Random shared (default — entry has only `keys:`). Engine generates
+#      ONE `random_password` per entry and writes it to every listed key.
+#      Fits app-key style cases where a chart's `envFrom` exposes the
+#      same shared bytes under multiple env names.
 #
-#   2. Literal (`var.operator_secret_values[<name>]` is a map of
-#      key → value pairs). Engine writes the supplied k:v map straight
-#      into the Secret's data. Plan-time check below rejects partial
-#      coverage so a forgotten key surfaces before apply, not at first
-#      pod boot. Fits operator-supplied credentials the engine cannot
-#      synthesize: third-party storage / OIDC client / vendor API keys.
+#   2. Vault (yaml entry has `vault: true`). Engine skips the literal
+#      `kubernetes_secret_v1` and emits a `VaultStaticSecret` CR pointing
+#      at the conventional path `secret/data/tenants/<project_slug>/<name>`.
+#      VSO reconciles → creates k8s Secret with the same name in the
+#      project namespace, copying every key/value from the Vault path
+#      verbatim. Tenant rotates the Vault entry via UI/CLI; VSO re-syncs
+#      within `refreshAfter` without TF re-apply. yaml `keys:` list is
+#      advisory only (VSO doesn't filter); chart envFrom picks up
+#      whatever's there.
 #
-#   3. Vault (`var.operator_secret_values[<name>] = { vault_path =
-#      "secret/<path>" }` — exactly one key named `vault_path`). Engine
-#      skips the literal `kubernetes_secret_v1` and emits a
-#      `VaultStaticSecret` CR pointing at the Vault KV-v2 path. The
-#      Vault Secrets Operator (VSO) reconciles the CR by reading every
-#      key under that path and creating a k8s Secret with the same
-#      name in the project namespace. Tenant rotates the Vault entry
-#      via UI / CLI; VSO re-syncs without TF re-apply. Vault path keys
-#      are NOT validated against `secrets.<name>.keys` — chart pods
-#      envFrom whatever VSO writes.
+#      Operator path: open Vault UI → Secrets → secret/ → Create →
+#      `tenants/<slug>/<name>` → set the keys you want. Engine path
+#      derivation is convention, NOT config — no .env entry, no
+#      TF_VAR_operator_secret_values needed.
+#
+#   3. Literal (`var.operator_secret_values[<name>]` is a map of
+#      key → value pairs — set via TF_VAR_operator_secret_values). Engine
+#      writes the supplied k:v map straight into the Secret's data.
+#      Plan-time check rejects partial coverage. Legacy escape-hatch for
+#      operator credentials that haven't been migrated to Vault yet
+#      (third-party storage, OIDC clients pre-vault). New work should
+#      prefer mode (2).
 #
 # `random_password.operator_secret` is generated for every entry
-# regardless of mode — cheap, kept in state, and lets an operator
-# flip an entry to random by deleting its `var.operator_secret_values`
-# key without re-planning the random.
+# regardless of mode — cheap, kept in state, and lets an operator flip
+# an entry to random by deleting its yaml `vault:` flag /
+# `operator_secret_values` key without re-planning the random.
 
 locals {
-  # Per-entry mode: "vault" (vault_path indirection), "literal" (operator
-  # supplied k:v map), or "random" (engine-generated shared password).
+  # Per-entry mode: yaml `vault: true` wins; otherwise literal if
+  # operator supplied values via TF_VAR; otherwise random.
   operator_secret_mode = {
-    for name in keys(var.secrets) :
+    for name, entry in var.secrets :
     name => (
-      contains(keys(var.operator_secret_values), name)
-      ? (
-        length(var.operator_secret_values[name]) == 1
-        && contains(keys(var.operator_secret_values[name]), "vault_path")
-        ? "vault"
-        : "literal"
-      )
-      : "random"
+      try(entry.vault, false) == true
+      ? "vault"
+      : contains(keys(var.operator_secret_values), name) ? "literal" : "random"
     )
   }
 
   # nonsensitive() because for_each can't take a sensitive value (the
   # set membership reveals nothing — entry NAMES are config-yaml-public,
-  # only the inner values are sensitive). The actual sensitive map
-  # `var.operator_secret_values[name][k]` is read inside data{} below
-  # where sensitivity stays propagated correctly.
+  # only the inner values are sensitive).
   operator_secret_literal_set = nonsensitive(toset([for n, m in local.operator_secret_mode : n if m == "literal"]))
   operator_secret_vault_set   = nonsensitive(toset([for n, m in local.operator_secret_mode : n if m == "vault"]))
   operator_secret_data_set    = nonsensitive(toset([for n, m in local.operator_secret_mode : n if m != "vault"]))
+
+  # Vault path convention: `tenants/<slug>/<secret_name>`. Slug comes
+  # from the project_config (locals.tf builds projects keyed
+  # `<slug>-<env>` and stores `slug` as a top-level field). Same slug
+  # the vault module uses for per-tenant policies + OIDC roles, so
+  # tenant authenticated via Zitadel `tenant_<slug>` role can read /
+  # write under this exact path.
+  operator_secret_vault_paths = {
+    for name in local.operator_secret_vault_set :
+    name => "tenants/${var.project_config.slug}/${name}"
+  }
 }
 
 check "operator_secret_values_cover_yaml_keys" {
@@ -1050,17 +1058,7 @@ check "operator_secret_values_cover_yaml_keys" {
         contains(keys(var.operator_secret_values[name]), k)
       ])
     ])
-    error_message = "var.operator_secret_values supplies a literal entry whose inner map is missing a key declared under `secrets.<name>.keys` in the domain yaml. Project '${local.namespace}'. Each literal-mode Secret must cover every yaml-listed key. Add the missing key to terraform.tfvars or remove it from the domain yaml. (Vault-mode entries — single `vault_path` key — are not subject to this check; VSO copies whatever's at the Vault path.)"
-  }
-}
-
-check "operator_secret_vault_path_well_formed" {
-  assert {
-    condition = alltrue([
-      for name in local.operator_secret_vault_set :
-      can(regex("^secret/(data/)?tenants/[a-z0-9][a-z0-9-]{0,38}[a-z0-9]/[a-zA-Z0-9._-]+$", var.operator_secret_values[name].vault_path))
-    ])
-    error_message = "operator_secret_values vault_path must look like `secret/tenants/<tenant>/<name>` (or the equivalent KV-v2 API form `secret/data/tenants/<tenant>/<name>`). Project '${local.namespace}'."
+    error_message = "var.operator_secret_values supplies a literal entry whose inner map is missing a key declared under `secrets.<name>.keys` in the domain yaml. Project '${local.namespace}'. Each literal-mode Secret must cover every yaml-listed key. Add the missing key to terraform.tfvars or remove it from the domain yaml. (Vault-mode entries — yaml `vault: true` — bypass this check; VSO copies whatever's at the Vault path.)"
   }
 }
 
@@ -1096,14 +1094,37 @@ resource "kubernetes_secret_v1" "operator_secret" {
   )
 }
 
+# VSO impersonates a ServiceAccount in the CONSUMING namespace (not
+# its own) to obtain a JWT for Vault's k8s auth method. The default
+# VaultAuth installed by the vault module references a SA name that
+# must exist in every namespace running a VaultStaticSecret. Engine
+# emits one per project namespace as a precondition — without this
+# VSO fails reconcile with "ServiceAccount X not found" and never
+# materialises the Secret.
+resource "kubernetes_service_account_v1" "vso_proxy" {
+  for_each = length(local.operator_secret_vault_set) > 0 ? toset(["enabled"]) : toset([])
+
+  metadata {
+    name      = "vault-secrets-operator-controller-manager"
+    namespace = kubernetes_namespace_v1.this.metadata[0].name
+    labels = merge(module.project_label.tags, {
+      "app.kubernetes.io/managed-by" = "terraform"
+      "app.kubernetes.io/part-of"    = local.namespace
+    })
+  }
+}
+
 # Vault-mode: emit a VaultStaticSecret CR that VSO reconciles into a
-# k8s Secret with the same name in this project namespace. Path
-# accepts both `secret/<path>` (operator-friendly KV form) and
-# `secret/data/<path>` (raw KV-v2 API form); both normalise to
-# `<path>` for the CR's `path` field (VSO re-prepends the data/
-# segment when calling the Vault API).
+# k8s Secret with the same name in this project namespace. Path is
+# convention-derived: `tenants/<tenant_slug>/<secret_name>` — operator
+# only declares `vault: true` in yaml; the path the CR reads from in
+# Vault is hardcoded by the engine. Operator must `vault kv put` at
+# that exact path (UI: secret/ → tenants/<slug>/<name>) for VSO to
+# find anything to sync.
 resource "kubectl_manifest" "operator_secret_vault" {
   for_each = local.operator_secret_vault_set
+
+  depends_on = [kubernetes_service_account_v1.vso_proxy]
 
   yaml_body = yamlencode({
     apiVersion = "secrets.hashicorp.com/v1beta1"
@@ -1124,7 +1145,7 @@ resource "kubectl_manifest" "operator_secret_vault" {
       vaultAuthRef = ""
       mount        = "secret"
       type         = "kv-v2"
-      path         = trimprefix(trimprefix(var.operator_secret_values[each.value].vault_path, "secret/"), "data/")
+      path         = local.operator_secret_vault_paths[each.value]
       destination = {
         name   = each.value
         create = true
