@@ -83,3 +83,81 @@ variable "vault_config_operator_chart_version" {
   type        = string
   default     = "0.8.48"
 }
+
+# -----------------------------------------------------------------------------
+# Phase 2 — OIDC self-serve via Zitadel.
+# When OIDC is enabled, vco emits a JWTOIDCAuthEngineConfig pointing at
+# Zitadel, plus an admin role bound to the `vault:operator` Zitadel project
+# role and (optionally) one role per tenant bound to `vault:tenant:<name>`.
+# Operator and tenants log into Vault UI via "Sign in with OIDC" and land
+# scoped to their policy — no userpass, no manual token paste.
+# -----------------------------------------------------------------------------
+
+variable "oidc_enabled" {
+  description = "Enable Zitadel OIDC auth method on Vault. False keeps Vault root-token-only (operator break-glass; tenants cannot self-serve via UI). True needs `oidc_issuer_url`, `oidc_client_id`, `oidc_client_secret` populated — caller wires `module.zitadel-app` upstream and pipes the resulting client_id / client_secret here."
+  type        = bool
+  default     = false
+}
+
+variable "oidc_issuer_url" {
+  description = "Zitadel public issuer URL Vault uses for OIDC discovery (`<issuer>/.well-known/openid-configuration`). Same value passed to other OIDC consumers in the platform (oauth2-proxy, stalwart, etc). Required when `oidc_enabled = true`."
+  type        = string
+  default     = ""
+}
+
+variable "oidc_client_id" {
+  description = "Vault's Zitadel OIDC client_id. Caller creates the Zitadel Application via `module.zitadel-app` and pipes the resulting client_id here. Required when `oidc_enabled = true`."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "oidc_client_secret" {
+  description = "Vault's Zitadel OIDC client_secret. Sensitive. Caller pipes from `module.zitadel-app`. Required when `oidc_enabled = true`."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "oidc_operator_zitadel_role" {
+  description = "Zitadel project role name granting full Vault admin access via OIDC. The Zitadel project role assertion lands as a claim in the id_token; vco's `JWTOIDCAuthEngineRole operator` matches users whose claims include this string and binds them to the `operator` policy (full sudo). Operator's own Zitadel user must hold this project role for SSO to land them on the admin UI."
+  type        = string
+  default     = "vault:operator"
+}
+
+variable "tenants" {
+  description = "Tenants getting their own `secret/data/tenants/<name>/*` Vault path + RW policy + OIDC role. Each entry is a short, DNS-safe name (used in the path, the policy name `tenant-<name>-rw`, and the OIDC role's `bound_claims`). The matching Zitadel project role is `vault:tenant:<name>` — operator grants that role to the relevant Zitadel user(s), they sign into Vault UI via OIDC and land scoped to their tenant subtree. Empty list = no tenant policies emitted (Vault stays operator-only via `oidc_operator_zitadel_role`). Engine derives this from `keys(local.projects)` upstream — every project namespace gets a Vault tenant for free."
+  type        = list(string)
+  default     = []
+  validation {
+    condition     = alltrue([for t in var.tenants : can(regex("^[a-z0-9][a-z0-9-]{0,38}[a-z0-9]$", t))])
+    error_message = "Each tenant name must be 2-40 chars, lowercase alphanumeric with internal hyphens. Used directly in Vault paths and policy names."
+  }
+}
+
+# -----------------------------------------------------------------------------
+# Phase 2 — Vault Secrets Operator (VSO).
+# Hashicorp's official VSO consumes Vault paths and materialises them as k8s
+# Secrets in tenant namespaces. The engine emits `VaultStaticSecret` CRs
+# pointing at `secret/data/tenants/<tenant>/<name>` paths; VSO syncs them
+# into the tenant namespace under the same Secret name as in the operator
+# config, keeping consumer charts (envFrom, etc) unchanged.
+# -----------------------------------------------------------------------------
+
+variable "vso_enabled" {
+  description = "Install hashicorp/vault-secrets-operator + cluster-level `VaultConnection` and `VaultAuth`. Required for the engine's `vault_path` mode in `operator_secret_values` to actually materialise k8s Secrets from Vault. Default false keeps the operator absent — engine vault_path entries would emit CRs that nothing reconciles, which is not useful."
+  type        = bool
+  default     = false
+}
+
+variable "vso_chart_version" {
+  description = "Chart version for hashicorp/vault-secrets-operator. Pinned so apply-time is deterministic; bump deliberately."
+  type        = string
+  default     = "0.10.0"
+}
+
+variable "vso_namespace" {
+  description = "Namespace VSO controller-manager + its k8s ServiceAccount live in. The Phase 1 bootstrap CRDs already configured a kubernetes-auth role for `vault-secrets-operator-controller-manager` in this namespace; changing this default requires also updating the matching CR target."
+  type        = string
+  default     = "vault-secrets-operator"
+}

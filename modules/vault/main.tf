@@ -1076,6 +1076,266 @@ resource "kubectl_manifest" "vso_k8s_role" {
 }
 
 # -----------------------------------------------------------------------------
+# Phase 2 — Zitadel OIDC auth method.
+#
+# Renders three CRs reconciled by vault-config-operator:
+#   1. JWTOIDCAuthEngineConfig  → enables `oidc/` auth path, points it
+#      at Zitadel's discovery URL, plugs in the client_id/secret from
+#      the Vault Application created upstream via module.zitadel-app.
+#   2. Policy `operator`        → full sudo on every path. The break-
+#      glass equivalent of the root token, gated behind a Zitadel
+#      project role grant instead of the Secret-mounted root token.
+#   3. JWTOIDCAuthEngineRole `operator` → binds the operator policy to
+#      users whose id_token claims include `vault:operator`. Operator
+#      assigns this Zitadel project role to themselves once and signs
+#      into Vault UI via "Sign in with OIDC".
+#
+# Per-tenant policies + OIDC roles render in the for_each below.
+# -----------------------------------------------------------------------------
+
+locals {
+  oidc_instances = (var.enabled && var.oidc_enabled) ? toset(["enabled"]) : toset([])
+
+  # Vault UI's OIDC callback URL. Two callbacks for compatibility with
+  # both UI launch paths Vault uses across releases (`/ui/...` for
+  # current UI, root `/oidc/callback` for direct API redirects).
+  oidc_redirect_uris = [
+    "https://${var.hostname}/ui/vault/auth/oidc/oidc/callback",
+    "https://${var.hostname}/oidc/callback",
+  ]
+
+  # Set of tenant entries to project for_each over — empty when OIDC is
+  # off (per-tenant CRs only make sense with OIDC enabled).
+  tenant_set = (var.enabled && var.oidc_enabled) ? toset(var.tenants) : toset([])
+}
+
+# OIDC client_id + client_secret land in a Secret that vco's
+# JWTOIDCAuthEngineConfig CR references by Secret name. Engine emits the
+# Secret directly (vco operator namespace) so vco's reconcile loop can
+# pull it on demand without a CR-managed secret.
+resource "kubernetes_secret_v1" "vault_oidc" {
+  for_each = local.oidc_instances
+
+  metadata {
+    name      = "vault-oidc-client"
+    namespace = kubernetes_namespace_v1.vault_config_operator["enabled"].metadata[0].name
+    labels    = local.tags
+  }
+
+  data = {
+    client_id     = var.oidc_client_id
+    client_secret = var.oidc_client_secret
+  }
+}
+
+resource "kubectl_manifest" "oidc_config" {
+  for_each = local.oidc_instances
+
+  depends_on = [
+    helm_release.vault_config_operator,
+    kubernetes_secret_v1.vault_oidc,
+  ]
+
+  yaml_body = yamlencode({
+    apiVersion = "redhatcop.redhat.io/v1alpha1"
+    kind       = "JWTOIDCAuthEngineConfig"
+    metadata = {
+      name      = "oidc"
+      namespace = kubernetes_namespace_v1.vault_config_operator["enabled"].metadata[0].name
+    }
+    spec = {
+      authentication   = local.vco_authentication
+      connection       = local.vco_connection
+      path             = "oidc"
+      OIDCDiscoveryURL = var.oidc_issuer_url
+      OIDCCredentials = {
+        # vco shape: secret holding `client_id` + `client_secret` keys
+        # under data; vco resolves at reconcile time.
+        secret = {
+          name = kubernetes_secret_v1.vault_oidc["enabled"].metadata[0].name
+        }
+      }
+      defaultRole = "operator"
+    }
+  })
+}
+
+resource "kubectl_manifest" "operator_policy" {
+  for_each = local.oidc_instances
+
+  depends_on = [helm_release.vault_config_operator]
+
+  yaml_body = yamlencode({
+    apiVersion = "redhatcop.redhat.io/v1alpha1"
+    kind       = "Policy"
+    metadata = {
+      name      = "operator"
+      namespace = kubernetes_namespace_v1.vault_config_operator["enabled"].metadata[0].name
+    }
+    spec = {
+      authentication = local.vco_authentication
+      connection     = local.vco_connection
+      policy         = <<-POLICY
+        path "*" { capabilities = ["create", "read", "update", "delete", "list", "sudo"] }
+      POLICY
+    }
+  })
+}
+
+resource "kubectl_manifest" "operator_oidc_role" {
+  for_each = local.oidc_instances
+
+  depends_on = [
+    kubectl_manifest.oidc_config,
+    kubectl_manifest.operator_policy,
+  ]
+
+  yaml_body = yamlencode({
+    apiVersion = "redhatcop.redhat.io/v1alpha1"
+    kind       = "JWTOIDCAuthEngineRole"
+    metadata = {
+      name      = "operator"
+      namespace = kubernetes_namespace_v1.vault_config_operator["enabled"].metadata[0].name
+    }
+    spec = {
+      authentication      = local.vco_authentication
+      connection          = local.vco_connection
+      path                = "oidc"
+      name                = "operator"
+      userClaim           = "sub"
+      allowedRedirectURIs = local.oidc_redirect_uris
+      groupsClaim         = "urn:zitadel:iam:org:project:roles"
+      policies            = ["operator"]
+      boundClaimsType     = "string"
+      boundClaims = {
+        "urn:zitadel:iam:org:project:roles" = [var.oidc_operator_zitadel_role]
+      }
+      tokenTTL = 28800 # 8h
+    }
+  })
+}
+
+# Per-tenant policy + OIDC role. Engine derives `var.tenants` from the
+# upstream project list — every tenant namespace gets a free Vault
+# tenant. Policy grants RW on `secret/data/tenants/<name>/*`; the OIDC
+# role binds the matching `vault:tenant:<name>` Zitadel project role
+# claim to that policy. Operator grants the role to the tenant's
+# Zitadel user; tenant signs into Vault UI scoped to their subtree.
+
+resource "kubectl_manifest" "tenant_policy" {
+  for_each = local.tenant_set
+
+  depends_on = [helm_release.vault_config_operator]
+
+  yaml_body = yamlencode({
+    apiVersion = "redhatcop.redhat.io/v1alpha1"
+    kind       = "Policy"
+    metadata = {
+      name      = "tenant-${each.value}-rw"
+      namespace = kubernetes_namespace_v1.vault_config_operator["enabled"].metadata[0].name
+    }
+    spec = {
+      authentication = local.vco_authentication
+      connection     = local.vco_connection
+      policy         = <<-POLICY
+        path "secret/data/tenants/${each.value}/*"     { capabilities = ["create", "read", "update", "delete", "list"] }
+        path "secret/metadata/tenants/${each.value}/*" { capabilities = ["read", "list", "delete"] }
+        path "secret/data/tenants/${each.value}"       { capabilities = ["list"] }
+        path "secret/metadata/tenants/${each.value}"   { capabilities = ["list"] }
+      POLICY
+    }
+  })
+}
+
+resource "kubectl_manifest" "tenant_oidc_role" {
+  for_each = local.tenant_set
+
+  depends_on = [
+    kubectl_manifest.oidc_config,
+    kubectl_manifest.tenant_policy,
+  ]
+
+  yaml_body = yamlencode({
+    apiVersion = "redhatcop.redhat.io/v1alpha1"
+    kind       = "JWTOIDCAuthEngineRole"
+    metadata = {
+      name      = "tenant-${each.value}"
+      namespace = kubernetes_namespace_v1.vault_config_operator["enabled"].metadata[0].name
+    }
+    spec = {
+      authentication      = local.vco_authentication
+      connection          = local.vco_connection
+      path                = "oidc"
+      name                = "tenant-${each.value}"
+      userClaim           = "sub"
+      allowedRedirectURIs = local.oidc_redirect_uris
+      groupsClaim         = "urn:zitadel:iam:org:project:roles"
+      policies            = ["tenant-${each.value}-rw"]
+      boundClaimsType     = "string"
+      boundClaims = {
+        "urn:zitadel:iam:org:project:roles" = ["vault:tenant:${each.value}"]
+      }
+      tokenTTL = 28800 # 8h
+    }
+  })
+}
+
+# -----------------------------------------------------------------------------
+# Phase 2 — Vault Secrets Operator (VSO) + cluster-level VaultConnection
+# and VaultAuth.
+#
+# VSO consumes Vault paths via VaultStaticSecret CRs the engine emits in
+# tenant namespaces. The cluster-level VaultConnection + VaultAuth here
+# tell every VaultStaticSecret in the cluster how to reach Vault and
+# which auth backend / role to use; tenant CRs reference these by name.
+# -----------------------------------------------------------------------------
+
+resource "kubernetes_namespace_v1" "vso" {
+  for_each = (var.enabled && var.vso_enabled) ? toset(["enabled"]) : toset([])
+
+  metadata {
+    name   = var.vso_namespace
+    labels = local.tags
+  }
+}
+
+resource "helm_release" "vso" {
+  for_each = (var.enabled && var.vso_enabled) ? toset(["enabled"]) : toset([])
+
+  depends_on = [kubernetes_namespace_v1.vso]
+
+  name       = "vault-secrets-operator"
+  repository = "https://helm.releases.hashicorp.com"
+  chart      = "vault-secrets-operator"
+  version    = var.vso_chart_version
+  namespace  = kubernetes_namespace_v1.vso["enabled"].metadata[0].name
+
+  values = [yamlencode({
+    # Default cluster-level VaultConnection + VaultAuth — every
+    # VaultStaticSecret in the cluster picks these up unless it
+    # references named CRs explicitly. Saves emitting a
+    # VaultConnection per tenant namespace.
+    defaultVaultConnection = {
+      enabled = true
+      address = "http://vault.${var.namespace}.svc.cluster.local:8200"
+    }
+    defaultAuthMethod = {
+      enabled   = true
+      namespace = "*" # any namespace can use the default auth
+      method    = "kubernetes"
+      mount     = "kubernetes"
+      kubernetes = {
+        role           = "vso"
+        serviceAccount = "vault-secrets-operator-controller-manager"
+      }
+    }
+  })]
+
+  wait    = true
+  timeout = 300
+}
+
+# -----------------------------------------------------------------------------
 # Outputs
 # -----------------------------------------------------------------------------
 
