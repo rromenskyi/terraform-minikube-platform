@@ -64,6 +64,21 @@ module "vault_oidc" {
   # format; the canonical Secret here is just an audit record of
   # which Zitadel client backs Vault.
   secret_formats = []
+
+  # Project roles users get granted to land on a Vault policy at
+  # OIDC sign-in. Engine emits one `tenant_<slug>` per project
+  # namespace + a single `operator` role for full Vault admin.
+  # Operator assigns the relevant role to a Zitadel user via the
+  # Zitadel UI (Project → Roles → Grant), and the role key shows up
+  # in `urn:zitadel:iam:org:project:roles` claim at login. Vault's
+  # JWTOIDCAuthEngineRole CRs (in modules/vault) bound_claims match
+  # against these keys.
+  roles = concat(
+    [{ key = "operator", display_name = "Vault Operator (full admin)" }],
+    [for slug in sort([for p in values(local.projects) : p.slug]) :
+      { key = "tenant_${replace(slug, "-", "_")}", display_name = "Vault Tenant — ${slug}" }
+    ],
+  )
 }
 
 module "vault" {

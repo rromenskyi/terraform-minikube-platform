@@ -1275,7 +1275,11 @@ resource "kubectl_manifest" "tenant_oidc_role" {
       policies            = ["tenant-${each.value}-rw"]
       boundClaimsType     = "string"
       boundClaims = {
-        "urn:zitadel:iam:org:project:roles" = ["vault:tenant:${each.value}"]
+        # Zitadel emits role KEYS (not display names) here. Caller
+        # declares matching keys `tenant_<slug>` via module.zitadel-app
+        # `roles`; slug hyphens normalised to underscores because some
+        # downstream OIDC consumers reject hyphens in claim values.
+        "urn:zitadel:iam:org:project:roles" = ["tenant_${replace(each.value, "-", "_")}"]
       }
       tokenTTL = "8h" # CRD requires duration string, not seconds int
     }
