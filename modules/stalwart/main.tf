@@ -60,6 +60,9 @@ terraform {
 locals {
   instances = var.enabled ? toset(["enabled"]) : toset([])
 
+  # Shorthand for the propagated null-label tag set.
+  tags = module.label.tags
+
   # Match Stalwart's auto-bootstrapped default listeners — saves the
   # plan from having to manage NetworkListener objects (which is
   # awkward because destroying the http listener mid-apply would
@@ -471,6 +474,19 @@ locals {
   plan_ndjson = join("\n", local.plan_lines)
 }
 
+# Module-tier label, chained off `var.context` (root passes
+# `module.platform_label.context` from `_label.tf`).
+module "label" {
+  source = "git::https://github.com/rromenskyi/terraform-null-label.git?ref=v0.1.0"
+
+  context   = var.context
+  namespace = var.namespace
+  name      = "stalwart"
+  tags = {
+    "app.kubernetes.io/component" = "stalwart"
+  }
+}
+
 # ── Zitadel project + application + role ──────────────────────────────────────
 #
 # Single project per Stalwart tenant. PKCE / SPA OIDC application —
@@ -668,6 +684,7 @@ resource "kubernetes_secret_v1" "recovery_admin" {
   metadata {
     name      = "stalwart-recovery-admin"
     namespace = var.namespace
+    labels    = local.tags
   }
 
   data = {
@@ -694,6 +711,7 @@ resource "kubernetes_secret_v1" "stalwart_seed" {
   metadata {
     name      = "stalwart-seed"
     namespace = var.namespace
+    labels    = local.tags
   }
 
   data = {
@@ -708,7 +726,8 @@ resource "kubernetes_persistent_volume_v1" "stalwart" {
   for_each = local.instances
 
   metadata {
-    name = "platform-stalwart-data"
+    name   = "platform-stalwart-data"
+    labels = local.tags
   }
 
   spec {
@@ -734,6 +753,7 @@ resource "kubernetes_persistent_volume_claim_v1" "stalwart" {
   metadata {
     name      = "stalwart-data"
     namespace = var.namespace
+    labels    = local.tags
   }
 
   spec {
@@ -757,7 +777,7 @@ resource "kubernetes_service_v1" "stalwart_http" {
   metadata {
     name      = "stalwart"
     namespace = var.namespace
-    labels    = { app = "stalwart" }
+    labels    = merge(local.tags, { app = "stalwart" })
   }
 
   spec {
@@ -809,7 +829,7 @@ resource "kubernetes_service_v1" "stalwart_smtp" {
   metadata {
     name      = "stalwart-smtp"
     namespace = var.namespace
-    labels    = { app = "stalwart" }
+    labels    = merge(local.tags, { app = "stalwart" })
   }
 
   spec {
@@ -841,6 +861,7 @@ resource "kubectl_manifest" "stalwart_admin_ingressroute" {
     metadata = {
       name      = "stalwart-admin"
       namespace = var.namespace
+      labels    = local.tags
     }
     spec = {
       entryPoints = ["web"]
@@ -866,6 +887,7 @@ resource "kubectl_manifest" "stalwart_account_ingressroute" {
     metadata = {
       name      = "stalwart-account"
       namespace = var.namespace
+      labels    = local.tags
     }
     spec = {
       entryPoints = ["web"]
@@ -890,7 +912,7 @@ resource "kubernetes_deployment_v1" "stalwart" {
   metadata {
     name      = "stalwart"
     namespace = var.namespace
-    labels    = { app = "stalwart" }
+    labels    = merge(local.tags, { app = "stalwart" })
 
     annotations = {
       # Force Pod restart when seed changes — without this, a
@@ -915,7 +937,7 @@ resource "kubernetes_deployment_v1" "stalwart" {
 
     template {
       metadata {
-        labels = { app = "stalwart" }
+        labels = merge(local.tags, { app = "stalwart" })
 
         annotations = {
           "platform.local/seed-hash" = sha256(nonsensitive("${local.config_json}|${local.plan_ndjson}|${local.webui_client_id}"))
@@ -1331,7 +1353,7 @@ resource "kubernetes_deployment_v1" "stalwart_smtp_relay" {
   metadata {
     name      = "stalwart-smtp-relay"
     namespace = var.namespace
-    labels    = { app = "stalwart-smtp-relay" }
+    labels    = merge(local.tags, { app = "stalwart-smtp-relay" })
   }
 
   spec {
@@ -1347,7 +1369,7 @@ resource "kubernetes_deployment_v1" "stalwart_smtp_relay" {
 
     template {
       metadata {
-        labels = { app = "stalwart-smtp-relay" }
+        labels = merge(local.tags, { app = "stalwart-smtp-relay" })
       }
 
       spec {

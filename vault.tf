@@ -28,6 +28,7 @@ module "vault" {
   source     = "./modules/vault"
   depends_on = [module.addons, kubernetes_namespace_v1.platform]
 
+  context          = module.platform_label.context
   enabled          = local.platform.services.vault.enabled
   namespace        = kubernetes_namespace_v1.platform.metadata[0].name
   hostname         = local.platform.services.vault.hostname

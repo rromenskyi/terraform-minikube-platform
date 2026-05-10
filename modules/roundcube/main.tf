@@ -42,6 +42,9 @@ locals {
   client_secret   = local.oidc_enabled ? zitadel_application_oidc.roundcube["enabled"].client_secret : ""
   config_inc_hash = sha256(local.config_inc_php)
 
+  # Shorthand for the propagated null-label tag set.
+  tags = module.label.tags
+
   # Roundcube `config.inc.php` rendered from TF. Three concerns:
   # 1. IMAP/SMTP point at Stalwart in-cluster (TLS, self-signed
   #    cert ignored — the cluster boundary is the trust boundary).
@@ -126,6 +129,19 @@ locals {
   EOT
 }
 
+# Module-tier label, chained off `var.context` (root passes
+# `module.platform_label.context` from `_label.tf`).
+module "label" {
+  source = "git::https://github.com/rromenskyi/terraform-null-label.git?ref=v0.1.0"
+
+  context   = var.context
+  namespace = var.namespace
+  name      = "roundcube"
+  tags = {
+    "app.kubernetes.io/component" = "roundcube"
+  }
+}
+
 # ── Zitadel project + application — Roundcube as PKCE OIDC client ─────────────
 resource "zitadel_application_oidc" "roundcube" {
   for_each = local.oidc_set
@@ -185,7 +201,7 @@ resource "kubernetes_secret_v1" "roundcube_secrets" {
   metadata {
     name      = "roundcube-secrets"
     namespace = var.namespace
-    labels    = { app = "roundcube" }
+    labels    = merge(local.tags, { app = "roundcube" })
   }
 
   data = {
@@ -201,7 +217,7 @@ resource "kubernetes_config_map_v1" "roundcube_config" {
   metadata {
     name      = "roundcube-config"
     namespace = var.namespace
-    labels    = { app = "roundcube" }
+    labels    = merge(local.tags, { app = "roundcube" })
   }
 
   data = {
@@ -215,10 +231,9 @@ resource "kubernetes_persistent_volume_v1" "roundcube" {
 
   metadata {
     name = "roundcube-db"
-    labels = {
-      "app.kubernetes.io/name"    = "roundcube"
-      "app.kubernetes.io/part-of" = "platform"
-    }
+    labels = merge(local.tags, {
+      "app.kubernetes.io/name" = "roundcube"
+    })
   }
 
   spec {
@@ -252,7 +267,7 @@ resource "kubernetes_persistent_volume_claim_v1" "roundcube" {
   metadata {
     name      = "roundcube-db"
     namespace = var.namespace
-    labels    = { app = "roundcube" }
+    labels    = merge(local.tags, { app = "roundcube" })
   }
 
   spec {
@@ -273,7 +288,7 @@ resource "kubernetes_service_v1" "roundcube" {
   metadata {
     name      = "roundcube"
     namespace = var.namespace
-    labels    = { app = "roundcube" }
+    labels    = merge(local.tags, { app = "roundcube" })
   }
 
   spec {
@@ -295,7 +310,7 @@ resource "kubernetes_deployment_v1" "roundcube" {
   metadata {
     name      = "roundcube"
     namespace = var.namespace
-    labels    = { app = "roundcube" }
+    labels    = merge(local.tags, { app = "roundcube" })
 
     annotations = {
       "platform.local/config-hash" = local.config_inc_hash
@@ -313,7 +328,7 @@ resource "kubernetes_deployment_v1" "roundcube" {
 
     template {
       metadata {
-        labels = { app = "roundcube" }
+        labels = merge(local.tags, { app = "roundcube" })
         annotations = {
           "platform.local/config-hash" = local.config_inc_hash
 

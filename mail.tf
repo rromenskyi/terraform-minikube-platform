@@ -65,6 +65,7 @@ module "stalwart" {
   source     = "./modules/stalwart"
   depends_on = [module.addons, module.zitadel, kubernetes_resource_quota_v1.mail]
 
+  context          = module.platform_label.context
   enabled          = local.mail != null
   namespace        = local.mail == null ? "" : kubernetes_namespace_v1.mail["enabled"].metadata[0].name
   volume_base_path = var.host_volume_path
@@ -126,6 +127,7 @@ module "roundcube" {
   source     = "./modules/roundcube"
   depends_on = [module.stalwart]
 
+  context          = module.platform_label.context
   enabled          = local.mail != null && local.platform.services.zitadel.enabled
   namespace        = local.mail == null ? "" : kubernetes_namespace_v1.mail["enabled"].metadata[0].name
   hostname         = try(local.mail.hostname, "")

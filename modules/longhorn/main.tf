@@ -37,6 +37,9 @@ terraform {
 locals {
   instances = var.enabled ? toset(["enabled"]) : toset([])
 
+  # Shorthand for the propagated null-label tag set.
+  tags = module.label.tags
+
   # Only check the non-sensitive vars in this derivation —
   # `for_each` rejects values derived from sensitive inputs.
   # The check block at the root level confirms the matching
@@ -126,6 +129,19 @@ locals {
   })
 }
 
+# Module-tier label, chained off `var.context` (root passes
+# `module.platform_label.context` from `_label.tf`).
+module "label" {
+  source = "git::https://github.com/rromenskyi/terraform-null-label.git?ref=v0.1.0"
+
+  context   = var.context
+  namespace = var.namespace
+  name      = "longhorn"
+  tags = {
+    "app.kubernetes.io/component" = "longhorn"
+  }
+}
+
 # ── Resources ─────────────────────────────────────────────────────────────
 
 # Backup credentials Secret. Format mandated by Longhorn:
@@ -140,10 +156,10 @@ resource "kubernetes_secret_v1" "backup_credentials" {
   metadata {
     name      = "longhorn-backup-credentials"
     namespace = var.namespace
-    labels = {
+    labels = merge(local.tags, {
       "app.kubernetes.io/managed-by" = "terraform"
       "app.kubernetes.io/component"  = "longhorn-backup"
-    }
+    })
   }
 
   data = {
@@ -199,7 +215,8 @@ resource "kubernetes_storage_class_v1" "tag_pool" {
   depends_on = [helm_release.longhorn]
 
   metadata {
-    name = "longhorn-${each.key}"
+    name   = "longhorn-${each.key}"
+    labels = local.tags
   }
   storage_provisioner    = "driver.longhorn.io"
   reclaim_policy         = each.value.reclaim_policy
@@ -233,6 +250,7 @@ resource "kubectl_manifest" "recurring_backup" {
     metadata = {
       name      = "platform-default-backup"
       namespace = var.namespace
+      labels    = local.tags
     }
     spec = {
       name        = "platform-default-backup"

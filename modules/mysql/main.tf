@@ -19,6 +19,25 @@ locals {
   # sibling terraform-k8s-addons module so `terraform state list`
   # looks uniform across the platform stack.
   instances = var.enabled ? toset(["enabled"]) : toset([])
+
+  # Shorthand for the propagated null-label tag set used by every
+  # k8s resource the module emits via `merge(local.tags, { … })`.
+  # Existing-wins on key collision so the StatefulSet/Service
+  # selector key `app=mysql` survives intact.
+  tags = module.label.tags
+}
+
+# Module-tier label, chained off `var.context` (root passes
+# `module.platform_label.context` from `_label.tf`).
+module "label" {
+  source = "git::https://github.com/rromenskyi/terraform-null-label.git?ref=v0.1.0"
+
+  context   = var.context
+  namespace = var.namespace
+  name      = "mysql"
+  tags = {
+    "app.kubernetes.io/component" = "mysql"
+  }
 }
 
 # ── Root password ─────────────────────────────────────────────────────────────
@@ -36,6 +55,7 @@ resource "kubernetes_secret_v1" "mysql_root" {
   metadata {
     name      = "mysql-root"
     namespace = var.namespace
+    labels    = local.tags
   }
 
   data = {
@@ -49,7 +69,8 @@ resource "kubernetes_persistent_volume_v1" "mysql" {
   for_each = local.instances
 
   metadata {
-    name = "platform-mysql-data"
+    name   = "platform-mysql-data"
+    labels = local.tags
   }
 
   spec {
@@ -75,6 +96,7 @@ resource "kubernetes_persistent_volume_claim_v1" "mysql" {
   metadata {
     name      = "mysql-data"
     namespace = var.namespace
+    labels    = local.tags
   }
 
   spec {
@@ -98,7 +120,7 @@ resource "kubernetes_stateful_set_v1" "mysql" {
   metadata {
     name      = "mysql"
     namespace = var.namespace
-    labels    = { app = "mysql" }
+    labels    = merge(local.tags, { app = "mysql" })
   }
 
   spec {
@@ -111,7 +133,7 @@ resource "kubernetes_stateful_set_v1" "mysql" {
 
     template {
       metadata {
-        labels = { app = "mysql" }
+        labels = merge(local.tags, { app = "mysql" })
       }
 
       spec {
@@ -215,7 +237,7 @@ resource "kubernetes_service_v1" "mysql" {
   metadata {
     name      = "mysql"
     namespace = var.namespace
-    labels    = { app = "mysql" }
+    labels    = merge(local.tags, { app = "mysql" })
   }
 
   spec {

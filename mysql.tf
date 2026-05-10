@@ -8,6 +8,7 @@ module "mysql" {
   source     = "./modules/mysql"
   depends_on = [module.addons]
 
+  context          = module.platform_label.context
   enabled          = local.platform.services.mysql.enabled
   namespace        = kubernetes_namespace_v1.platform.metadata[0].name
   volume_base_path = var.host_volume_path

@@ -14,6 +14,25 @@ terraform {
 
 locals {
   instances = var.enabled ? toset(["enabled"]) : toset([])
+
+  # Shorthand for the propagated null-label tag set used by every
+  # k8s resource the module emits via `merge(local.tags, { … })`.
+  # Existing-wins on key collision so the StatefulSet/Service
+  # selector key `app=postgres` survives intact.
+  tags = module.label.tags
+}
+
+# Module-tier label, chained off `var.context` (root passes
+# `module.platform_label.context` from `_label.tf`).
+module "label" {
+  source = "git::https://github.com/rromenskyi/terraform-null-label.git?ref=v0.1.0"
+
+  context   = var.context
+  namespace = var.namespace
+  name      = "postgres"
+  tags = {
+    "app.kubernetes.io/component" = "postgres"
+  }
 }
 
 # ── Superuser password ────────────────────────────────────────────────────────
@@ -31,6 +50,7 @@ resource "kubernetes_secret_v1" "superuser" {
   metadata {
     name      = "postgres-superuser"
     namespace = var.namespace
+    labels    = local.tags
   }
 
   # `postgres:` image entrypoint reads `POSTGRES_PASSWORD` for the
@@ -47,7 +67,8 @@ resource "kubernetes_persistent_volume_v1" "postgres" {
   for_each = local.instances
 
   metadata {
-    name = "platform-postgres-data"
+    name   = "platform-postgres-data"
+    labels = local.tags
   }
 
   spec {
@@ -73,6 +94,7 @@ resource "kubernetes_persistent_volume_claim_v1" "postgres" {
   metadata {
     name      = "postgres-data"
     namespace = var.namespace
+    labels    = local.tags
   }
 
   spec {
@@ -96,7 +118,7 @@ resource "kubernetes_stateful_set_v1" "postgres" {
   metadata {
     name      = "postgres"
     namespace = var.namespace
-    labels    = { app = "postgres" }
+    labels    = merge(local.tags, { app = "postgres" })
   }
 
   spec {
@@ -109,7 +131,7 @@ resource "kubernetes_stateful_set_v1" "postgres" {
 
     template {
       metadata {
-        labels = { app = "postgres" }
+        labels = merge(local.tags, { app = "postgres" })
       }
 
       spec {
@@ -274,7 +296,7 @@ resource "kubernetes_job_v1" "pg_extensions" {
   metadata {
     name      = "postgres-pg-extensions"
     namespace = var.namespace
-    labels    = { app = "postgres" }
+    labels    = merge(local.tags, { app = "postgres" })
   }
 
   spec {
@@ -283,7 +305,7 @@ resource "kubernetes_job_v1" "pg_extensions" {
 
     template {
       metadata {
-        labels = { app = "postgres", job = "pg-extensions" }
+        labels = merge(local.tags, { app = "postgres", job = "pg-extensions" })
       }
 
       spec {
@@ -349,7 +371,7 @@ resource "kubernetes_service_v1" "postgres" {
   metadata {
     name      = "postgres"
     namespace = var.namespace
-    labels    = { app = "postgres" }
+    labels    = merge(local.tags, { app = "postgres" })
   }
 
   spec {

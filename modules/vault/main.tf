@@ -57,8 +57,16 @@ terraform {
 # Locals
 # -----------------------------------------------------------------------------
 
+module "label" {
+  source  = "github.com/rromenskyi/terraform-null-label?ref=v0.1.0"
+  context = var.context
+  name    = "vault"
+}
+
 locals {
   instances = var.enabled ? toset(["enabled"]) : toset([])
+
+  tags = module.label.tags
 
   data_path = "${var.volume_base_path}/${var.namespace}/vault/data"
 
@@ -102,7 +110,7 @@ resource "kubernetes_service_account_v1" "vault" {
   metadata {
     name      = "vault"
     namespace = var.namespace
-    labels    = { app = "vault" }
+    labels    = merge(local.tags, { app = "vault" })
   }
 }
 
@@ -112,6 +120,7 @@ resource "kubernetes_role_v1" "vault_bootstrap" {
   metadata {
     name      = "vault-bootstrap"
     namespace = var.namespace
+    labels    = local.tags
   }
 
   rule {
@@ -128,6 +137,7 @@ resource "kubernetes_role_binding_v1" "vault_bootstrap" {
   metadata {
     name      = "vault-bootstrap"
     namespace = var.namespace
+    labels    = local.tags
   }
 
   role_ref {
@@ -157,10 +167,10 @@ resource "kubernetes_secret_v1" "vault_bootstrap" {
   metadata {
     name      = "vault-bootstrap"
     namespace = var.namespace
-    labels = {
+    labels = merge(local.tags, {
       "app.kubernetes.io/managed-by" = "terraform"
       "app"                          = "vault"
-    }
+    })
   }
 
   # Placeholder keys — the init Job overwrites both with the real
@@ -182,6 +192,7 @@ resource "kubernetes_config_map_v1" "vault_config" {
   metadata {
     name      = "vault-config"
     namespace = var.namespace
+    labels    = local.tags
   }
 
   data = {
@@ -197,7 +208,8 @@ resource "kubernetes_persistent_volume_v1" "vault" {
   for_each = local.instances
 
   metadata {
-    name = "vault-data"
+    name   = "vault-data"
+    labels = local.tags
   }
 
   spec {
@@ -228,6 +240,7 @@ resource "kubernetes_persistent_volume_claim_v1" "vault" {
   metadata {
     name      = "vault-data"
     namespace = var.namespace
+    labels    = local.tags
   }
 
   spec {
@@ -264,7 +277,7 @@ resource "kubernetes_stateful_set_v1" "vault" {
   metadata {
     name      = "vault"
     namespace = var.namespace
-    labels    = { app = "vault" }
+    labels    = merge(local.tags, { app = "vault" })
   }
 
   spec {
@@ -277,7 +290,7 @@ resource "kubernetes_stateful_set_v1" "vault" {
 
     template {
       metadata {
-        labels = { app = "vault" }
+        labels = merge(local.tags, { app = "vault" })
       }
 
       spec {
@@ -571,7 +584,7 @@ resource "kubernetes_service_v1" "vault" {
   metadata {
     name      = "vault"
     namespace = var.namespace
-    labels    = { app = "vault" }
+    labels    = merge(local.tags, { app = "vault" })
   }
 
   spec {
@@ -602,10 +615,10 @@ resource "kubernetes_job_v1" "vault_init" {
   metadata {
     name      = "vault-init"
     namespace = var.namespace
-    labels = {
+    labels = merge(local.tags, {
       "app.kubernetes.io/managed-by" = "terraform"
       "app"                          = "vault"
-    }
+    })
   }
 
   spec {
@@ -613,7 +626,7 @@ resource "kubernetes_job_v1" "vault_init" {
 
     template {
       metadata {
-        labels = { job = "vault-init" }
+        labels = merge(local.tags, { job = "vault-init" })
       }
 
       spec {
