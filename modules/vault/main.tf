@@ -1059,13 +1059,18 @@ resource "kubectl_manifest" "vso_k8s_role" {
       namespace = kubernetes_namespace_v1.vault_config_operator["enabled"].metadata[0].name
     }
     spec = {
-      authentication                 = local.vco_authentication
-      connection                     = local.vco_connection
-      path                           = "kubernetes"
-      targetServiceAccounts          = ["vault-secrets-operator-controller-manager"]
-      targetServiceAccountNamespaces = { matchLabels = { "kubernetes.io/metadata.name" = "vault-secrets-operator" } }
-      policies                       = ["vso-tenant-read"]
-      tokenTTL                       = 86400 # 24h, vault-side cap
+      authentication        = local.vco_authentication
+      connection            = local.vco_connection
+      path                  = "kubernetes"
+      targetServiceAccounts = ["vault-secrets-operator-controller-manager"]
+      # CRD shape — single `targetNamespaces` parent with EITHER a
+      # `targetNamespaces` list OR a `targetNamespaceSelector` (mutually
+      # exclusive; admission webhook rejects both).
+      targetNamespaces = {
+        targetNamespaces = ["vault-secrets-operator"]
+      }
+      policies = ["vso-tenant-read"]
+      tokenTTL = 86400 # 24h, vault-side cap
     }
   })
 }
