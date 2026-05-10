@@ -47,8 +47,9 @@ locals {
         affinity      = {}
       }
       vault = {
-        enabled  = false
-        hostname = ""
+        enabled       = false
+        hostname      = ""
+        storage_class = ""
       }
       argocd = {
         enabled       = false

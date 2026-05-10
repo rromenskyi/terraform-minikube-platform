@@ -29,9 +29,15 @@ variable "image" {
 }
 
 variable "volume_base_path" {
-  description = "Parent path used verbatim by the hostPath PV. Vault's raft storage lands at `<volume_base_path>/<namespace>/vault/data/`. Survives `./tf bootstrap-k3s` on purpose — losing this dir wipes the secret store entirely."
+  description = "Parent path used verbatim by the hostPath PV. Vault's raft storage lands at `<volume_base_path>/<namespace>/vault/data/`. Survives `./tf bootstrap-k3s` on purpose — losing this dir wipes the secret store entirely. Ignored when `storage_class` is set to anything other than `\"\"` / `\"standard\"` (dynamic provisioning takes over)."
   type        = string
   default     = "/data/vol"
+}
+
+variable "storage_class" {
+  description = "StorageClass for Vault's raft data PVC. Empty / `\"standard\"` (default) uses the static `hostPath` PV the module declares — node-local, survives pod restart but not node loss; pinned to whichever node first attached. Set to `\"longhorn\"` (or any other dynamic-provisioning SC the cluster has) to drop the hostPath PV and let the cluster provision a network-backed volume — Vault then survives node loss + reschedules cleanly. **Switching is destructive** — the new PVC binds an EMPTY volume; existing raft data on the old hostPath stays on disk but is no longer referenced. Take a `vault operator raft snapshot save` before flipping, then restore after init Job re-runs."
+  type        = string
+  default     = ""
 }
 
 variable "memory_request" {
