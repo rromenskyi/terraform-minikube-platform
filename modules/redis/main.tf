@@ -473,7 +473,13 @@ resource "kubernetes_config_map_v1" "haproxy_config" {
       backend redis_back
         option tcp-check
         tcp-check connect
-        tcp-check send AUTH\ $${REDIS_PASSWORD}\r\n
+        # send-lf (log-format) expands %[env(VAR)] reliably; plain `send`
+        # with $${VAR} is NOT substituted in tcp-check argument context
+        # in haproxy 3.x, so the literal $${REDIS_PASSWORD} would hit
+        # valkey and AUTH-fail with WRONGPASS, marking every backend
+        # NOSRV. send-lf has no such caveat — it's the documented path
+        # for env-derived secret material in health-check sequences.
+        tcp-check send-lf AUTH\ %[env(REDIS_PASSWORD)]\r\n
         tcp-check expect string +OK
         tcp-check send PING\r\n
         tcp-check expect string +PONG
@@ -507,6 +513,20 @@ resource "kubernetes_deployment_v1" "haproxy" {
     template {
       metadata {
         labels = merge(local.tags, { app = "redis", component = "haproxy" })
+        annotations = {
+          # Re-roll haproxy when the AUTH password rotates. envFrom is
+          # read once at container start; without this, a Secret update
+          # leaves running haproxy pods with the stale password and
+          # AUTH-checks against valkey fail until manual restart.
+          "checksum/redis-default" = sha256(jsonencode(kubernetes_secret_v1.default["enabled"].data))
+          # Re-roll haproxy when the haproxy.cfg ConfigMap changes too
+          # — ConfigMap volume mounts auto-refresh on disk, but haproxy
+          # only reads the file once at process start; without a
+          # rollout trigger a config edit (e.g. tcp-check syntax fix)
+          # would silently sit in the ConfigMap with running pods on
+          # the stale config until manual restart.
+          "checksum/haproxy-config" = sha256(jsonencode(kubernetes_config_map_v1.haproxy_config["enabled"].data))
+        }
       }
 
       spec {
