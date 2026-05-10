@@ -944,7 +944,23 @@ resource "helm_release" "vault_config_operator" {
     serviceAccount = {
       name = var.vault_config_operator_service_account
     }
+
+    # Provision serving certs for the operator's webhook + metrics
+    # endpoints via cert-manager. Without this the chart leaves
+    # `vault-config-operator-certs` and `webhook-server-cert` unfulfilled,
+    # the Deployment pod stays `ContainerCreating` on FailedMount, and
+    # the Helm release wedges on its Ready wait. The platform already
+    # runs cert-manager in `cert-manager` namespace via `module.addons`,
+    # so this just lights up the chart's built-in cert-manager
+    # Certificate templates.
+    enableCertManager = true
   })]
+
+  # Helm Ready-wait — without this the apply returns before the operator
+  # is up, and downstream `kubectl_manifest` CRDs land on a chart whose
+  # webhook isn't serving yet (admission rejects with "no endpoints").
+  wait    = true
+  timeout = 300
 }
 
 # -----------------------------------------------------------------------------
