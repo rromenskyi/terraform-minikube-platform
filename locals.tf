@@ -328,6 +328,15 @@ locals {
           # multi-env-var Secret consumer at one Secret without
           # rotating multiple downstream registrations.
           secrets = try(env_spec.secrets, {})
+          # Per-env git-sync deploy keys. Each entry → engine emits a
+          # `kubernetes.io/ssh-auth` Secret named `git-deploy-key-<id>`
+          # in the project namespace, populated from Vault path
+          # `secret/data/tenants/<slug>/git-deploy-keys/<id>` (single
+          # data key `sshPrivateKey`). Tenant uploads the key into
+          # Vault themselves via Zitadel SSO with the `tenant_<slug>`
+          # role grant — operator out of the loop. `host` picks the
+          # `known_hosts` line; default `github.com`.
+          git_deploy_keys = try(env_spec.git_deploy_keys, {})
           # Engine-managed Zitadel OIDC clients for chart-deployed
           # apps. Engine creates a Zitadel Project + OIDC Application
           # per entry and emits a Secret in the project namespace

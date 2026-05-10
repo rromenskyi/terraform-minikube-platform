@@ -9,6 +9,12 @@ variable "project_config" {
   type        = any
 }
 
+variable "git_deploy_keys" {
+  description = "Per-project git-sync deploy keys, declared in domain yaml under the env's `git_deploy_keys:` block as `{<id>: {host: github.com}}` (host optional, default github.com). Engine emits one `VaultStaticSecret` per entry pointing at `secret/data/tenants/<slug>/git-deploy-keys/<id>`; VSO syncs into a `kubernetes.io/ssh-auth` Secret named `git-deploy-key-<id>` in the project namespace, combining the operator-supplied `sshPrivateKey` from Vault with the engine-known `known_hosts` line for `<host>`. Tenant authenticates against Vault via Zitadel SSO (role `tenant_<slug>`) and writes the key under the conventional path themselves — operator out of the loop after the initial Zitadel role grant."
+  type        = map(any)
+  default     = {}
+}
+
 variable "components" {
   description = "Map of all available components from config/components/"
   type        = any
