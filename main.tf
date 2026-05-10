@@ -83,7 +83,7 @@ check "k3s_ssh_vars_set" {
 # Layer 2: Platform add-ons (Traefik, cert-manager, monitoring, namespaces).
 # -----------------------------------------------------------------------------
 module "addons" {
-  source = "git::https://github.com/rromenskyi/terraform-k8s-addons.git?ref=v2.3.0"
+  source = "git::https://github.com/rromenskyi/terraform-k8s-addons.git?ref=v2.4.0"
 
   kubeconfig_path      = module.k8s.kubeconfig_path
   cluster_name         = module.k8s.cluster_name
@@ -95,6 +95,24 @@ module "addons" {
   enable_cert_manager = true
   enable_monitoring   = true
   enable_ops_workload = true
+
+  # Cloudflare DNS-01 ACME solver. Required for hosts whose Certificate
+  # cannot satisfy HTTP-01 — direct LB endpoints with no port-80 listener
+  # (UDP/raw-TCP services bound to a MetalLB VIP, e.g. SIP-over-WSS at
+  # `sipdev.ipsupport.us`). HTTP-01 stays the default for every host
+  # outside the listed zones (sipmeshd, sfdev, sipuidev, all platform-side
+  # web routes — they sit behind Traefik on port 80 and resolve HTTP-01
+  # cleanly). Engine-emitted Secret carries the same CF API token the
+  # provider already uses for tunnel records.
+  # Secret name is a literal string (not a TF reference) on purpose — avoids
+  # a `module.addons` ↔ `kubernetes_secret_v1.cloudflare_acme_token` cycle
+  # (addons creates the cert-manager namespace; the Secret depends_on the
+  # module for that). The Secret resource in `cert_manager.tf` uses the same
+  # hardcoded name. cert-manager only reads the Secret at ACME challenge
+  # time, not at ClusterIssuer apply time, so the rendering-before-Secret
+  # ordering is fine.
+  dns01_cloudflare_api_token_secret_name = local.platform.services.dns01_cloudflare.enabled ? "cloudflare-acme-token" : ""
+  dns01_cloudflare_dns_zones             = local.platform.services.dns01_cloudflare.enabled ? local.platform.services.dns01_cloudflare.dns_zones : []
 
   # kured: drains and reboots a node when it observes
   # `/var/run/reboot-required` (the sentinel Ubuntu's

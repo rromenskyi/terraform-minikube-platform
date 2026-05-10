@@ -63,6 +63,13 @@ variable "cloudflare_account_id" {
   type        = string
 }
 
+variable "cloudflare_api_token" {
+  description = "Cloudflare API token. Same value the wrapper exports as `CLOUDFLARE_API_TOKEN` for the provider — declared as a TF var here so we can also materialise it into a `kubernetes_secret_v1` for cert-manager's DNS-01 ACME solver to read. The provider itself still picks the token up from the env var directly (see `_providers.tf`); this declaration is *only* used for the cert-manager Secret. State holds the value (sensitive); the trade-off vs. provider-only env-pickup is acceptable because the same token value already flows into Vault-managed CF tunnel records via `cloudflare_dns_record` resources whose state holds the records themselves."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
 variable "namespace_prefix" {
   description = "Prefix prepended to every tenant-project namespace created from `config/domains/*.yaml` (e.g. `phost-` → `phost-example-com-prod`). Groups all project-tenant namespaces together under a common prefix in `kubectl get ns`, separate from the infra namespaces (`cert-manager`, `ingress-controller`, `monitoring`, `ops`, `platform`) that have their own fixed names. Set to `\"\"` to disable prefixing."
   type        = string
