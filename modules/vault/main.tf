@@ -938,12 +938,12 @@ resource "helm_release" "vault_config_operator" {
     # Default vault address vco uses for all CR reconcile calls.
     vaultAddress = "http://vault.${var.namespace}.svc.cluster.local:8200"
 
-    # Run the operator's controller-manager pod with a stable name so the
-    # bootstrap Job's vault role binds reliably (the kubernetes-auth role
-    # references `<vault_config_operator_service_account>` literally).
-    serviceAccount = {
-      name = var.vault_config_operator_service_account
-    }
+    # NOTE: the chart's `serviceAccount.name` value is IGNORED — the
+    # chart hardcodes the SA name to `controller-manager` in its
+    # template. Override here removed (was previously setting the value
+    # the bootstrap Job's vault role expects, but the override never
+    # took effect; bootstrap Job's role binding now references
+    # `controller-manager` literally — see variables.tf).
 
     # Provision serving certs for the operator's webhook + metrics
     # endpoints via cert-manager. Without this the chart leaves
@@ -1275,7 +1275,11 @@ resource "kubectl_manifest" "tenant_oidc_role" {
       policies            = ["tenant-${each.value}-rw"]
       boundClaimsType     = "string"
       boundClaims = {
-        "urn:zitadel:iam:org:project:roles" = ["vault:tenant:${each.value}"]
+        # Zitadel emits role KEYS (not display names) here. Caller
+        # declares matching keys `tenant_<slug>` via module.zitadel-app
+        # `roles`; slug hyphens normalised to underscores because some
+        # downstream OIDC consumers reject hyphens in claim values.
+        "urn:zitadel:iam:org:project:roles" = ["tenant_${replace(each.value, "-", "_")}"]
       }
       tokenTTL = "8h" # CRD requires duration string, not seconds int
     }

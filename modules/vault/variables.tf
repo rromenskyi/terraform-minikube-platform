@@ -73,9 +73,9 @@ variable "vault_config_operator_namespace" {
 }
 
 variable "vault_config_operator_service_account" {
-  description = "ServiceAccount name vault-config-operator authenticates with against Vault's kubernetes auth method. The Phase 1 bootstrap Job binds this SA to the `vault-config-operator-admin` policy via a kubernetes-auth role."
+  description = "ServiceAccount name vault-config-operator authenticates with against Vault's kubernetes auth method. The Phase 1 bootstrap Job binds this SA to the `vault-config-operator-admin` policy via a kubernetes-auth role. Default `controller-manager` matches the chart's actual SA name (the chart names its SA literally `controller-manager` regardless of `serviceAccount.name` override) — using a different value here would silently break vco's auth and every CR would fail with `service account name not authorized`."
   type        = string
-  default     = "vault-config-operator-controller-manager"
+  default     = "controller-manager"
 }
 
 variable "vault_config_operator_chart_version" {
@@ -120,9 +120,9 @@ variable "oidc_client_secret" {
 }
 
 variable "oidc_operator_zitadel_role" {
-  description = "Zitadel project role name granting full Vault admin access via OIDC. The Zitadel project role assertion lands as a claim in the id_token; vco's `JWTOIDCAuthEngineRole operator` matches users whose claims include this string and binds them to the `operator` policy (full sudo). Operator's own Zitadel user must hold this project role for SSO to land them on the admin UI."
+  description = "Zitadel project role KEY granting full Vault admin access via OIDC. The role's KEY (not its display name) lands in the user's id_token under `urn:zitadel:iam:org:project:roles`; vco's `JWTOIDCAuthEngineRole operator` matches that string and binds users to the `operator` policy (full sudo). Operator's own Zitadel user must hold this project role for SSO to land them on the admin UI. Default `operator` matches the role caller declares via `module.zitadel-app` `roles` input."
   type        = string
-  default     = "vault:operator"
+  default     = "operator"
 }
 
 variable "tenants" {
