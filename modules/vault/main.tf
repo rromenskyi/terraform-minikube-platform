@@ -1070,7 +1070,9 @@ resource "kubectl_manifest" "vso_k8s_role" {
         targetNamespaces = ["vault-secrets-operator"]
       }
       policies = ["vso-tenant-read"]
-      tokenTTL = 86400 # 24h, vault-side cap
+      # KubernetesAuthEngineRole CRD wants seconds-as-int here (different
+      # from JWTOIDCAuthEngineRole CRD, which wants a duration string).
+      tokenTTL = 86400 # 24h
     }
   })
 }
@@ -1210,7 +1212,7 @@ resource "kubectl_manifest" "operator_oidc_role" {
       boundClaims = {
         "urn:zitadel:iam:org:project:roles" = [var.oidc_operator_zitadel_role]
       }
-      tokenTTL = 28800 # 8h
+      tokenTTL = "8h" # CRD requires duration string, not seconds int
     }
   })
 }
@@ -1275,7 +1277,7 @@ resource "kubectl_manifest" "tenant_oidc_role" {
       boundClaims = {
         "urn:zitadel:iam:org:project:roles" = ["vault:tenant:${each.value}"]
       }
-      tokenTTL = 28800 # 8h
+      tokenTTL = "8h" # CRD requires duration string, not seconds int
     }
   })
 }
@@ -1320,10 +1322,17 @@ resource "helm_release" "vso" {
       address = "http://vault.${var.namespace}.svc.cluster.local:8200"
     }
     defaultAuthMethod = {
-      enabled   = true
-      namespace = "*" # any namespace can use the default auth
-      method    = "kubernetes"
-      mount     = "kubernetes"
+      enabled = true
+      # `namespace` here is Vault's enterprise NAMESPACE feature
+      # (HCP/Enterprise only) — NOT a k8s namespace selector. On
+      # community Vault it must stay unset; the chart renders an
+      # unquoted bare `*` as a YAML alias and parsing dies (line 16:
+      # "did not find expected alphabetic or numeric character").
+      # Cross-namespace consumption of the default VaultAuth is
+      # implicit — VaultStaticSecret CRs in any namespace reference
+      # `default` by name and the operator resolves it.
+      method = "kubernetes"
+      mount  = "kubernetes"
       kubernetes = {
         role           = "vso"
         serviceAccount = "vault-secrets-operator-controller-manager"
