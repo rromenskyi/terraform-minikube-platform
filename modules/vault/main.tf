@@ -824,6 +824,37 @@ resource "kubernetes_cluster_role_binding_v1" "vault_token_reviewer" {
   }
 }
 
+# vco's controller-manager SA also needs system:auth-delegator. Vault's
+# k8s auth method config has `token_reviewer_jwt` empty (we never wrote
+# a long-lived SA token Secret for the bootstrap Job to consume), so
+# Vault falls back to using the INCOMING login JWT itself when calling
+# TokenReview against the API server. That JWT is vco's own SA token —
+# it must carry the right to call TokenReview, otherwise login 403s
+# with "permission denied" even though the bound SA / namespace match.
+# Adding system:auth-delegator to controller-manager closes that loop.
+resource "kubernetes_cluster_role_binding_v1" "vco_token_reviewer" {
+  for_each = local.instances
+
+  depends_on = [kubernetes_namespace_v1.vault_config_operator]
+
+  metadata {
+    name   = "vault-config-operator-token-reviewer"
+    labels = local.tags
+  }
+
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "ClusterRole"
+    name      = "system:auth-delegator"
+  }
+
+  subject {
+    kind      = "ServiceAccount"
+    name      = var.vault_config_operator_service_account
+    namespace = var.vault_config_operator_namespace
+  }
+}
+
 resource "kubernetes_job_v1" "vault_bootstrap" {
   for_each = local.instances
 
@@ -1067,15 +1098,25 @@ resource "kubectl_manifest" "vso_k8s_role" {
       namespace = kubernetes_namespace_v1.vault_config_operator["enabled"].metadata[0].name
     }
     spec = {
-      authentication        = local.vco_authentication
-      connection            = local.vco_connection
-      path                  = "kubernetes"
+      authentication = local.vco_authentication
+      connection     = local.vco_connection
+      path           = "kubernetes"
+      # VSO impersonates this SA in the CONSUMING namespace (the
+      # namespace where the VaultStaticSecret CR lives), not in
+      # vso's own namespace. So this role accepts the SA across
+      # ALL namespaces — engine emits the SA in every project ns
+      # that uses vault-mode secrets.
       targetServiceAccounts = ["vault-secrets-operator-controller-manager"]
-      # CRD shape — single `targetNamespaces` parent with EITHER a
-      # `targetNamespaces` list OR a `targetNamespaceSelector` (mutually
-      # exclusive; admission webhook rejects both).
       targetNamespaces = {
-        targetNamespaces = ["vault-secrets-operator"]
+        targetNamespaceSelector = {
+          # Match every namespace by the kubelet-set
+          # `kubernetes.io/metadata.name` label (always present);
+          # `Exists` selector matches every namespace in the cluster.
+          matchExpressions = [{
+            key      = "kubernetes.io/metadata.name"
+            operator = "Exists"
+          }]
+        }
       }
       policies = ["vso-tenant-read"]
       # KubernetesAuthEngineRole CRD wants seconds-as-int here (different
