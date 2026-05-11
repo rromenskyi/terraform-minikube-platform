@@ -356,6 +356,86 @@ ServersTransport is verbose enough that hand-pasting YAML into
 to `platform-dash` (uses `KubernetesObjectApi` from
 `@kubernetes/client-node`, RBAC already covers `traefik.io/*`).
 
+### llama.cpp SYCL on Arc B50 — retry on Ubuntu 26.04 + oneAPI 2026.x
+
+Earlier verdict (May 2026, captured in
+`project_arc_b50_ollama_sycl` memory): SYCL не вариант on
+Battlemage, ipex-llm + upstream llama.cpp SYCL не работали → stay
+on Vulkan (17–27 t/s baseline).
+
+The specific blocker that killed that attempt has been fixed:
+- **Issue [#21893](https://github.com/ggml-org/llama.cpp/issues/21893)
+  (BMG token corruption with `GGML_SYCL_F16=ON
+  GGML_SYCL_DEVICE_ARCH=bmg_g21`) is CLOSED** — fixed by
+  [PR #21638](https://github.com/ggml-org/llama.cpp/pull/21638),
+  merged 2026-04-16; missing `dequantize_block_q8_0_reorder()` added
+  so prompt-processing path matches the Q8_0 reorder used during tg.
+  No more `GGML_SYCL_DISABLE_OPT=1` workaround needed.
+- Q8_0 perf bug [#21517](https://github.com/ggml-org/llama.cpp/issues/21517)
+  also being chipped at via the reorder framework — Q8_0 now hits
+  ~66% of theoretical bandwidth on the related Arc Pro B70 vs the
+  original 21–24%.
+- **oneAPI 2026.0** unified Base+HPC toolkit landed with explicit
+  BMG-G31 support; recommended SYCL stack now.
+
+**Distro context — Ubuntu 26.04 LTS "Resolute Raccoon"** (released
+2026-04-23): ships Linux 7.0 generic kernel (renumbered from the
+planned 6.20), `xe` driver default for Xe2/BMG, no `i915` fallback
+needed for B50. In-archive `intel-opencl-icd` /
+`intel-level-zero-gpu` packages lag — the canonical install path
+remains the `intel-graphics` PPA (or the new unified `oneapi` apt
+repo) on top of 26.04. Known regression: the **Ollama installer
+doesn't recognise 26.04 in its supported-OS list**
+([ollama#15827](https://github.com/ollama/ollama/issues/15827),
+open) — `libggml-oneapi.so` isn't pulled in even with
+`OLLAMA_INTEL_GPU=1`; a workaround would manually link the lib. If
+the experiment uses Ollama as the front-end, expect to fight that
+detection.
+
+**`chmod 666 /dev/dri/*` workaround** — confirmed render-group GID
+mismatch (host `render` GID not mapped into the container). Brute
+force; the canonical k8s fix is unchanged: `intel/intel-device-plugins-for-kubernetes`
+GPU plugin DaemonSet → request `gpu.intel.com/xe: 1` (or the
+`i915` resource name on i915-driven nodes — plugin auto-detects).
+The `xe` driver creates the same `/dev/dri/{card,renderD}*` nodes
+as `i915`; no new udev rules in 26.04.
+
+**Performance — two contradictory data points** (both real, depend
+on quant + driver vintage):
+- [Phoronix EOY-2025 + early-2026](https://www.phoronix.com/review/llama-cpp-vulkan-eoy2025):
+  Vulkan ~2× SYCL on B580 across the board.
+- [Bibek Poudel write-up Apr 2026](https://bibek-poudel.medium.com/how-to-run-qwen3-6-27b-locally-on-intel-arc-pro-b70-what-actually-works-c96dec67c6f7)
+  (B70 on Ubuntu 25.10 + oneAPI 2025.3): SYCL 22 t/s vs Vulkan
+  14–15 t/s on Qwen3.5-27B (+52%).
+
+So with post-#21638 llama.cpp + oneAPI 2026.x, SYCL is **plausibly
+faster** than the current 17–27 t/s Vulkan baseline on B50,
+especially for Q4_K_M / Q8_0. Not guaranteed — depends on model.
+
+**Third options:**
+- **`ipex-llm`** — archived read-only Jan 2026. Dead. Don't touch.
+- **vLLM XPU** — actively maintained but has its own BMG bugs
+  ([vllm#41663](https://github.com/vllm-project/vllm/issues/41663)
+  — XPU TP=2 GP-fault on dual B70 with Ubuntu 24.04 HWE 6.17). For
+  single-GPU it's fine.
+- No Intel-published "official k8s pattern" beyond the device
+  plugin + standard SYCL container images.
+
+**Bottom line:** one retry of llama.cpp SYCL on 26.04 + oneAPI
+2026.x + llama.cpp ≥ b5500 is worth it. Vulkan stays the
+lower-friction fallback in the same perf envelope, so a backout is
+cheap. Update / supersede `project_arc_b50_ollama_sycl` memory
+either way after the experiment.
+
+Reference bundle:
+- [llama.cpp SYCL backend docs](https://github.com/ggml-org/llama.cpp/blob/master/docs/backend/SYCL.md)
+- [llama.cpp Discussion #12570 — Arc status](https://github.com/ggml-org/llama.cpp/discussions/12570)
+- [Intel dgpu-docs client install](https://dgpu-docs.intel.com/driver/client/overview.html)
+- [Intel GPU device plugin for k8s](https://github.com/intel/intel-device-plugins-for-kubernetes/blob/main/cmd/gpu_plugin/README.md)
+- [Ubuntu 26.04 LTS release notes](https://documentation.ubuntu.com/release-notes/26.04/)
+- [Ubuntu 26.04 / Linux 7.0 (ServeTheHome)](https://www.servethehome.com/ubuntu-26-04-lts-moving-the-industry-forward-with-linux-7-0-and-more/)
+- [ipex-llm repo (archived)](https://github.com/intel/ipex-llm)
+
 ## Cosmetic — fix opportunistically
 
 ### `./tf` wrapper port-forward wait timeout
