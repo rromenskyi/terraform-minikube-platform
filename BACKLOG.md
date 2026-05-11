@@ -147,6 +147,104 @@ domains.
 
 ## Medium — quality of life
 
+### BuildKit — switch to rootless image + per-binary AppArmor profile
+
+Current shape (`modules/buildkitd`): rootful `moby/buildkit` image,
+`securityContext.privileged: true` + `hostUsers: false` (CERN userns
+pattern). Privileged inside the container, remapped to an
+unprivileged host uid via user-namespace; namespace carries
+`pod-security.kubernetes.io/enforce: privileged`. Trust boundary is
+the kernel + userns, not PSA admission.
+
+The rootless variant (`moby/buildkit:<ver>-rootless`) was rejected at
+adoption time because Ubuntu 23.10+ blocks unprivileged
+user-namespace creation by default at the AppArmor `userns_create`
+LSM hook (host-side `kernel.apparmor_restrict_unprivileged_userns =
+1`). Sidestepping by flipping the host-wide sysctl was the only
+mitigation considered — that's a host-wide weakening of the
+restriction, so we stayed on the privileged-in-userns pattern.
+
+**The path actually missed:** AppArmor lets you grant
+`userns_create` to a **specific binary path** via a profile,
+without touching the host sysctl. Profile shape (Ubuntu 24.04+
+canonical):
+
+```
+abi <abi/4.0>,
+include <tunables/global>
+profile buildkitd /usr/bin/buildkitd flags=(unconfined) {
+  userns,
+}
+```
+
+Loaded once on every node into `/etc/apparmor.d/` (DaemonSet pattern
+— `kube-apparmor-manager`, `security-profiles-operator`, or a
+hand-rolled apparmor-loader reading from a ConfigMap). Pod attaches
+via `securityContext.appArmorProfile` (GA since k8s 1.31, our
+cluster runs 1.34.6):
+
+```yaml
+securityContext:
+  runAsUser: 1000
+  appArmorProfile:
+    type: Localhost
+    localhostProfile: buildkitd
+```
+
+**Why it'd be more secure than the current pattern:**
+- Rootless drops every cap; current pattern keeps full caps inside
+  userns (mapped to none on host but more in-userns kernel surface).
+- `userns_create` permission scoped to ONE binary path vs host-wide
+  sysctl flip — minimum-blast-radius approach.
+- Native overlayfs in userns (no fuse-overlayfs penalty on Ubuntu
+  kernel ≥5.13) — closes the historic perf gap that originally made
+  rootful tempting.
+- Upstream BuildKit (AkihiroSuda) calls rootless "equivalent to
+  running buildkitd as a non-root host user" and treats it as the
+  default secure path; CERN's June-2025 post is neutral on choice
+  but the upstream trajectory is rootless.
+
+**Per-job ephemeral pods for mixed-trust builds.** Orthogonal to
+rootless/rootful: when ARC runners build third-party PR contributions
+alongside operator-trusted private repos, switching from the shared
+daemon to `docker buildx create --driver kubernetes --bootstrap`
+spawns a per-job buildkitd Pod. Cache poisoning between trust levels
+disappears (each Pod's cache dies with the job); cost is cold cache
+on every build. Pair with rootless. For our home-lab scale this is
+overkill today (every build is operator-trusted), but worth
+remembering when external-PR CI lands.
+
+**Third options considered + rejected:**
+- gVisor RuntimeClass — re-implements syscall surface in userspace;
+  breaks `overlayfs` mount → forces `vfs` snapshotter (slow).
+- Kata containers — works but heavyweight on a 5-node home lab.
+
+**What changes in the engine:**
+1. `modules/buildkitd` swaps image tag to `-rootless` variant + drops
+   `privileged: true` + `hostUsers: false` + drops the
+   `pod-security.kubernetes.io/enforce: privileged` namespace label.
+2. Pod spec gains `runAsUser: 1000` + `runAsGroup: 1000` +
+   `securityContext.appArmorProfile.{type=Localhost, localhostProfile=buildkitd}`.
+3. New module emits an `apparmor-loader` DaemonSet (or adopts
+   `security-profiles-operator`) that lays the profile under
+   `/etc/apparmor.d/buildkitd` on every node + `apparmor_parser -r`
+   it on container start. ConfigMap carries the profile text so
+   updates are git-managed.
+4. Operator-side prereq: every node already has AppArmor enabled
+   (Ubuntu default — no change on home cluster).
+
+Reference bundle:
+- [BuildKit rootless docs](https://github.com/moby/buildkit/blob/master/docs/rootless.md)
+- [BuildKit `examples/kubernetes/job.rootless.yaml`](https://github.com/moby/buildkit/blob/master/examples/kubernetes/job.rootless.yaml)
+- [Upstream multi-tenant buildkit discussion #5796](https://github.com/moby/buildkit/discussions/5796)
+- [Ubuntu 23.10 userns restrictions blog](https://ubuntu.com/blog/ubuntu-23-10-restricted-unprivileged-user-namespaces)
+- [Ubuntu 23.10 userns restrictions spec (Discourse)](https://discourse.ubuntu.com/t/spec-unprivileged-user-namespace-restrictions-via-apparmor-in-ubuntu-23-10/37626)
+- [Understanding Ubuntu's AppArmor user-namespace restriction (Discourse)](https://discourse.ubuntu.com/t/understanding-apparmor-user-namespace-restriction/58007)
+- [Chromium AppArmor userns docs](https://chromium.googlesource.com/chromium/src/+/main/docs/security/apparmor-userns-restrictions.md)
+- [k8s AppArmor tutorial (`appArmorProfile` field)](https://kubernetes.io/docs/tutorials/security/apparmor/)
+- [CERN: Rootless container builds on Kubernetes (June 2025)](https://kubernetes.web.cern.ch/blog/2025/06/19/rootless-container-builds-on-kubernetes/)
+- [Sysdig: kube-apparmor-manager pattern](https://www.sysdig.com/blog/manage-apparmor-profiles-in-kubernetes-with-kube-apparmor-manager)
+
 ### Consolidate Zitadel projects: per-domain, not per-app
 
 Today every Zitadel-integrated app — `kind: app` components plus
