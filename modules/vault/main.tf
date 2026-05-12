@@ -1136,9 +1136,19 @@ resource "kubectl_manifest" "vso_read_policy" {
     spec = {
       authentication = local.vco_authentication
       connection     = local.vco_connection
-      policy         = <<-POLICY
-        path "secret/data/tenants/*"     { capabilities = ["read"] }
-        path "secret/metadata/tenants/*" { capabilities = ["read", "list"] }
+      # VSO reads two subtrees of `secret/`:
+      #   - `tenants/*`  — per-tenant operator secrets (per-project
+      #     `secrets:` blocks, argocd/git deploy keys)
+      #   - `platform/*` — cluster-shared operator secrets owned by
+      #     the platform layer rather than any tenant (e.g. ARC
+      #     GitHub runner tokens at `platform/github-runner-tokens/*`)
+      # Tenant-isolation lives at OIDC role policies (Phase 2);
+      # VSO's k8s-auth role only ever reads.
+      policy = <<-POLICY
+        path "secret/data/tenants/*"      { capabilities = ["read"] }
+        path "secret/metadata/tenants/*"  { capabilities = ["read", "list"] }
+        path "secret/data/platform/*"     { capabilities = ["read"] }
+        path "secret/metadata/platform/*" { capabilities = ["read", "list"] }
       POLICY
     }
   })
