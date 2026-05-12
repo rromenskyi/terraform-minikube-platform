@@ -32,6 +32,10 @@ terraform {
       source  = "hashicorp/kubernetes"
       version = "~> 2.0"
     }
+    kubectl = {
+      source  = "gavinbunney/kubectl"
+      version = "~> 1.14"
+    }
   }
 }
 
@@ -44,6 +48,25 @@ locals {
   # Each scale set lands in its own namespace — engine creates them
   # idempotently rather than asking the operator to pre-create.
   scale_set_namespaces = distinct([for _, s in local.scale_set_targets : s.namespace])
+
+  # Scale sets in vault-mode — operator places the PAT in Vault under
+  # `secret/data/platform/github-runner-tokens/<scale-set-key>` (one
+  # data key: `github_token`); engine emits a VaultStaticSecret CR
+  # per entry, VSO syncs into a `<scale-set-key>-github-pat` Secret in
+  # the scale set's namespace. Chart consumes the same Secret name as
+  # in operator-tokens-mode — only the source-of-truth differs.
+  vault_mode_targets = {
+    for k, v in local.scale_set_targets :
+    k => v
+    if try(v.vault, false)
+  }
+
+  # VSO impersonates the SA in the consuming namespace (per
+  # feedback_vso_impersonates_consuming_namespace_sa) — it must exist
+  # in every namespace running a VaultStaticSecret. Engine emits one
+  # per distinct namespace that contains at least one vault-mode
+  # scale set.
+  vso_proxy_namespaces = distinct([for _, s in local.vault_mode_targets : s.namespace])
 
   # Shorthand for the propagated null-label tag set used by every
   # non-Helm resource the module emits. Helm releases delegate label
@@ -112,14 +135,14 @@ resource "kubernetes_namespace_v1" "scale_set" {
   }
 }
 
-# ── Engine-emitted PAT Secret per scale set ───────────────────────────────
+# ── Engine-emitted PAT Secret per scale set (operator-tokens-mode) ─────────
 #
 # Triggers when the operator supplied a token in `var.tokens[<key>]`
-# AND the scale-set entry left `github_secret_name` empty (the
-# default). Engine creates `<key>-github-pat` carrying the
-# `github_token` field the chart's listener-pod expects. The
-# operator's only knob is the `.env` map — no kubectl-create-secret
-# anywhere in the workflow.
+# AND the scale-set entry left `github_secret_name` empty AND
+# `vault: true` is NOT set. Engine creates `<key>-github-pat`
+# carrying the `github_token` field the chart's listener-pod
+# expects. Legacy `.env`-bound mode — vault-mode (below) is the
+# preferred path for new entries.
 resource "kubernetes_secret_v1" "github_pat" {
   # Token VALUES are sensitive; their KEYS aren't (they match
   # operator-yaml scale-set names that already live unencrypted in
@@ -128,7 +151,7 @@ resource "kubernetes_secret_v1" "github_pat" {
   for_each = {
     for k, v in local.scale_set_targets :
     k => v
-    if v.github_secret_name == "" && contains(nonsensitive(keys(var.tokens)), k)
+    if v.github_secret_name == "" && !try(v.vault, false) && contains(nonsensitive(keys(var.tokens)), k)
   }
 
   depends_on = [kubernetes_namespace_v1.scale_set]
@@ -148,6 +171,87 @@ resource "kubernetes_secret_v1" "github_pat" {
   }
 }
 
+# ── VSO consuming-namespace SA (vault-mode prerequisite) ───────────────────
+#
+# VSO impersonates the SA in the namespace WHERE the VaultStaticSecret
+# CR lives (not its own ns) when calling Vault's k8s auth method —
+# see feedback_vso_impersonates_consuming_namespace_sa.md. The default
+# VaultAuth installed by the vault module references a SA name that
+# must exist in every namespace running a VaultStaticSecret. Engine
+# emits one per scale-set namespace with at least one vault-mode
+# entry; without it VSO fails reconcile with "ServiceAccount not
+# found" and never materialises the Secret.
+resource "kubernetes_service_account_v1" "vso_proxy" {
+  for_each = toset(local.vso_proxy_namespaces)
+
+  depends_on = [kubernetes_namespace_v1.scale_set]
+
+  metadata {
+    name      = "vault-secrets-operator-controller-manager"
+    namespace = each.key
+    labels = merge(local.tags, {
+      "app.kubernetes.io/managed-by" = "terraform"
+      "app.kubernetes.io/component"  = "arc-vso-proxy"
+    })
+  }
+}
+
+# ── Vault-mode PAT (preferred path for new entries) ────────────────────────
+#
+# Triggers when scale-set entry has `vault: true`. Engine emits a
+# VaultStaticSecret CR pointing at the convention path
+# `secret/data/platform/github-runner-tokens/<scale-set-key>`
+# (operator places the PAT under one data key: `github_token`).
+# VSO syncs into a `<scale-set-key>-github-pat` Secret in the scale
+# set's namespace — same name the chart's listener-pod expects, so
+# downstream wiring is identical to operator-tokens-mode.
+#
+# Operator path: open Vault UI → Secrets → secret/ → Create →
+# `platform/github-runner-tokens/<scale-set-key>` → set one key
+# `github_token` to the `ghp_*` value. No `.env` entry needed.
+resource "kubectl_manifest" "github_pat_vault" {
+  for_each = local.vault_mode_targets
+
+  depends_on = [
+    kubernetes_namespace_v1.scale_set,
+    kubernetes_service_account_v1.vso_proxy,
+  ]
+
+  yaml_body = yamlencode({
+    apiVersion = "secrets.hashicorp.com/v1beta1"
+    kind       = "VaultStaticSecret"
+    metadata = {
+      name      = "${each.key}-github-pat"
+      namespace = each.value.namespace
+      labels = merge(local.tags, {
+        "app.kubernetes.io/managed-by" = "terraform"
+        "app.kubernetes.io/component"  = "arc-github-pat"
+        "platform.scale-set"           = each.key
+      })
+    }
+    spec = {
+      # VSO falls back to the cluster-default VaultAuth in the
+      # vault-secrets-operator namespace when vaultAuthRef is empty.
+      # The platform's vault module enables that default at install
+      # time (modules/vault/main.tf vso helm release values).
+      vaultAuthRef = ""
+      mount        = "secret"
+      type         = "kv-v2"
+      path         = "platform/github-runner-tokens/${each.key}"
+      destination = {
+        name   = "${each.key}-github-pat"
+        create = true
+      }
+      # 30s catches a rotation in Vault UI within half a minute. Pod
+      # restart on rotation is consumer's concern — for ARC the
+      # listener pod also has known stickiness on PAT rotation that
+      # may need the listener-config Secret to be deleted manually
+      # (see feedback_arc_listener_config_secret_stale.md).
+      refreshAfter = "30s"
+    }
+  })
+}
+
 # ── Scale sets ─────────────────────────────────────────────────────────────
 
 resource "helm_release" "scale_set" {
@@ -157,20 +261,36 @@ resource "helm_release" "scale_set" {
     helm_release.controller,
     kubernetes_namespace_v1.scale_set,
     kubernetes_secret_v1.github_pat,
+    kubectl_manifest.github_pat_vault,
   ]
 
   # Catch the misconfiguration at plan time rather than at runtime as
-  # a CrashLoopBackOff on the listener Pod. A scale-set entry with
-  # `github_secret_name = ""` (engine-emit mode) requires a matching
-  # entry in `var.tokens` so the engine can materialise the
-  # `<key>-github-pat` Secret the chart's listener mounts. Without
-  # the token, the chart still installs but `githubConfigSecret`
-  # points at a Secret that never gets created — the listener Pod
-  # then loops on "Secret not found" until somebody notices.
+  # a CrashLoopBackOff on the listener Pod. Each scale set must wire
+  # GitHub auth via exactly one of three modes — vault (engine emits
+  # VaultStaticSecret, operator places PAT in Vault UI), externally-
+  # managed (operator pre-creates a Secret carrying GitHub App fields
+  # and references it by name), or operator-tokens-mode (legacy
+  # `.env` map). Without any of these, the chart installs but
+  # `githubConfigSecret` points at a Secret that never gets created
+  # and the listener Pod loops on "Secret not found".
   lifecycle {
     precondition {
-      condition     = each.value.github_secret_name != "" || contains(nonsensitive(keys(var.tokens)), each.key)
-      error_message = "Scale set `${each.key}`: no GitHub auth wired. Either set `github_secret_name` to an externally-managed Secret carrying GitHub App fields, or supply a PAT via `var.tokens[\"${each.key}\"]` (operator typically pastes into `.env` as `TF_VAR_github_runner_tokens={ ${each.key} = \"ghp_...\" }`) so the engine can emit `${each.key}-github-pat` automatically."
+      condition = (
+        try(each.value.vault, false)
+        || each.value.github_secret_name != ""
+        || contains(nonsensitive(keys(var.tokens)), each.key)
+      )
+      error_message = "Scale set `${each.key}`: no GitHub auth wired. Pick one: (1) `vault: true` and place the PAT in Vault under `secret/data/platform/github-runner-tokens/${each.key}` (key `github_token`); (2) `github_secret_name: <name>` to reference an externally-managed Secret carrying GitHub App fields; (3) supply a PAT via `var.tokens[\"${each.key}\"]` (legacy `.env` mode) so the engine can emit `${each.key}-github-pat` automatically."
+    }
+
+    # Mutually-exclusive modes — catch operator confusion before
+    # double-Secret races materialise.
+    precondition {
+      condition = !(
+        try(each.value.vault, false)
+        && (each.value.github_secret_name != "" || contains(nonsensitive(keys(var.tokens)), each.key))
+      )
+      error_message = "Scale set `${each.key}`: `vault: true` is mutually exclusive with `github_secret_name` and `var.tokens[\"${each.key}\"]`. Pick exactly one auth source."
     }
   }
 
