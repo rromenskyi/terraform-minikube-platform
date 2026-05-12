@@ -245,6 +245,32 @@ Reference bundle:
 - [CERN: Rootless container builds on Kubernetes (June 2025)](https://kubernetes.web.cern.ch/blog/2025/06/19/rootless-container-builds-on-kubernetes/)
 - [Sysdig: kube-apparmor-manager pattern](https://www.sysdig.com/blog/manage-apparmor-profiles-in-kubernetes-with-kube-apparmor-manager)
 
+### Migrate MySQL root password to Vault-mode (bootstrap-safe)
+
+`modules/mysql/main.tf` generates `random_password.root` per
+Terraform state. On `./tf bootstrap-k3s` (state wipe with
+hostPath data preserved at `/data/vol/mysql`) a fresh random
+value lands in the `mysql-root` Secret, but InnoDB only applies
+`MYSQL_ROOT_PASSWORD` on first datadir init — so the running
+MySQL keeps the OLD root password and tenant WP pods start
+failing with `Access denied for user 'root'`.
+
+Risk window is narrow (only bootstrap-after-state-loss with
+retained data) but real for any tenant whose DB lives on the
+shared mysql instance — that data set survives the state wipe
+intact, but new credentials don't reach it.
+
+Same pattern as the per-tenant Vault-mode secrets that already
+landed (sipmesh-zadarma, sipmesh-twilio, mm-core-secrets, etc.):
+operator places root password once in
+`secret/data/platform/mysql-root`, engine emits a
+`VaultStaticSecret` instead of `random_password +
+kubernetes_secret_v1`, VSO syncs into the `mysql-root` Secret in
+the platform namespace. State rebuild → no rotation → no drift.
+
+Optionally extend the same pattern to `postgres` / `redis` root
+credentials for symmetry — same drift risk shape.
+
 ### Consolidate Zitadel projects: per-domain, not per-app
 
 Today every Zitadel-integrated app — `kind: app` components plus
