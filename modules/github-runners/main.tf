@@ -283,14 +283,18 @@ resource "helm_release" "scale_set" {
       error_message = "Scale set `${each.key}`: no GitHub auth wired. Pick one: (1) `vault: true` and place the PAT in Vault under `secret/data/platform/github-runner-tokens/${each.key}` (key `github_token`); (2) `github_secret_name: <name>` to reference an externally-managed Secret carrying GitHub App fields; (3) supply a PAT via `var.tokens[\"${each.key}\"]` (legacy `.env` mode) so the engine can emit `${each.key}-github-pat` automatically."
     }
 
-    # Mutually-exclusive modes — catch operator confusion before
-    # double-Secret races materialise.
+    # Mutually-exclusive: vault-mode and externally-managed both
+    # produce a Secret with the same name (`<key>-github-pat` vs
+    # `github_secret_name`), and the chart can only mount one.
+    # Operator-tokens-mode (`var.tokens[<key>]`) is intentionally
+    # NOT in this check — vault-mode silently shadows it during the
+    # migration window, so an operator can flip `vault: true`
+    # without first deleting the entry from `.env`. Engine just
+    # stops emitting the legacy `kubernetes_secret_v1.github_pat`
+    # for that key (see for_each filter on that resource).
     precondition {
-      condition = !(
-        try(each.value.vault, false)
-        && (each.value.github_secret_name != "" || contains(nonsensitive(keys(var.tokens)), each.key))
-      )
-      error_message = "Scale set `${each.key}`: `vault: true` is mutually exclusive with `github_secret_name` and `var.tokens[\"${each.key}\"]`. Pick exactly one auth source."
+      condition     = !(try(each.value.vault, false) && each.value.github_secret_name != "")
+      error_message = "Scale set `${each.key}`: `vault: true` is mutually exclusive with `github_secret_name`. Pick one auth source."
     }
   }
 
