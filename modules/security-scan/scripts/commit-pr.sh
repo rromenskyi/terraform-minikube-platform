@@ -49,14 +49,20 @@ cd "$REPO_DIR"
 mkdir -p "$(dirname "$DEST")"
 cp "$NEW" "$DEST"
 
-# Diff vs HEAD — skip the rest if nothing actually changed (or only
-# the "Generated:" timestamp line moved).
-if git diff --quiet -I '^Generated: ' -- "$REPORT_PATH"; then
+git add "$REPORT_PATH"
+
+# Did anything actually change?
+#   - For an untracked-now-staged file (very first commit on this
+#     branch), `git diff --cached` shows the full content and the
+#     -I filter is moot — staged add ⇒ commit.
+#   - For an existing file, fall back to comparing staged vs HEAD,
+#     ignoring the `Generated:` timestamp line so a stale-but-equal
+#     snapshot doesn't churn the PR.
+if git diff --cached --quiet -I '^Generated: ' -- "$REPORT_PATH" 2>/dev/null \
+   && git diff --quiet HEAD -- "$REPORT_PATH" 2>/dev/null; then
   echo "No substantive change to $REPORT_PATH since last snapshot. Exiting silently."
   exit 0
 fi
-
-git add "$REPORT_PATH"
 git commit -m "chore(security-scan): weekly CVE snapshot $(date -u +%Y-%m-%d)"
 git push -f origin "$BRANCH_PREFIX"
 
