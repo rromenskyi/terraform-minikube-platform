@@ -550,6 +550,31 @@ services:
   # unprivileged user-namespace creation. CERN privileged-in-userns
   # sidesteps the hook and is the upstream-documented production
   # pattern.
+  security_scan:
+    enabled: false
+    # Continuous CVE scanning of platform-system images. Two layers:
+    # (1) trivy-operator (Aqua Security) Helm release scans Pods in
+    # the allowlisted namespaces (hardcoded in
+    # `modules/security-scan/main.tf::local.target_namespaces`),
+    # emits VulnerabilityReport CRDs; (2) weekly CronJob collects
+    # HIGH+CRITICAL findings into `inventory/cve-report.md`, opens a
+    # PR against the platform repo when the report changes vs last
+    # snapshot.
+    #
+    # OPERATOR PREREQ: place a classic GitHub PAT (scope `repo` full,
+    # on the `github_repo` below) in Vault under
+    # `secret/data/platform/github-deploy-tokens/security-scan`
+    # (one data key: `github_token`). VSO syncs into the consuming
+    # k8s Secret automatically.
+    #
+    # trivy_operator_chart_version: 0.30.0           # upstream chart version pin
+    # cache_node_hostname: roman-romenskyi-optiplex-7060   # hostPath PV pinned here
+    # trivy_cache_size: 5Gi                          # vuln DB ~700 MB; 5Gi gives headroom
+    # service_monitor_enabled: false                 # set true if kube-prometheus-stack is installed
+    # snapshot_schedule: "0 4 * * 0"                 # default: Sunday 04:00 UTC
+    # github_repo: rromenskyi/terraform-minikube-platform
+    # branch_prefix: security-scan/snapshot          # branch the snapshot lives on (force-pushed each run)
+
   buildkitd:
     enabled: false
     # image_tag:  v0.29.0                       # rootful — `<ver>-rootless` will not work without sysctl tweaks
