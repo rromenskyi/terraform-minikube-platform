@@ -114,6 +114,8 @@ locals {
         snapshot_schedule            = "0 4 * * 0"
         github_repo                  = "rromenskyi/terraform-minikube-platform"
         branch_prefix                = "security-scan/snapshot"
+        telegram_notify_enabled      = false
+        telegram_vault_path          = "platform/telegram-bots/operator"
       }
       backup = {
         enabled                = false
