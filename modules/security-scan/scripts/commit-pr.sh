@@ -86,14 +86,42 @@ PR_RESPONSE=$(curl -sS -o /tmp/pr-resp.json -w '%%{http_code}' \
         --arg body  "$PR_BODY" \
         '{title: $title, head: $head, base: $base, body: $body}')")
 
+PR_URL=""
 if [ "$PR_RESPONSE" = "201" ]; then
-  jq -r '"Opened PR: " + .html_url' /tmp/pr-resp.json
+  PR_URL=$(jq -r '.html_url' /tmp/pr-resp.json)
+  echo "Opened PR: $PR_URL"
 elif [ "$PR_RESPONSE" = "422" ]; then
   # Either PR already open OR the head branch is identical to base.
   # Both fine — branch was force-pushed, existing PR refreshes.
   echo "PR not opened (422 — likely already exists for $BRANCH_PREFIX). Branch was force-pushed."
+  # Look up the existing open PR's URL so the Telegram message can
+  # link to it.
+  PR_URL=$(curl -fsSL \
+    -H "Authorization: token $GH_TOKEN" \
+    -H "Accept: application/vnd.github+json" \
+    "https://api.github.com/repos/${GH_REPO}/pulls?head=${GH_REPO%%/*}:${BRANCH_PREFIX}&state=open" \
+    | jq -r '.[0].html_url // empty')
 else
   echo "Unexpected response from GitHub API: HTTP $PR_RESPONSE"
   cat /tmp/pr-resp.json
   exit 1
+fi
+
+# Optional Telegram DM — only fires when the engine wired the
+# `security-scan-telegram` Secret in (telegram_notify_enabled = true)
+# AND the operator populated bot_token + chat_id in Vault. Empty
+# either var = silent skip; container exit code unaffected.
+if [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${TELEGRAM_CHAT_ID:-}" ] && [ -n "$PR_URL" ]; then
+  ADDED=$(git diff HEAD~1 -- "$REPORT_PATH" 2>/dev/null | grep -c '^+|' || true)
+  REMOVED=$(git diff HEAD~1 -- "$REPORT_PATH" 2>/dev/null | grep -c '^-|' || true)
+  MSG=$(printf '🛡 *Platform CVE snapshot changed*\n\n%s lines added, %s removed in `%s`.\n\nPR: %s' \
+    "$ADDED" "$REMOVED" "$REPORT_PATH" "$PR_URL")
+  curl -fsS -o /dev/null \
+    -X POST \
+    "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+    -d "chat_id=${TELEGRAM_CHAT_ID}" \
+    --data-urlencode "text=${MSG}" \
+    -d "parse_mode=Markdown" \
+    && echo "Telegram notification sent." \
+    || echo "Telegram notification failed (non-fatal — report still committed)."
 fi

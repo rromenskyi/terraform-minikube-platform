@@ -21,3 +21,11 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 - Snapshot scope is the platform-system namespaces only (allowlist
   hardcoded in `local.target_namespaces`); tenant project namespaces
   are out of v0 scope.
+- Optional Telegram DM notification on snapshot changes. When
+  `var.telegram_notify_enabled = true`, engine emits a second
+  VaultStaticSecret pointing at `var.telegram_vault_path`
+  (default `platform/telegram-bots/operator` with keys `bot_token` +
+  numeric `chat_id`). The commit-pr CronJob step POSTs to Telegram
+  Bot API after a successful PR open/refresh, with a one-line
+  link to the PR. Optional `secretKeyRef` so leaving the toggle
+  off (default) doesn't break container start.
