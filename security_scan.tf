@@ -20,4 +20,6 @@ module "security_scan" {
   snapshot_schedule            = local.platform.services.security_scan.snapshot_schedule
   github_repo                  = local.platform.services.security_scan.github_repo
   branch_prefix                = local.platform.services.security_scan.branch_prefix
+  telegram_notify_enabled      = local.platform.services.security_scan.telegram_notify_enabled
+  telegram_vault_path          = local.platform.services.security_scan.telegram_vault_path
 }

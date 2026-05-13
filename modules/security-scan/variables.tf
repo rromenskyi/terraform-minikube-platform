@@ -63,3 +63,15 @@ variable "branch_prefix" {
   type        = string
   default     = "security-scan/snapshot"
 }
+
+variable "telegram_notify_enabled" {
+  description = "Whether to DM the operator on Telegram when the snapshot content changed since last run. Requires the operator to have placed a bot's `bot_token` + numeric `chat_id` at `var.telegram_vault_path` in Vault. False (default) skips the VaultStaticSecret + the env wiring entirely; the CronJob runs without notification — PR open is the only signal."
+  type        = bool
+  default     = false
+}
+
+variable "telegram_vault_path" {
+  description = "Vault path (under `secret/data/...`, kv-v2 mount) holding the Telegram bot creds for snapshot notifications. Expected data keys: `bot_token` (the `<id>:<auth>` string from BotFather) and `chat_id` (numeric int — Bot API doesn't accept usernames for DMs, only channel `@names` or numeric chat IDs). Default path lives under `platform/telegram-bots/operator` to leave room for additional bots later. Has no effect when `var.telegram_notify_enabled = false`."
+  type        = string
+  default     = "platform/telegram-bots/operator"
+}

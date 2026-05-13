@@ -574,6 +574,16 @@ services:
     # snapshot_schedule: "0 4 * * 0"                 # default: Sunday 04:00 UTC
     # github_repo: rromenskyi/terraform-minikube-platform
     # branch_prefix: security-scan/snapshot          # branch the snapshot lives on (force-pushed each run)
+    #
+    # Optional Telegram DM notification on snapshot changes. Engine
+    # emits a second VaultStaticSecret pointing at the path below;
+    # operator places `bot_token` (BotFather string) + `chat_id`
+    # (numeric int) at that path. The CronJob's commit-pr step
+    # POSTs to Telegram Bot API after a successful PR open/refresh.
+    # Without these knobs (or empty Vault values) the script
+    # silently skips the curl — PR open is the only signal.
+    # telegram_notify_enabled: false
+    # telegram_vault_path: platform/telegram-bots/operator
 
   buildkitd:
     enabled: false
