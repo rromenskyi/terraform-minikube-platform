@@ -105,6 +105,16 @@ locals {
         controller_tolerations   = []
         scale_sets               = {}
       }
+      security_scan = {
+        enabled                      = false
+        trivy_operator_chart_version = "0.30.0"
+        cache_node_hostname          = "roman-romenskyi-optiplex-7060"
+        trivy_cache_size             = "5Gi"
+        service_monitor_enabled      = false
+        snapshot_schedule            = "0 4 * * 0"
+        github_repo                  = "rromenskyi/terraform-minikube-platform"
+        branch_prefix                = "security-scan/snapshot"
+      }
       backup = {
         enabled                = false
         postgres_databases     = []
@@ -255,6 +265,7 @@ locals {
       platform_dash    = merge(local._platform_defaults.services.platform_dash, try(local._platform_services.platform_dash, {}))
       addons           = merge(local._platform_defaults.services.addons, try(local._platform_services.addons, {}))
       buildkitd        = merge(local._platform_defaults.services.buildkitd, try(local._platform_services.buildkitd, {}))
+      security_scan    = merge(local._platform_defaults.services.security_scan, try(local._platform_services.security_scan, {}))
     }
   }
 
