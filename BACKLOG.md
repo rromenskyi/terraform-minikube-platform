@@ -245,6 +245,43 @@ Reference bundle:
 - [CERN: Rootless container builds on Kubernetes (June 2025)](https://kubernetes.web.cern.ch/blog/2025/06/19/rootless-container-builds-on-kubernetes/)
 - [Sysdig: kube-apparmor-manager pattern](https://www.sysdig.com/blog/manage-apparmor-profiles-in-kubernetes-with-kube-apparmor-manager)
 
+### Re-enable security-scan once we have a pull-through registry mirror
+
+`services.security_scan.enabled: false` since 2026-05-13. The
+trivy-operator install itself is fine, but on first apply it
+spawns one scan Job per running Pod cluster-wide, each Job pulls
+the full target image to a fresh pod, parses layers, and exits.
+On a small home Comcast WAN with ~30 simultaneous scans = bandwidth
+saturation, every other workload's egress dies.
+
+Three options to fix before re-enable:
+
+1. **Pull-through registry mirror on the stateful node** —
+   Distribution v3 (`registry:3`) or Harbor in proxy mode, with
+   nodes configured to use it via containerd `registries.yaml`
+   (`mirrors.<host>.endpoint = ["http://registry.platform.svc:5000"]`).
+   First pull populates cache, subsequent scans hit local. Turns
+   trivy's "30 cold pulls" storm into "30 cache hits". Best
+   long-term answer; benefits image pulls everywhere, not just
+   trivy.
+
+2. **Cap trivy-operator scan concurrency** via Helm value
+   `operator.batchDeleteLimit` / `operator.batchDeleteDelay` plus
+   chart-side `concurrentScanJobsLimit` (check current name in
+   v0.30+ chart). Won't fix saturation if individual pulls are
+   themselves heavy, but spreads them over hours instead of
+   minutes.
+
+3. **Disable continuous scanning, run snapshot Job only** —
+   `operator.vulnerabilityScannerEnabled: false`, then have the
+   snapshot CronJob itself drive a one-shot trivy CLI invocation
+   per image (manual control, scoped to images we care about,
+   skipping ephemeral pods).
+
+Recommended: (1) — needed for the cluster anyway as it grows.
+Until that lands, security-scan stays disabled. Engine code,
+Vault entries, and BACKLOG entry persist for re-enable.
+
 ### Migrate MySQL root password to Vault-mode (bootstrap-safe)
 
 `modules/mysql/main.tf` generates `random_password.root` per
