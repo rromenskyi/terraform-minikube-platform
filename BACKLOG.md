@@ -147,6 +147,61 @@ domains.
 
 ## Medium — quality of life
 
+### Stalwart 0.16 email aliases — research the canonical pattern
+
+Adding "alias addresses on a domain" (e.g. `legal@`, `hello@`,
+`noc@`, `abuse@` all delivering to a single mailbox, plus optionally
+fanning out to external addresses) is unexpectedly painful in the
+v0.16 declarative shape. Findings from a ~1h probing session:
+
+- **`MailingList.recipients`** is `Map<PrincipalId, true>`. Stalwart
+  expands the recipient set into envelope.to as **principal-ID
+  literal strings** (e.g. `"b"`), not the resolved email of the
+  underlying Account. The outbound queue then can't route those —
+  they have no `@domain`, fall to the smarthost route, the relay
+  rejects with `504: need fully-qualified address`. Result: any
+  MailingList with internal Account recipients silently bounces
+  every incoming message on the alias.
+- **`SieveSystemScript`** with `isActive: true` causes the SMTP
+  DATA stage to hang indefinitely (RCPT TO accepted, then no
+  DATA log entry, no queue id, connection drops). Tested with
+  minimal scripts (single internal `redirect :copy`, no `discard`,
+  no externals) — same hang. With sieve deactivated, plain mail to
+  the same mailbox works. Couldn't isolate root cause; unclear if
+  upstream bug, missing wiring, or local config.
+- **`Account.aliases`** is documented as embedded `EmailAlias`
+  (per stalwart-cli error: "EmailAlias is an embedded property of
+  Account or MailingList, not a separate object"). Field shape
+  partly reverse-engineered: `aliases/0/name=...` with bare
+  local-part probably correct (full email rejected with "Invalid
+  email local part"); didn't get to a working full-shape because
+  Stalwart admin UI / docs would be the faster path than blind
+  probing.
+- **MtaRoute smarthost** uses `Address: <IP literal>`; outbound TLS
+  verifier fails with cert-name mismatch even though traffic must
+  travel a private network path (SNI override field doesn't exist
+  on Route). CoreDNS hostname-override workaround already landed
+  for one direction (DSN out to gmail via relay), but the smarthost
+  is configured by IP literal so DNS override doesn't kick in.
+  Either the route spec needs a `serverName` knob or the cert
+  needs a SAN covering the IP.
+
+Action when revisiting:
+1. Stand up Stalwart admin WebUI (already on `mail.<domain>`)
+   and create one alias via UI. Capture the JMAP request the UI
+   sends (browser devtools). That gives the canonical EmailAlias
+   shape directly.
+2. Once shape known, model in engine: per-domain `aliases` map in
+   `services.mail` with target Account ID; engine renders
+   appropriate `Account.aliases` patches in plan.ndjson.
+3. SieveSystemScript hang is a separate bug; defer until needed
+   for actual fan-out (external Gmail forwarding etc.).
+4. Smarthost cert mismatch: extend MtaRoute `Address` to accept
+   hostname (Stalwart resolves it via cluster CoreDNS, picks up
+   the hostname-override map), OR enable `allowInvalidCerts: true`
+   on a per-route basis since the underlying network path is
+   already trust-bounded.
+
 ### BuildKit — switch to rootless image + per-binary AppArmor profile
 
 Current shape (`modules/buildkitd`): rootful `moby/buildkit` image,
