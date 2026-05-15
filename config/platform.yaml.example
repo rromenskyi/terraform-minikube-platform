@@ -550,6 +550,45 @@ services:
   # unprivileged user-namespace creation. CERN privileged-in-userns
   # sidesteps the hook and is the upstream-documented production
   # pattern.
+  coredns:
+    # In-cluster DNS overrides — emit a `coredns-custom` ConfigMap
+    # in `kube-system` carrying a `hosts` block. Each (hostname, ip)
+    # pair below makes Pods inside this cluster resolve `hostname`
+    # to the given IP, regardless of public DNS. Public records are
+    # untouched. Use case: routing outbound traffic to a hostname
+    # whose canonical public IP isn't reachable from inside the
+    # cluster (e.g. residential ISP routing, WG-mesh-only relays).
+    # Empty map (default) = ConfigMap not emitted, CoreDNS unchanged.
+    # host_overrides:
+    #   relay.example.com: 10.x.x.x
+
+  seafile:
+    # Single-pod Seafile community edition — file storage with
+    # library-based sync, OIDC SSO via Zitadel, behind the platform's
+    # Traefik tunnel. Requires `services.mysql` + `services.redis`
+    # enabled (Seafile 13 CE is MySQL-only, Redis is its default
+    # cache backend). Engine pre-creates the three Seafile databases
+    # (`ccnet_db`, `seafile_db`, `seahub_db`) + scoped `seafile`
+    # MySQL user via a one-shot setup Job.
+    #
+    # After first apply, the bootstrap admin password is surfaced
+    # via `terraform output -raw seafile_admin_password` — operator
+    # logs into Seahub once with that, then rotates through the UI
+    # and logs in via Zitadel SSO thereafter.
+    enabled: false
+    # external_hostname: cloud.example.com   # the public hostname Seahub serves at
+    # admin_email: operator@example.com      # bootstrap super-user email
+    # image_tag: 13.0.21                     # upstream `seafileltd/seafile-mc` tag
+    # storage_class: longhorn                # /shared PVC StorageClass
+    # storage_size: 100Gi                    # /shared PVC capacity
+    # timezone: Etc/UTC
+    # cpu_request: 200m
+    # cpu_limit: "2"
+    # memory_request: 512Mi
+    # memory_limit: 2Gi
+    # node_selector: { workload-tier: stateful }   # PVC RWO + Longhorn → pin if needed
+    # tolerations: []
+
   security_scan:
     enabled: false
     # Continuous CVE scanning of platform-system images. Two layers:
