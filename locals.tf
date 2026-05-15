@@ -105,6 +105,25 @@ locals {
         controller_tolerations   = []
         scale_sets               = {}
       }
+      coredns = {
+        host_overrides = {}
+      }
+      seafile = {
+        enabled           = false
+        namespace         = "seafile"
+        image_tag         = "13.0.21"
+        external_hostname = ""
+        admin_email       = ""
+        storage_class     = "longhorn"
+        storage_size      = "100Gi"
+        timezone          = "Etc/UTC"
+        cpu_request       = "200m"
+        cpu_limit         = "2"
+        memory_request    = "512Mi"
+        memory_limit      = "2Gi"
+        node_selector     = {}
+        tolerations       = []
+      }
       security_scan = {
         enabled                      = false
         trivy_operator_chart_version = "0.30.0"
@@ -267,6 +286,8 @@ locals {
       platform_dash    = merge(local._platform_defaults.services.platform_dash, try(local._platform_services.platform_dash, {}))
       addons           = merge(local._platform_defaults.services.addons, try(local._platform_services.addons, {}))
       buildkitd        = merge(local._platform_defaults.services.buildkitd, try(local._platform_services.buildkitd, {}))
+      coredns          = merge(local._platform_defaults.services.coredns, try(local._platform_services.coredns, {}))
+      seafile          = merge(local._platform_defaults.services.seafile, try(local._platform_services.seafile, {}))
       security_scan    = merge(local._platform_defaults.services.security_scan, try(local._platform_services.security_scan, {}))
     }
   }
