@@ -7,6 +7,15 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- IngressRoute renamed from `seafile` to `seafile-fileserver` and
+  scoped to the `/seafhttp` path only. The catch-all `Host(...)` →
+  Seahub :80 route is no longer engine-emitted — it lands via the
+  standard operator-side `kind: external` component yaml +
+  domain-yaml route entry (same pattern Roundcube/mail uses), so
+  the hostname mapping lives in one place (the domain yaml) and
+  doesn't compete with an engine-side catch-all on the same host.
+
 ### Added
 - Initial release. Single-pod Deployment of upstream
   `seafileltd/seafile-mc:13.x` (Seahub + ccnet + fileserver bundled).
