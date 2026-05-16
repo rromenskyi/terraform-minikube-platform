@@ -478,11 +478,22 @@ resource "kubernetes_service_v1" "this" {
   }
 }
 
-# ── Traefik IngressRoute ────────────────────────────────────────────────────
+# ── Traefik IngressRoute — `/seafhttp` only ─────────────────────────────────
 #
-# Splits traffic by path:
-#   /seafhttp/* → fileserver (port 8082), strip the `/seafhttp` prefix
-#   everything else → Seahub (port 80)
+# The CATCH-ALL `Host(...)` → Seahub :80 route is intentionally NOT
+# emitted here. That's the canonical generic-route surface every
+# platform-level app uses: operator declares a `kind: external`
+# component yaml + the route in their domain yaml, engine project
+# machinery materialises the catch-all IngressRoute. Emitting one
+# here in addition would compete for the same hostname with no
+# priority discriminator (see feedback_traefik_ingressroute_priority_conflicts).
+#
+# `/seafhttp/*` IS engine-emitted because it's a path the operator
+# shouldn't have to know about — Seafile's fileserver lives on a
+# different port (:8082) than Seahub (:80), and the prefix has to
+# be stripped before forwarding. That's plumbing, not routing
+# decision. Priority 100 wins over the generic catch-all (priority
+# 0 by default).
 
 resource "kubernetes_manifest" "fileserver_strip_middleware" {
   for_each = local.set
@@ -503,7 +514,7 @@ resource "kubernetes_manifest" "fileserver_strip_middleware" {
   }
 }
 
-resource "kubectl_manifest" "ingressroute" {
+resource "kubectl_manifest" "ingressroute_fileserver" {
   for_each = local.set
 
   depends_on = [
@@ -515,7 +526,7 @@ resource "kubectl_manifest" "ingressroute" {
     apiVersion = "traefik.io/v1alpha1"
     kind       = "IngressRoute"
     metadata = {
-      name      = "seafile"
+      name      = "seafile-fileserver"
       namespace = kubernetes_namespace_v1.this["enabled"].metadata[0].name
       labels    = local.tags
     }
@@ -523,10 +534,8 @@ resource "kubectl_manifest" "ingressroute" {
       entryPoints = ["websecure"]
       routes = [
         {
-          match = "Host(`${var.external_hostname}`) && PathPrefix(`/seafhttp`)"
-          kind  = "Rule"
-          # Higher priority so this route wins over the catch-all
-          # below; otherwise PathPrefix matchers can race.
+          match    = "Host(`${var.external_hostname}`) && PathPrefix(`/seafhttp`)"
+          kind     = "Rule"
           priority = 100
           services = [
             {
@@ -538,16 +547,6 @@ resource "kubectl_manifest" "ingressroute" {
             {
               name      = "seafile-strip-fileserver"
               namespace = kubernetes_namespace_v1.this["enabled"].metadata[0].name
-            }
-          ]
-        },
-        {
-          match = "Host(`${var.external_hostname}`)"
-          kind  = "Rule"
-          services = [
-            {
-              name = kubernetes_service_v1.this["enabled"].metadata[0].name
-              port = 80
             }
           ]
         }
