@@ -60,6 +60,13 @@ variable "redis_port" {
   default     = 6379
 }
 
+variable "redis_password" {
+  description = "Sensitive — password for the `default` Redis user. Seafile 13 doesn't get its own scoped ACL user (no per-app provisioner Job at engine-level for Seafile), so it uses the default user with full access. Caller wires from `module.redis.default_password`."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
 variable "storage_class" {
   description = "StorageClass used for the `/shared` PVC carrying Seafile's library blocks, ccnet state, conf, and logs. Convention is `longhorn` so the volume survives node loss. Empty string falls back to the cluster's default StorageClass."
   type        = string

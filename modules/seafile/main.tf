@@ -184,26 +184,18 @@ resource "kubernetes_secret_v1" "bootstrap" {
     CACHE_PROVIDER                   = "redis"
     REDIS_HOST                       = var.redis_host
     REDIS_PORT                       = tostring(var.redis_port)
+    REDIS_PASSWORD                   = var.redis_password
     TIME_ZONE                        = var.timezone
     SEAFILE_LOG_TO_STDOUT            = "true"
   }
 }
 
-# ── Seahub settings ConfigMap (OIDC + reverse-proxy URL) ────────────────────
-
-resource "kubernetes_config_map_v1" "seahub_settings" {
-  for_each = local.set
-
-  metadata {
-    name      = "seafile-seahub-settings"
-    namespace = kubernetes_namespace_v1.this["enabled"].metadata[0].name
-    labels    = local.tags
-  }
-
-  data = {
-    "seahub_settings.py" = local.seahub_settings_py
-  }
-}
+# NOTE: seahub_settings.py was emitted as a ConfigMap and mounted via
+# subPath overlay; that conflicts with Seafile's first-boot bootstrap
+# which writes the file (populates DB creds, SECRET_KEY, etc.) — a
+# read-only overlay kills bootstrap. Deferred until a postStart-append
+# pattern lands. OIDC configured via Seahub admin UI after first
+# password login.
 
 # ── Persistent volume for /shared ───────────────────────────────────────────
 
@@ -340,9 +332,8 @@ resource "kubernetes_deployment_v1" "this" {
         })
         annotations = {
           # Per the platform consumer-checksum convention — re-roll
-          # the pod when bootstrap secret or seahub settings rotate.
-          "checksum/bootstrap"       = sha256(jsonencode(kubernetes_secret_v1.bootstrap["enabled"].data))
-          "checksum/seahub-settings" = sha256(local.seahub_settings_py)
+          # the pod when bootstrap secret rotates.
+          "checksum/bootstrap" = sha256(jsonencode(kubernetes_secret_v1.bootstrap["enabled"].data))
         }
       }
       spec {
@@ -393,36 +384,42 @@ resource "kubernetes_deployment_v1" "this" {
             mount_path = "/shared"
           }
 
-          # Overlay seahub_settings.py inside the bootstrapped conf
-          # dir. subPath keeps the rest of `/shared/seafile/conf/`
-          # writable for the Seafile installer to populate other
-          # config files on first boot.
-          volume_mount {
-            name       = "seahub-settings"
-            mount_path = "/shared/seafile/conf/seahub_settings.py"
-            sub_path   = "seahub_settings.py"
-          }
+          # NOTE: seahub_settings.py overlay via ConfigMap subPath
+          # was attempted but conflicts with Seafile's first-boot
+          # bootstrap which WRITES the file (populates DB creds,
+          # SECRET_KEY, etc.). Read-only mount kills bootstrap with
+          # "OSError: [Errno 30] Read-only file system". Canonical
+          # workaround is a postStart hook that APPENDS our config
+          # after bootstrap settles — deferred. For MVP, operator
+          # configures OIDC manually via Seahub admin UI after first
+          # password login (bootstrap admin password is in TF
+          # output). See modules/seafile/README.md.
 
+          # Seafile's all-in-one bootstrap is slow on first start
+          # (MySQL schema population, Django migrations, ccnet init,
+          # nginx upstream warmup). Liveness with a tight kill timer
+          # creates restart-loop death spiral on first-boot. Drop
+          # liveness entirely and rely on readiness — restarting an
+          # actually-deadlocked Seafile is operator's call, not
+          # kubelet's. Readiness initialDelay set generously (5min)
+          # so probe doesn't ding the pod while bootstrap is still
+          # populating the DB.
+          # TCP probe (not HTTP) because Seahub's `/` returns 302 to
+          # `/accounts/login/`, kubelet follows that, login render
+          # can take >15s on a constrained node, probe times out
+          # waiting for headers, pod never reaches Ready. TCP only
+          # checks nginx is listening on :80 — sufficient signal
+          # for ingress routing; deeper health goes through real
+          # Seahub paths from external clients.
           readiness_probe {
-            http_get {
-              path = "/"
+            tcp_socket {
               port = 80
             }
-            initial_delay_seconds = 60
-            period_seconds        = 30
-            timeout_seconds       = 10
-            failure_threshold     = 6
-          }
-
-          liveness_probe {
-            http_get {
-              path = "/"
-              port = 80
-            }
-            initial_delay_seconds = 180
-            period_seconds        = 60
-            timeout_seconds       = 15
-            failure_threshold     = 3
+            initial_delay_seconds = 120
+            period_seconds        = 15
+            timeout_seconds       = 3
+            failure_threshold     = 10
+            success_threshold     = 1
           }
         }
 
@@ -433,12 +430,6 @@ resource "kubernetes_deployment_v1" "this" {
           }
         }
 
-        volume {
-          name = "seahub-settings"
-          config_map {
-            name = kubernetes_config_map_v1.seahub_settings["enabled"].metadata[0].name
-          }
-        }
       }
     }
   }
