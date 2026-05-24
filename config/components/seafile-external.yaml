@@ -1,0 +1,26 @@
+# cloud.<domain> root → Seafile community edition (Seahub UI).
+#
+# Seahub is the Django web UI for Seafile — file libraries, sharing,
+# OIDC sign-in, etc. The actual file blob transport lives at the
+# `/seafhttp` path served by Seafile's separate `fileserver` on port
+# 8082; an additional IngressRoute claiming that path is emitted
+# directly by `modules/seafile` with priority above this generic
+# catch-all, so blob upload/download goes straight to the
+# fileserver pod while everything else lands on Seahub.
+#
+# Auth flow (browser-only, OIDC end-to-end after first-boot admin):
+#   1. user opens https://cloud.<domain>/
+#   2. Seahub redirects to Zitadel /authorize (PKCE auth-code flow)
+#   3. Zitadel returns a code → Seahub exchanges it for an id_token
+#   4. Seahub maps `sub` → uid (auto-provisions on first login per
+#      OAUTH_CREATE_UNKNOWN_USER=True in seahub_settings.py)
+#
+# The bootstrap super-user (password surfaced via
+# `./tf output -raw seafile_admin_password`) is a break-glass for
+# OIDC outages — operator rotates it via Seahub UI on first login.
+kind: external
+
+service:
+  name:      seafile
+  namespace: seafile
+  port:      80

@@ -54,8 +54,15 @@ module "seafile_oidc" {
   redirect_uris    = ["https://${local.platform.services.seafile.external_hostname}/oauth/callback/"]
   post_logout_uris = ["https://${local.platform.services.seafile.external_hostname}/"]
 
+  # OIDC Secret targeted at `platform` ns (always exists at apply
+  # time) rather than the Seafile ns — avoids a chicken-and-egg
+  # between this module (creates the Secret) and module.seafile
+  # (creates the ns + consumes client_id/secret via TF outputs into
+  # the seahub_settings.py ConfigMap, not via Secret envFrom). The
+  # Secret itself is currently unused; left in place for future
+  # operators who may swap to env-from-Secret chart-side consumption.
   secret_name      = "seafile-oidc"
-  secret_namespace = local.platform.services.seafile.namespace
+  secret_namespace = "platform"
 
   # Single role for now — anyone with seafile_user can sign in.
   # Seafile-side admin is still the bootstrap super-user; no
@@ -81,8 +88,9 @@ module "seafile" {
   mysql_port          = 3306
   mysql_root_password = local.platform.services.mysql.enabled ? module.mysql.root_password : ""
 
-  redis_host = "redis.platform.svc.cluster.local"
-  redis_port = 6379
+  redis_host     = "redis.platform.svc.cluster.local"
+  redis_port     = 6379
+  redis_password = local.platform.services.redis.enabled ? module.redis.default_password : ""
 
   storage_class = local.platform.services.seafile.storage_class
   storage_size  = local.platform.services.seafile.storage_size
