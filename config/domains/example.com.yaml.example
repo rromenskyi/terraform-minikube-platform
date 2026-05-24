@@ -9,6 +9,21 @@ name: example.com                              # Domain name (used in hostnames)
 slug: example-com                              # URL-safe slug (used in namespace names)
 cloudflare_zone_id: "your-zone-id-from-cf"     # Cloudflare Zone ID for this domain
 
+# (Optional) Enable DNSSEC on this zone. Engine emits a
+# `cloudflare_zone_dnssec` resource that flips the zone's DNSSEC
+# status to active. Default false — DNSSEC stays off.
+#
+# After apply, the operator submits DS records to the parent
+# registrar (only needed when the registrar is NOT Cloudflare itself;
+# Cloudflare-registered domains auto-chain). DS values are surfaced
+# via the platform output `cloudflare_dnssec_ds_records[<name>]`.
+#
+# Disabling (removing the flag or setting false) IS destructive —
+# tears down DNSSEC at the zone; parent DS records would need manual
+# removal at the registrar to avoid resolution breakage.
+#
+# dnssec_enabled: true
+
 # (Optional) Mail-stack opt-in. Exactly ONE domain across all
 # `config/domains/*.yaml` files should set `mail.primary: true` —
 # that domain becomes the home of the platform mail stack
