@@ -49,12 +49,17 @@ locals {
   # idempotently rather than asking the operator to pre-create.
   scale_set_namespaces = distinct([for _, s in local.scale_set_targets : s.namespace])
 
-  # Scale sets in vault-mode — operator places the PAT in Vault under
-  # `secret/data/platform/github-runner-tokens/<scale-set-key>` (one
-  # data key: `github_token`); engine emits a VaultStaticSecret CR
-  # per entry, VSO syncs into a `<scale-set-key>-github-pat` Secret in
-  # the scale set's namespace. Chart consumes the same Secret name as
-  # in operator-tokens-mode — only the source-of-truth differs.
+  # Scale sets in vault-mode — operator places GitHub auth credentials
+  # in Vault under `secret/data/platform/github-runner-tokens/<scale-set-key>`;
+  # engine emits a VaultStaticSecret CR per entry, VSO syncs the path
+  # 1:1 into a `<scale-set-key>-github-pat` Secret in the scale set's
+  # namespace. The ARC chart auto-detects PAT vs GitHub-App based on
+  # which keys are present in the Secret — supply EITHER `github_token`
+  # (PAT) OR the GitHub-App triple `github_app_id` + `github_app_installation_id`
+  # + `github_app_private_key`. App is preferred for new entries (no
+  # listener-config staleness on rotation, scoped permissions). Chart
+  # consumes the same Secret name as in operator-tokens-mode — only the
+  # source-of-truth and the field shape differ.
   vault_mode_targets = {
     for k, v in local.scale_set_targets :
     k => v
@@ -196,19 +201,30 @@ resource "kubernetes_service_account_v1" "vso_proxy" {
   }
 }
 
-# ── Vault-mode PAT (preferred path for new entries) ────────────────────────
+# ── Vault-mode auth (preferred path for new entries) ───────────────────────
 #
 # Triggers when scale-set entry has `vault: true`. Engine emits a
 # VaultStaticSecret CR pointing at the convention path
-# `secret/data/platform/github-runner-tokens/<scale-set-key>`
-# (operator places the PAT under one data key: `github_token`).
-# VSO syncs into a `<scale-set-key>-github-pat` Secret in the scale
-# set's namespace — same name the chart's listener-pod expects, so
-# downstream wiring is identical to operator-tokens-mode.
+# `secret/data/platform/github-runner-tokens/<scale-set-key>`. VSO
+# syncs every key 1:1 into a `<scale-set-key>-github-pat` Secret in
+# the scale set's namespace — same name the chart's listener-pod
+# expects, so downstream wiring is identical to operator-tokens-mode.
 #
-# Operator path: open Vault UI → Secrets → secret/ → Create →
-# `platform/github-runner-tokens/<scale-set-key>` → set one key
-# `github_token` to the `ghp_*` value. No `.env` entry needed.
+# Chart auto-detects PAT vs GitHub-App by which keys it finds in the
+# mounted Secret. Operator places EITHER:
+#
+#   - PAT mode:    `github_token = ghp_*`
+#   - App mode:    `github_app_id = <numeric>`,
+#                  `github_app_installation_id = <numeric>`,
+#                  `github_app_private_key = <PEM, multi-line OK>`
+#
+# App is preferred for new entries — no PAT listener-config staleness
+# on rotation (feedback_arc_listener_config_secret_stale), scoped
+# permissions, no SAML-bound user account, internal token rotation.
+#
+# Operator path: Vault UI → Secrets → secret/ → Create →
+# `platform/github-runner-tokens/<scale-set-key>` → add the right
+# keys. No `.env` entry needed.
 resource "kubectl_manifest" "github_pat_vault" {
   for_each = local.vault_mode_targets
 

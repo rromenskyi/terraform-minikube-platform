@@ -24,6 +24,11 @@ module "github_runners" {
 }
 
 output "github_runners_scale_sets" {
-  description = "List of installed runner scale set names. Empty when disabled or no scale sets configured."
+  description = "List of installed runner scale set names. Empty when disabled or no scale sets configured. Retained for backward compatibility — prefer `github_runners_scale_set_info` or the aggregated `platform_connection_info.github_runners` for new consumers (richer schema, includes the `runs-on:` label and config URL needed to wire workflows)."
   value       = module.github_runners.scale_set_names
+}
+
+output "github_runners_scale_set_info" {
+  description = "Map of installed runner scale sets with the non-secret coordinates a downstream consumer (workflow files in other repos, sibling Terraform stacks) needs to wire CI without grepping platform.yaml. Keyed by scale-set name. Values include `runs_on_label`, `github_config_url`, `namespace`, `min_runners`, `max_runners`. Schema is additive — new fields may appear without notice, existing fields are stable. Also surfaced inside `platform_connection_info.github_runners` for consumers that want one aggregated entry point."
+  value       = module.github_runners.scale_sets
 }
