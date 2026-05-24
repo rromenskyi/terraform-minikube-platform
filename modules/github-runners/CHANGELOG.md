@@ -7,6 +7,17 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- **Vault-mode (`vault: true`) now documented as accepting GitHub-App credentials
+  alongside PAT.** No code change — the ARC chart auto-detects PAT vs App by
+  which keys are present in the Secret, so VSO syncs whatever the operator put
+  in Vault. Operator places EITHER `github_token` (PAT mode, legacy) OR the
+  App triple `github_app_id` + `github_app_installation_id` +
+  `github_app_private_key` (App mode, preferred for new entries — no listener-
+  config staleness on rotation, scoped permissions, no SAML-bound user
+  account). Existing PAT-shape entries unaffected. Docstring on `var.scale_sets`
+  and the vault-mode block comment in `main.tf` updated.
+
 ### Added
 - **Vault-mode for GitHub PAT delivery — `vault: true` on a `scale_sets` entry.**
   Third auth path alongside the existing operator-tokens-mode (`var.tokens`
