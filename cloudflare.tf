@@ -163,14 +163,16 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "main" {
         }
       ],
       # Platform-level public hostnames not bound to a tenant project
-      # (e.g. the cluster OIDC discovery endpoint). Backend always
-      # Traefik — these are engine-emitted IngressRoutes inside
-      # platform-owned namespaces. Empty list when no platform-level
-      # hostnames are enabled.
+      # (e.g. the cluster OIDC discovery endpoint). Backend = plain
+      # HTTP to Traefik on :80 — matches the platform-wide convention
+      # for tunnel-fronted hostnames (Cloudflare terminates TLS at the
+      # edge with its anycast cert; Traefik gets cleartext HTTP on the
+      # `web` entryPoint and routes to the engine-emitted IngressRoute).
+      # Empty list when no platform-level hostnames are enabled.
       local.platform.services.cluster_oidc.enabled && local.platform.services.cluster_oidc.external_hostname != "" ? [
         {
           hostname = local.platform.services.cluster_oidc.external_hostname
-          service  = "https://traefik.ingress-controller.svc:443"
+          service  = "http://traefik.ingress-controller.svc.cluster.local:80"
           origin_request = {
             origin_server_name = local.platform.services.cluster_oidc.external_hostname
             http2_origin       = false

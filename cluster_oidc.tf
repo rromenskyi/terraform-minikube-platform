@@ -341,8 +341,15 @@ resource "kubectl_manifest" "cluster_oidc_ingressroute" {
         "app.kubernetes.io/component"  = "cluster-oidc-proxy"
       }
     }
+    # entryPoint `web` (plain HTTP, port 80) matches the platform-wide
+    # convention: Cloudflare Tunnel terminates TLS at the edge using
+    # its anycast certificate and forwards plain HTTP to Traefik.
+    # Traefik does not need to terminate TLS itself, so no `tls:`
+    # block and no certResolver — that path would require a per-host
+    # cert in cluster, which the operator does not manage for
+    # tunnel-fronted hostnames.
     spec = {
-      entryPoints = ["websecure"]
+      entryPoints = ["web"]
       routes = [
         {
           match = "Host(`${local.platform.services.cluster_oidc.external_hostname}`) && (Path(`/.well-known/openid-configuration`) || Path(`/openid/v1/jwks`))"
@@ -356,9 +363,6 @@ resource "kubectl_manifest" "cluster_oidc_ingressroute" {
           ]
         }
       ]
-      tls = {
-        certResolver = "letsencrypt"
-      }
     }
   })
 }
