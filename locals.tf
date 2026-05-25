@@ -108,6 +108,12 @@ locals {
       coredns = {
         host_overrides = {}
       }
+      cluster_oidc = {
+        enabled           = false
+        external_hostname = ""
+        node_selector     = {}
+        tolerations       = []
+      }
       seafile = {
         enabled           = false
         namespace         = "seafile"
@@ -287,6 +293,7 @@ locals {
       addons           = merge(local._platform_defaults.services.addons, try(local._platform_services.addons, {}))
       buildkitd        = merge(local._platform_defaults.services.buildkitd, try(local._platform_services.buildkitd, {}))
       coredns          = merge(local._platform_defaults.services.coredns, try(local._platform_services.coredns, {}))
+      cluster_oidc     = merge(local._platform_defaults.services.cluster_oidc, try(local._platform_services.cluster_oidc, {}))
       seafile          = merge(local._platform_defaults.services.seafile, try(local._platform_services.seafile, {}))
       security_scan    = merge(local._platform_defaults.services.security_scan, try(local._platform_services.security_scan, {}))
     }
