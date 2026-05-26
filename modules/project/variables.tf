@@ -85,6 +85,12 @@ variable "ollama_url" {
   default     = null
 }
 
+variable "gcp_wif_pool_provider_audience" {
+  description = "Cluster-wide WIF audience (`//iam.googleapis.com/projects/<NUMBER>/locations/global/workloadIdentityPools/<POOL>/providers/<PROVIDER>`) used in both the projected SA token's `aud` claim AND in the rendered `credential-config.json` for every component opted into GCP Workload Identity Federation via `gcp_wif.gcp_service_account` on its component yaml. Empty string disables WIF wiring; component-level opt-in then fails a plan-time check. Sourced from `services.gcp_wif.pool_provider_audience` at the root."
+  type        = string
+  default     = ""
+}
+
 variable "zitadel_org_id" {
   description = "Zitadel org id where `kind: app` components auto-provision projects + applications. Caller resolves at root via `data \"zitadel_orgs\" \"platform_org\"` and passes the value down. Owning the data source at root rather than inside this module avoids the apply-time defer that propagates as `must be replaced` on every downstream resource whenever any consumer module declares `depends_on = [module.zitadel]`."
   type        = string

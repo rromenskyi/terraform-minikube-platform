@@ -52,6 +52,20 @@ locals {
   # accidentally match) and not inside an `@`-separated digest.
   rbac_instances = length(var.cluster_role_rules) > 0 ? toset(["enabled"]) : toset([])
 
+  # GCP Workload Identity Federation: pod opts in via a non-null
+  # credential-config ConfigMap name from the caller. Drives the
+  # projected-token volume, the ConfigMap mount, and the env var
+  # consumed by GCP SDKs. Validated at the top of the file so a
+  # missing audience surfaces at plan time, not at apply.
+  gcp_wif_instances = var.gcp_wif_credential_configmap_name != null ? toset(["enabled"]) : toset([])
+
+  # Pod gets a dedicated ServiceAccount when EITHER it needs RBAC for
+  # in-cluster k8s API calls (cluster_role_rules) OR it opts into GCP
+  # WIF (the principalSet:// binding on the GCP side resolves against
+  # the specific `<ns>:<sa>` pair — sharing the namespace `default`
+  # SA would broaden the binding to every pod in the ns).
+  sa_instances = (length(var.cluster_role_rules) > 0 || var.gcp_wif_credential_configmap_name != null) ? toset(["enabled"]) : toset([])
+
   effective_image_pull_policy = (
     var.image_pull_policy != null
     ? var.image_pull_policy
@@ -174,7 +188,7 @@ resource "kubernetes_config_map_v1" "files" {
 # `<namespace>-<component>` so they don't collide cluster-wide.
 
 resource "kubernetes_service_account_v1" "this" {
-  for_each = local.rbac_instances
+  for_each = local.sa_instances
 
   metadata {
     name      = var.name
@@ -245,10 +259,12 @@ resource "kubernetes_deployment_v1" "this" {
       }
 
       spec {
-        # Custom SA when cluster_role_rules is non-empty; default SA
-        # otherwise. K8s defaults to "default" SA in the namespace —
-        # leaving service_account_name unset preserves that.
-        service_account_name = length(var.cluster_role_rules) > 0 ? kubernetes_service_account_v1.this["enabled"].metadata[0].name : null
+        # Custom SA when the component needs RBAC (cluster_role_rules)
+        # OR opts into GCP WIF (gcp_wif_credential_configmap_name) —
+        # see local.sa_instances. K8s defaults to "default" SA when
+        # unset, which is the historical behaviour for components
+        # opting into neither.
+        service_account_name = length(local.sa_instances) > 0 ? kubernetes_service_account_v1.this["enabled"].metadata[0].name : null
 
         # Pod placement: node_selector, tolerations, affinity. All
         # default to empty so this block is a no-op for existing
@@ -562,6 +578,19 @@ resource "kubernetes_deployment_v1" "this" {
             }
           }
 
+          # GCP WIF — single env var that points GCP SDKs at the
+          # mounted external_account credential-config.json. Mounts
+          # for the file + the projected SA token volume are added
+          # under volume_mounts further down; the projected SA token
+          # volume itself is added under pod.spec.volume.
+          dynamic "env" {
+            for_each = local.gcp_wif_instances
+            content {
+              name  = "GOOGLE_APPLICATION_CREDENTIALS"
+              value = "/var/run/secrets/gcp/creds/credential-config.json"
+            }
+          }
+
           # Random-value env vars — one key per entry in the component's
           # `env_random:` list (e.g. WEBUI_SECRET_KEY). Values persist in
           # terraform state across applies. Emitted as explicit `env`
@@ -667,6 +696,27 @@ resource "kubernetes_deployment_v1" "this" {
               name       = "git-content"
               mount_path = volume_mount.value.mount
               sub_path   = "current"
+              read_only  = true
+            }
+          }
+
+          # GCP WIF — token (projected serviceAccountToken) +
+          # credential-config (ConfigMap). Both read-only; GCP SDK
+          # opens the token file fresh on every STS refresh (kubelet
+          # rotates the projected token in place ahead of expiry).
+          dynamic "volume_mount" {
+            for_each = local.gcp_wif_instances
+            content {
+              name       = "gcp-wif-token"
+              mount_path = "/var/run/secrets/gcp/tokens"
+              read_only  = true
+            }
+          }
+          dynamic "volume_mount" {
+            for_each = local.gcp_wif_instances
+            content {
+              name       = "gcp-wif-creds"
+              mount_path = "/var/run/secrets/gcp/creds"
               read_only  = true
             }
           }
@@ -822,6 +872,40 @@ resource "kubernetes_deployment_v1" "this" {
           content {
             name = "git-content"
             empty_dir {}
+          }
+        }
+
+        # GCP WIF — projected serviceAccountToken with the audience
+        # the operator's WIF pool provider expects. Kubelet rotates
+        # the token in place ahead of expiry; GCP SDKs re-read the
+        # file on STS exchange.
+        dynamic "volume" {
+          for_each = local.gcp_wif_instances
+          content {
+            name = "gcp-wif-token"
+            projected {
+              sources {
+                service_account_token {
+                  audience           = var.gcp_wif_audience
+                  expiration_seconds = 3600
+                  path               = "token"
+                }
+              }
+            }
+          }
+        }
+
+        # GCP WIF — credential-config.json ConfigMap mount. Caller
+        # (modules/project) renders the ConfigMap with the
+        # `external_account` GCP SDK shape; component just mounts
+        # it.
+        dynamic "volume" {
+          for_each = local.gcp_wif_instances
+          content {
+            name = "gcp-wif-creds"
+            config_map {
+              name = var.gcp_wif_credential_configmap_name
+            }
           }
         }
 

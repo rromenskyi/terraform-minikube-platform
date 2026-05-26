@@ -114,6 +114,18 @@ locals {
         node_selector     = {}
         tolerations       = []
       }
+      # Cluster-wide constants for GCP Workload Identity Federation.
+      # `pool_provider_audience` must equal the full WIF pool provider
+      # path the operator configured GCP-side (the same string GCP STS
+      # validates against incoming projected SA token `aud` claims).
+      # One audience per cluster — per-binding parameterisation is not
+      # needed; the only per-component value is the impersonated GCP
+      # SA email, which lives on each component yaml under `gcp_wif:`.
+      # Disabled (empty audience) is the default; component-level
+      # opt-in fails a plan-time check when the audience is empty.
+      gcp_wif = {
+        pool_provider_audience = ""
+      }
       seafile = {
         enabled           = false
         namespace         = "seafile"
@@ -294,6 +306,7 @@ locals {
       buildkitd        = merge(local._platform_defaults.services.buildkitd, try(local._platform_services.buildkitd, {}))
       coredns          = merge(local._platform_defaults.services.coredns, try(local._platform_services.coredns, {}))
       cluster_oidc     = merge(local._platform_defaults.services.cluster_oidc, try(local._platform_services.cluster_oidc, {}))
+      gcp_wif          = merge(local._platform_defaults.services.gcp_wif, try(local._platform_services.gcp_wif, {}))
       seafile          = merge(local._platform_defaults.services.seafile, try(local._platform_services.seafile, {}))
       security_scan    = merge(local._platform_defaults.services.security_scan, try(local._platform_services.security_scan, {}))
     }
