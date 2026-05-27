@@ -951,6 +951,12 @@ resource "kubernetes_deployment_v1" "stalwart" {
         # come up against an empty data dir.
         node_selector = length(var.node_selector) > 0 ? var.node_selector : null
 
+        # Explicit "default" — the kubernetes TF provider doesn't
+        # reliably clear a previously-set string field by omission,
+        # so removing this line silently leaves the live Deployment
+        # pinned to whatever SA was last assigned.
+        service_account_name = "default"
+
         dynamic "toleration" {
           for_each = var.tolerations
           content {
