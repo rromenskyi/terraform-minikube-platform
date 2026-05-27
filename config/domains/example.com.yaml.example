@@ -24,6 +24,21 @@ cloudflare_zone_id: "your-zone-id-from-cf"     # Cloudflare Zone ID for this dom
 #
 # dnssec_enabled: true
 
+# (Optional) Zone-wide 301 redirect to a canonical target. When set,
+# the engine emits a Traefik IngressRoute + RedirectRegex Middleware
+# (via `modules/redirect-domain`) and folds the apex + `*.<this>`
+# hostnames into the Cloudflare Tunnel + DNS CNAME machinery so
+# requests reach Traefik. Path + query preserved. Status 301.
+#
+# A redirect-only domain typically carries ONLY name/slug/zone_id/
+# dnssec/redirect_to — `envs`, `mail`, `dns` etc are unrelated to
+# this concern and shouldn't be set on the source zone.
+#
+# When CF is dropped later (direct A-records on public IPs), the same
+# IngressRoute keeps serving — only the DNS layer flips.
+#
+# redirect_to: new.example.com
+
 # (Optional) Mail-stack opt-in. Exactly ONE domain across all
 # `config/domains/*.yaml` files should set `mail.primary: true` —
 # that domain becomes the home of the platform mail stack
