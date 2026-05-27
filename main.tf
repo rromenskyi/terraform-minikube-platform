@@ -216,6 +216,11 @@ module "project" {
   redis_helm_revision       = module.redis.helm_revision
   ollama_url                = module.ollama.url
 
+  # GCP Workload Identity Federation — cluster-wide audience the
+  # operator's WIF pool provider expects. Empty string disables
+  # component-level wiring (default).
+  gcp_wif_pool_provider_audience = local.platform.services.gcp_wif.pool_provider_audience
+
   # Zitadel — issuer URL is null when `services.zitadel.enabled = false`,
   # which trips the project-level check on any `kind: app` component
   # that opted into oidc. `zitadel_org_id` flows from the root-owned

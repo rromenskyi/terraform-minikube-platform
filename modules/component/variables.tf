@@ -120,6 +120,18 @@ variable "oidc_secret_name" {
   default     = null
 }
 
+variable "gcp_wif_credential_configmap_name" {
+  description = "Name of the ConfigMap carrying the GCP external_account `credential-config.json` for this component. Null = component is not opted into GCP Workload Identity Federation (the default). When set, the engine: (1) creates a dedicated ServiceAccount for the pod (so the `principalSet://...subject/system:serviceaccount:<ns>:<sa>` binding on the GCP side resolves to ONLY this component, not the namespace's shared `default` SA); (2) mounts a projected `serviceAccountToken` volume at `/var/run/secrets/gcp/tokens/token` with the audience supplied via `var.gcp_wif_audience`; (3) mounts the ConfigMap at `/var/run/secrets/gcp/creds`; (4) sets `GOOGLE_APPLICATION_CREDENTIALS=/var/run/secrets/gcp/creds/credential-config.json` so any GCP SDK auto-detects the external-account flow. Caller (`modules/project`) emits the ConfigMap and passes its name here; the audience must match the WIF pool provider the operator configured GCP-side."
+  type        = string
+  default     = null
+}
+
+variable "gcp_wif_audience" {
+  description = "Audience the projected ServiceAccount token is minted with when the component opts into GCP WIF (`var.gcp_wif_credential_configmap_name` set). Must equal the full `//iam.googleapis.com/projects/<NUMBER>/locations/global/workloadIdentityPools/<POOL>/providers/<PROVIDER>` path that the GCP-side WIF pool provider expects in the `aud` claim. Empty string is invalid when `gcp_wif_credential_configmap_name` is non-null; caller validates upstream."
+  type        = string
+  default     = ""
+}
+
 variable "pod_annotations" {
   description = "Pod-template annotations rendered under `spec.template.metadata.annotations`. Primary use: a `checksum/<name>` entry whose value is a hash of an envFrom-mounted Secret's contents — when the Secret rotates, the annotation flips, and the Deployment rolls out so the pod picks up the new env. K8s does NOT rollout pods on Secret change by itself (envFrom values are read at process start), so anything that drives env from an externally-rotatable Secret (Zitadel OIDC client, etc.) needs this. Caller computes the hash and passes it here."
   type        = map(string)

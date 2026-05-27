@@ -562,6 +562,30 @@ services:
     # host_overrides:
     #   relay.example.com: 10.x.x.x
 
+  gcp_wif:
+    # GCP Workload Identity Federation — cluster-wide audience the
+    # operator's GCP-side WIF pool provider expects in incoming
+    # projected SA token `aud` claims. Set once per cluster (one
+    # external IAM federation target); per-component opt-in via
+    # `gcp_wif:` on the component yaml supplies only the GCP SA
+    # email to impersonate.
+    #
+    # Engine prerequisite: `services.cluster_oidc.enabled: true` so
+    # the cluster's OIDC discovery + JWKS are publicly reachable for
+    # GCP STS to verify token signatures.
+    #
+    # GCP-side prerequisites (out of platform scope, lives in
+    # whichever Terraform stack owns the GCP project IAM):
+    #   - Workload Identity Pool + OIDC provider trusting the
+    #     cluster's issuer (`services.cluster_oidc.external_hostname`)
+    #   - Per-binding `roles/iam.workloadIdentityUser` on each GCP SA
+    #     for `principalSet://...subject/system:serviceaccount:<ns>:<sa>`
+    #
+    # Empty audience (default) disables WIF; component-level opt-in
+    # then fails a plan-time check.
+    #
+    # pool_provider_audience: "//iam.googleapis.com/projects/123456789/locations/global/workloadIdentityPools/k3s-cluster/providers/k3s-oidc"
+
   seafile:
     # Single-pod Seafile community edition — file storage with
     # library-based sync, OIDC SSO via Zitadel, behind the platform's

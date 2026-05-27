@@ -414,6 +414,16 @@ postgres: true                      # Provision PostgreSQL database + role
 redis: true                         # Provision Redis ACL user + key prefix
 ollama: true                        # Inject OLLAMA_HOST / OLLAMA_BASE_URL
 
+# Optional GCP Workload Identity Federation — pod gets a dedicated
+# ServiceAccount + projected SA-token volume + external_account
+# credential-config ConfigMap mount + GOOGLE_APPLICATION_CREDENTIALS
+# env var, so GCP SDKs auth via WIF (no JSON key) and impersonate
+# the named GCP SA. Requires `services.gcp_wif.pool_provider_audience`
+# set in platform.yaml and a matching `principalSet://` binding on
+# the GCP side (lives in whichever stack owns the GCP project IAM).
+gcp_wif:
+  gcp_service_account: app-runtime@my-gcp-project.iam.gserviceaccount.com
+
 # Map component env var names → keys in the `db-credentials` Secret
 env:
   WORDPRESS_DB_HOST: DB_HOST

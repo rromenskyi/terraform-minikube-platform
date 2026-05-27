@@ -262,6 +262,16 @@ locals {
     for _, c in local.normalized_components : try(c.ollama, false)
   ]) || try(var.shared_services.ollama, false)
 
+  # Components that opt into GCP Workload Identity Federation. Keyed
+  # by component name → the GCP ServiceAccount email the projected
+  # k8s SA token will impersonate via the WIF principalSet binding
+  # (that binding itself lives in the GCP-side TF, not here).
+  gcp_wif_components = {
+    for name, c in local.normalized_components :
+    name => try(c.gcp_wif.gcp_service_account, "")
+    if try(c.gcp_wif, null) != null && try(c.gcp_wif.gcp_service_account, "") != ""
+  }
+
   # Routed through `terraform-null-label` (same module already adopted
   # by chart_oidc + postgres extras) so naming rules are uniform across
   # the engine. The output `module.label.id` is `<namespace>` with
@@ -384,6 +394,13 @@ check "ollama_enabled_when_needed" {
   assert {
     condition     = !local.needs_ollama || var.ollama_url != null
     error_message = "project '${local.namespace}' has a component with `ollama: true` but `services.ollama` is disabled in config/platform.yaml. Either enable Ollama or drop `ollama: true` from the component spec."
+  }
+}
+
+check "gcp_wif_audience_set_when_needed" {
+  assert {
+    condition     = length(local.gcp_wif_components) == 0 || var.gcp_wif_pool_provider_audience != ""
+    error_message = "project '${local.namespace}' has component(s) with `gcp_wif.gcp_service_account` set (${join(", ", keys(local.gcp_wif_components))}) but `services.gcp_wif.pool_provider_audience` is empty in config/platform.yaml. Either set the audience (`//iam.googleapis.com/projects/<NUMBER>/locations/global/workloadIdentityPools/<POOL>/providers/<PROVIDER>`) or drop `gcp_wif:` from the component spec(s)."
   }
 }
 
@@ -981,6 +998,49 @@ resource "kubernetes_secret_v1" "ollama_endpoint" {
   }
 }
 
+# ── GCP Workload Identity Federation — per-component credential-config ConfigMap
+#
+# When a component yaml has `gcp_wif.gcp_service_account: <email>`,
+# the engine emits a ConfigMap whose `credential-config.json` is the
+# GCP SDK `external_account` shape. The Pod mounts it at
+# `/var/run/secrets/gcp/creds/credential-config.json` (handled in
+# `modules/component`) and the SDK reads `GOOGLE_APPLICATION_CREDENTIALS`
+# = that path, auto-exchanges the projected k8s SA token at GCP STS,
+# impersonates the GCP SA, and starts calling GCP APIs.
+#
+# The audience (full WIF pool provider path) is operator-supplied
+# cluster-wide via `services.gcp_wif.pool_provider_audience`. Only
+# the GCP SA email varies per-component.
+#
+# GCP-side principalSet binding (which k8s SA may impersonate which
+# GCP SA) is NOT engine-managed — it lives in whichever Terraform
+# stack owns the GCP project IAM.
+resource "kubernetes_config_map_v1" "gcp_wif_credential_config" {
+  for_each = local.gcp_wif_components
+
+  metadata {
+    name      = "${each.key}-gcp-wif-credential-config"
+    namespace = kubernetes_namespace_v1.this.metadata[0].name
+    labels    = module.project_label.tags
+  }
+
+  data = {
+    "credential-config.json" = jsonencode({
+      type                              = "external_account"
+      audience                          = var.gcp_wif_pool_provider_audience
+      subject_token_type                = "urn:ietf:params:oauth:token-type:jwt"
+      token_url                         = "https://sts.googleapis.com/v1/token"
+      service_account_impersonation_url = "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${each.value}:generateAccessToken"
+      credential_source = {
+        file = "/var/run/secrets/gcp/tokens/token"
+        format = {
+          type = "text"
+        }
+      }
+    })
+  }
+}
+
 # ── Operator-defined Secrets (per-env `secrets:` block) ───────────────────────
 #
 # Three modes per entry, picked by yaml shape:
@@ -1429,6 +1489,15 @@ module "component" {
   ollama_secret_name = try(each.value.ollama, false) && local.needs_ollama ? (
     values(kubernetes_secret_v1.ollama_endpoint)[0].metadata[0].name
   ) : null
+
+  # GCP Workload Identity Federation — pass the per-component
+  # ConfigMap name + the cluster-wide audience. Both stay null/""
+  # for components that did not opt in, which collapses every
+  # related resource in modules/component to zero.
+  gcp_wif_credential_configmap_name = contains(keys(local.gcp_wif_components), each.key) ? (
+    kubernetes_config_map_v1.gcp_wif_credential_config[each.key].metadata[0].name
+  ) : null
+  gcp_wif_audience = contains(keys(local.gcp_wif_components), each.key) ? var.gcp_wif_pool_provider_audience : ""
 
   # OIDC Secret wiring — two ways the component can opt in:
   #
