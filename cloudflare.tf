@@ -179,6 +179,22 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "main" {
           }
         }
       ] : [],
+      # Redirect-domain hostnames (apex + `*.<domain>`) per
+      # `redirect_to:` in domain yamls. Same backend as cluster_oidc —
+      # cleartext to Traefik on :80; the engine-emitted IngressRoute
+      # (`modules/redirect-domain`) matches by Host + HostRegexp and
+      # serves a 301 via RedirectRegex middleware before any service
+      # dispatch.
+      [
+        for hostname, cfg in local.redirect_tunnel_hostnames : {
+          hostname = hostname
+          service  = cfg.service
+          origin_request = {
+            origin_server_name = hostname
+            http2_origin       = false
+          }
+        }
+      ],
       # Catch-all (required by Cloudflare — must be the last entry,
       # match-anything by omitting `hostname`).
       [{
@@ -192,7 +208,11 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "main" {
 
 resource "cloudflare_dns_record" "tunnel" {
   for_each = {
-    for hostname, cfg in merge(local.all_hostnames, local.tunnel_argocd_hostnames) :
+    for hostname, cfg in merge(
+      local.all_hostnames,
+      local.tunnel_argocd_hostnames,
+      local.redirect_tunnel_hostnames,
+    ) :
     hostname => cfg
     if cfg.zone_id != null
   }
