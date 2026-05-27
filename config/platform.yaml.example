@@ -552,15 +552,31 @@ services:
   # pattern.
   coredns:
     # In-cluster DNS overrides — emit a `coredns-custom` ConfigMap
-    # in `kube-system` carrying a `hosts` block. Each (hostname, ip)
-    # pair below makes Pods inside this cluster resolve `hostname`
-    # to the given IP, regardless of public DNS. Public records are
-    # untouched. Use case: routing outbound traffic to a hostname
-    # whose canonical public IP isn't reachable from inside the
-    # cluster (e.g. residential ISP routing, WG-mesh-only relays).
-    # Empty map (default) = ConfigMap not emitted, CoreDNS unchanged.
+    # in `kube-system` carrying drop-in `*.server` files.
+    #
+    # Two knobs, both default empty; either being non-empty triggers
+    # the ConfigMap. After applying the operator must
+    # `kubectl rollout restart -n kube-system deploy/coredns` —
+    # CoreDNS does not auto-reload custom imports on file change.
+    #
+    # host_overrides — static A records. Each (hostname, ip) pair
+    # makes Pods inside this cluster resolve `hostname` to the given
+    # IP, regardless of public DNS. Public records are untouched.
+    # Use case: routing outbound traffic to a hostname whose canonical
+    # public IP isn't reachable from inside the cluster (e.g. WG-mesh-
+    # only relays, residential ISP DNS quirks).
+    #
+    # zone_forwarders — delegate a whole zone to an upstream DNS
+    # resolver. Each (zone, upstream_ip) pair emits a server block
+    # with `forward . <upstream>` + a 30s cache. Use case: private
+    # DNS zones hosted off-cluster (Cloud DNS private zone reached
+    # via a forwarder VM) whose A-records the in-cluster Pods need
+    # to resolve.
+    #
     # host_overrides:
     #   relay.example.com: 10.x.x.x
+    # zone_forwarders:
+    #   foo.internal: 10.0.0.1
 
   gcp_wif:
     # GCP Workload Identity Federation — cluster-wide audience the

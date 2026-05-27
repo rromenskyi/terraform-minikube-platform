@@ -106,7 +106,8 @@ locals {
         scale_sets               = {}
       }
       coredns = {
-        host_overrides = {}
+        host_overrides  = {}
+        zone_forwarders = {}
       }
       cluster_oidc = {
         enabled           = false
