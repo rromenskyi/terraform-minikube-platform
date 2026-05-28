@@ -184,13 +184,14 @@ module "project" {
   # multiple chart repos share one project namespace (e.g. a backend
   # chart + a frontend chart deployed via separate Applications into
   # the same `phost-…` namespace).
-  argocd_namespace  = local.platform.services.argocd.enabled ? local.platform.services.argocd.namespace : ""
-  argocd_hostnames  = try(each.value.argocd_hostnames, {})
-  argocd_bootstraps = try(each.value.argocd_bootstraps, {})
-  shared_services   = try(each.value.shared_services, {})
-  secrets           = try(each.value.secrets, {})
-  git_deploy_keys   = try(each.value.git_deploy_keys, {})
-  chart_oidc_apps   = try(each.value.chart_oidc_apps, {})
+  argocd_namespace   = local.platform.services.argocd.enabled ? local.platform.services.argocd.namespace : ""
+  argocd_hostnames   = try(each.value.argocd_hostnames, {})
+  argocd_bootstraps  = try(each.value.argocd_bootstraps, {})
+  shared_services    = try(each.value.shared_services, {})
+  secrets            = try(each.value.secrets, {})
+  git_deploy_keys    = try(each.value.git_deploy_keys, {})
+  image_pull_secrets = try(each.value.image_pull_secrets, {})
+  chart_oidc_apps    = try(each.value.chart_oidc_apps, {})
 
   # Operator-supplied literal data for entries declared in this
   # project's `secrets:` map. When a `secrets:<name>` entry's name

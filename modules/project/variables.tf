@@ -15,6 +15,12 @@ variable "git_deploy_keys" {
   default     = {}
 }
 
+variable "image_pull_secrets" {
+  description = "Per-env private-registry pull credentials, declared in domain yaml under `envs.<env>.image_pull_secrets:` as `{<name>: {registry: ghcr.io}}` (registry optional, default `ghcr.io`). Map key doubles as the emitted k8s Secret name AND the Vault id under `secret/data/tenants/<slug>/image-pull-secrets/<name>` (Vault path holds two keys: `username` + `token`). Engine emits one `VaultStaticSecret` per entry; VSO syncs into a `kubernetes.io/dockerconfigjson` Secret named `<name>` in the project namespace, with the .dockerconfigjson body rendered from `{registry, username, token}`. Chart-side `imagePullSecrets: [name: <name>]` references it. Use for ArgoCD-managed pods pulling private images from any registry that accepts basic-auth dockerconfigjson (GHCR with classic PAT, Docker Hub, etc)."
+  type        = map(any)
+  default     = {}
+}
+
 variable "components" {
   description = "Map of all available components from config/components/"
   type        = any
