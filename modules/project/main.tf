@@ -1350,6 +1350,32 @@ resource "kubectl_manifest" "image_pull_secret_vault" {
   })
 }
 
+# Patch the namespace's default ServiceAccount with imagePullSecrets
+# pointing at every image-pull Secret declared above. Chart-side
+# Deployments that don't explicitly set serviceAccountName inherit
+# `default` and pick up these secrets automatically — tenants don't
+# need to know the Secret name or wire `imagePullSecrets:` into
+# every workload manifest.
+resource "kubernetes_default_service_account_v1" "this" {
+  for_each = length(var.image_pull_secrets) > 0 ? toset(["enabled"]) : toset([])
+
+  metadata {
+    namespace = kubernetes_namespace_v1.this.metadata[0].name
+  }
+
+  dynamic "image_pull_secret" {
+    for_each = var.image_pull_secrets
+    content {
+      name = image_pull_secret.key
+    }
+  }
+
+  # The default SA is auto-created by k8s; this resource adopts it
+  # (kubernetes provider's documented pattern for managing built-in
+  # objects). On destroy it removes the imagePullSecrets we added
+  # but leaves the SA itself alone.
+}
+
 # ── Zitadel auto-provisioning for chart-deployed apps ────────────────────────
 #
 # Counterpart of the `kind: app` machinery below — but for charts the
