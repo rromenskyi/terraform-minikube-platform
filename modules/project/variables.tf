@@ -15,6 +15,12 @@ variable "git_deploy_keys" {
   default     = {}
 }
 
+variable "image_pull_secrets" {
+  description = "Per-env private-registry pull credentials, declared in domain yaml under `envs.<env>.image_pull_secrets:` as `{<name>: {registry: ghcr.io}}` (registry optional, default `ghcr.io`). Map key doubles as the emitted k8s Secret name AND the Vault id under `secret/data/tenants/<slug>/image-pull-secrets/<name>` (Vault path holds two keys: `username` + `token`). Engine emits one `VaultStaticSecret` per entry; VSO syncs into a `kubernetes.io/dockerconfigjson` Secret named `<name>` in the project namespace, with the .dockerconfigjson body rendered from `{registry, username, token}`. Chart-side `imagePullSecrets: [name: <name>]` references it. Use for ArgoCD-managed pods pulling private images from any registry that accepts basic-auth dockerconfigjson (GHCR with classic PAT, Docker Hub, etc)."
+  type        = map(any)
+  default     = {}
+}
+
 variable "components" {
   description = "Map of all available components from config/components/"
   type        = any
@@ -145,7 +151,7 @@ variable "argocd_hostnames" {
 }
 
 variable "argocd_bootstraps" {
-  description = "Map of Argo CD bootstrap App-of-Apps roots declared under `envs.<env>.argocd_bootstraps:` in the domain yaml. Keyed by short name (engine emits `<namespace>-<key>-bootstrap` Application per entry). Each entry: `repo_url` (git remote URL — SSH form when `repo_ssh_key_id` is set), `path` (default `.`), `target_revision` (default `HEAD`), `repo_ssh_key_id` (optional — looked up in root `argocd_repo_ssh_keys` map). Sub-Applications under `path` are recursively synced by Argo CD; their `spec.project` must equal this project's namespace to clear the AppProject allowlist. AppProject `sourceRepos` aggregates every entry's `repo_url`, so sub-Applications cross-referencing peer repos pass the allowlist. Empty map disables Argo CD bootstrap (project still gets an AppProject when `argocd_hostnames` is non-empty)."
+  description = "Map of Argo CD bootstrap App-of-Apps roots declared under `envs.<env>.argocd_bootstraps:` in the domain yaml. Keyed by short name (engine emits `<namespace>-<key>-bootstrap` Application per entry). Each entry: `repo_url` (git remote URL), `path` (default `.`), `target_revision` (default `HEAD`), plus EXACTLY ONE credential mode. Credential modes: (a) `repo_ssh_key_id` — SSH deploy key, id resolved against root `argocd_repo_ssh_keys` map (literal) or Vault path `secret/data/tenants/<slug>/argocd-deploy-keys/<id>` (default — tenant uploads); `repo_url` in SSH form. (b) `repo_app_pem_id` + `repo_app_id` + `repo_app_installation_id` — GitHub App credential, PEM lives in Vault at `secret/data/tenants/<slug>/argocd-github-apps/<pem_id>`, the two ID fields template into the rendered Argo CD repo Secret; `repo_url` in HTTPS form. Sub-Applications under `path` are recursively synced by Argo CD; their `spec.project` must equal this project's namespace to clear the AppProject allowlist. AppProject `sourceRepos` aggregates every entry's `repo_url`. Empty map disables Argo CD bootstrap (project still gets an AppProject when `argocd_hostnames` is non-empty)."
   type        = any
   default     = {}
 }

@@ -637,10 +637,17 @@ Mode 3 (`vault: true`) is the default for new work. The engine emits a `VaultSta
 
 ### Argo CD repo deploy keys
 
-Each `argocd_bootstraps:` entry's `repo_ssh_key_id:` resolves implicitly:
+Each `argocd_bootstraps:` entry picks ONE credential mode (engine fails the plan-time check if both modes are set, or app-mode is missing the ID fields).
+
+**SSH deploy key** — `repo_ssh_key_id: <id>` + `repo_url` in SSH form:
 
 - If id is in the legacy `var.argocd_repo_ssh_keys` map (set via `TF_VAR_argocd_repo_ssh_keys` in `.env`), engine emits a literal `kubernetes_secret_v1` in `argocd` namespace (legacy fallback).
-- Otherwise → vault mode: engine emits `VaultStaticSecret` pointing at `secret/data/tenants/<project_slug>/argocd-deploy-keys/<id>`. VSO templating combines the operator-supplied `sshPrivateKey` from Vault with the engine-known `type=git` + `url=<repo_url>` so the rendered Secret matches Argo CD's repository-Secret schema.
+- Otherwise → Vault mode: engine emits `VaultStaticSecret` pointing at `secret/data/tenants/<project_slug>/argocd-deploy-keys/<id>` with one data key `sshPrivateKey`. VSO templating combines the operator-supplied key from Vault with the engine-known `type=git` + `url=<repo_url>` so the rendered Secret matches Argo CD's repository-Secret schema.
+
+**GitHub App** — `repo_app_pem_id: <id>` + `repo_app_id: <numeric>` + `repo_app_installation_id: <numeric>` + `repo_url` in HTTPS form:
+
+- Vault-only (PEMs are too big for `TF_VAR_*`). Engine emits `VaultStaticSecret` pointing at `secret/data/tenants/<project_slug>/argocd-github-apps/<pem_id>` with one data key `githubAppPrivateKey`. VSO templates in the two operator-supplied IDs (visible — not secret) alongside the engine-known `type=git` + `url=<repo_url>`.
+- Use when one GitHub App on the org pulls many repos — single PEM in Vault, many `argocd_bootstraps:` entries reuse the same `repo_app_pem_id`. Auth-trail surfaces as the App rather than a deploy key per repo.
 
 ### git-sync deploy keys
 

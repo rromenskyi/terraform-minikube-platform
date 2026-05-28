@@ -1162,7 +1162,7 @@ resource "kubernetes_secret_v1" "operator_secret" {
 # VSO fails reconcile with "ServiceAccount X not found" and never
 # materialises the Secret.
 resource "kubernetes_service_account_v1" "vso_proxy" {
-  for_each = (length(local.operator_secret_vault_set) > 0 || length(var.git_deploy_keys) > 0) ? toset(["enabled"]) : toset([])
+  for_each = (length(local.operator_secret_vault_set) > 0 || length(var.git_deploy_keys) > 0 || length(var.image_pull_secrets) > 0) ? toset(["enabled"]) : toset([])
 
   metadata {
     name      = "vault-secrets-operator-controller-manager"
@@ -1281,6 +1281,67 @@ resource "kubectl_manifest" "git_deploy_key_vault" {
               try(each.value.host, "github.com"),
               "${try(each.value.host, "github.com")} ssh-rsa <unknown — add this host to local._git_known_hosts in modules/project/main.tf>"
             )}\n" }
+          }
+        }
+      }
+      refreshAfter = "30s"
+    }
+  })
+}
+
+# ── image-pull Secrets (Vault-backed) ────────────────────────────────────────
+#
+# Per-env yaml block `image_pull_secrets: { <name>: { registry: ghcr.io } }`
+# → engine emits one `VaultStaticSecret` per entry pointing at
+# `secret/data/tenants/<slug>/image-pull-secrets/<name>`. The Vault
+# path holds two keys: `username` + `token` (the operator-supplied
+# PAT/username pair). VSO templates them with the engine-known
+# `registry` into a single `.dockerconfigjson` body and writes it to
+# a `kubernetes.io/dockerconfigjson` Secret named `<name>` in the
+# project namespace. Chart references via `imagePullSecrets: [name: <name>]`.
+#
+# Long-lived classic PATs are the simplest source of truth for GHCR
+# pulls today — fine-grained PATs don't expose Packages permission
+# for org repos, and GitHub App installation tokens for ghcr.io
+# aren't supported yet (as of early 2026). Rotation = re-`vault kv
+# put` at the same path; VSO picks up within `refreshAfter`.
+
+resource "kubectl_manifest" "image_pull_secret_vault" {
+  for_each = var.image_pull_secrets
+
+  depends_on = [kubernetes_service_account_v1.vso_proxy]
+
+  yaml_body = yamlencode({
+    apiVersion = "secrets.hashicorp.com/v1beta1"
+    kind       = "VaultStaticSecret"
+    metadata = {
+      name      = each.key
+      namespace = kubernetes_namespace_v1.this.metadata[0].name
+      labels = merge(module.project_label.tags, {
+        "app.kubernetes.io/managed-by" = "terraform"
+        "app.kubernetes.io/component"  = "image-pull-secret"
+      })
+    }
+    spec = {
+      vaultAuthRef = ""
+      mount        = "secret"
+      type         = "kv-v2"
+      path         = "tenants/${var.project_config.slug}/image-pull-secrets/${each.key}"
+      destination = {
+        name   = each.key
+        create = true
+        type   = "kubernetes.io/dockerconfigjson"
+        # VSO template: base64(username:token) into the standard
+        # dockerconfigjson shape. `excludeRaw` drops VSO's default
+        # `_raw` JSON dump — k8s dockerconfigjson Secret schema only
+        # accepts the single `.dockerconfigjson` key.
+        transformation = {
+          excludeRaw = true
+          excludes   = [".*"]
+          templates = {
+            ".dockerconfigjson" = {
+              text = "{\"auths\":{\"${try(each.value.registry, "ghcr.io")}\":{\"auth\":\"{{ printf \"%s:%s\" (get .Secrets \"username\") (get .Secrets \"token\") | b64enc }}\"}}}"
+            }
           }
         }
       }
