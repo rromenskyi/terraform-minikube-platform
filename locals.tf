@@ -109,6 +109,10 @@ locals {
         host_overrides  = {}
         zone_forwarders = {}
       }
+      traefik_public = {
+        enabled = false
+        pools   = {}
+      }
       cluster_oidc = {
         enabled           = false
         external_hostname = ""
@@ -310,6 +314,7 @@ locals {
       gcp_wif          = merge(local._platform_defaults.services.gcp_wif, try(local._platform_services.gcp_wif, {}))
       seafile          = merge(local._platform_defaults.services.seafile, try(local._platform_services.seafile, {}))
       security_scan    = merge(local._platform_defaults.services.security_scan, try(local._platform_services.security_scan, {}))
+      traefik_public   = merge(local._platform_defaults.services.traefik_public, try(local._platform_services.traefik_public, {}))
     }
   }
 
