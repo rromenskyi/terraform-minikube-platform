@@ -103,6 +103,23 @@ locals {
   dkim_dns_value = var.enabled ? "v=DKIM1; k=rsa; p=${local.dkim_pubkey_body}" : ""
   dkim_dns_name  = "${var.dkim_selector}._domainkey"
 
+  # Per-additional-domain pubkey body + DKIM TXT value. Same shape as
+  # `dkim_pubkey_body` above, just iterated. Keyed by the operator-
+  # supplied slug, which doubles as the friendly id in the Stalwart
+  # apply plan (`dom-add-<slug>` / `dkim-add-<slug>`).
+  additional_dkim_pubkey_body = {
+    for slug, cfg in(var.enabled ? var.additional_domains : {}) :
+    slug => trimspace(replace(replace(replace(
+      tls_private_key.dkim_additional[slug].public_key_pem,
+      "-----BEGIN PUBLIC KEY-----", ""),
+      "-----END PUBLIC KEY-----", ""),
+    "\n", ""))
+  }
+  additional_dkim_dns_value = {
+    for slug, body in local.additional_dkim_pubkey_body :
+    slug => "v=DKIM1; k=rsa; p=${body}"
+  }
+
   spf_dns_value   = var.enabled && var.spf_authorized_ip != "" ? "v=spf1 ip4:${var.spf_authorized_ip} -all" : ""
   dmarc_dns_value = var.enabled && var.primary_domain != "" ? "v=DMARC1; p=${var.dmarc_policy}; rua=mailto:postmaster@${var.primary_domain}" : ""
 
@@ -411,6 +428,49 @@ locals {
       }),
     ] : [],
 
+    # ── Additional submission-only mail domains ───────────────────
+    # One Domain + DkimSignature pair per entry in
+    # `var.additional_domains`. Friendly ids `dom-add-<slug>` and
+    # `dkim-add-<slug>` so multiple additional domains don't collide.
+    # Domain destroy is skipped same as primary (objectIsLinked when
+    # the DkimSignature references it); `--continue-on-error`
+    # swallows the `primaryKeyViolation` on re-apply since neither
+    # object mutates once created.
+    var.enabled ? [
+      for slug, cfg in var.additional_domains : jsonencode({
+        "@type" = "create"
+        object  = "Domain"
+        value = {
+          "dom-add-${slug}" = {
+            name        = cfg.name
+            description = "Additional mail domain ${cfg.name} (managed by terraform-minikube-platform)."
+          }
+        }
+      })
+    ] : [],
+
+    var.enabled ? [
+      for slug, cfg in var.additional_domains : jsonencode({
+        "@type" = "create"
+        object  = "DkimSignature"
+        value = {
+          "dkim-add-${slug}" = {
+            "@type"          = "Dkim1RsaSha256"
+            domainId         = "#dom-add-${slug}"
+            selector         = cfg.dkim_selector
+            canonicalization = "relaxed/relaxed"
+            stage            = "active"
+            headers          = ["From", "To", "Subject", "Date", "Message-ID", "MIME-Version"]
+            report           = false
+            privateKey = {
+              "@type" = "Value"
+              value   = tls_private_key.dkim_additional[slug].private_key_pem
+            }
+          }
+        }
+      })
+    ] : [],
+
     # ── Stdout tracer ─────────────────────────────────────────────
     # Without a Tracer object Stalwart's default `kubectl logs` view
     # stays empty (no startup banner, no auth events, no SMTP
@@ -651,6 +711,17 @@ resource "cloudflare_dns_record" "dmarc" {
 # bump the selector var.
 resource "tls_private_key" "dkim" {
   for_each = local.instances
+
+  algorithm = "RSA"
+  rsa_bits  = 2048
+}
+
+# Per-additional-domain DKIM keypair. One RSA-2048 pair per entry in
+# `var.additional_domains`; engine pairs it with a Stalwart
+# DkimSignature object referencing that domain. Stable in TF state —
+# never rotated by accident.
+resource "tls_private_key" "dkim_additional" {
+  for_each = var.enabled ? var.additional_domains : {}
 
   algorithm = "RSA"
   rsa_bits  = 2048
