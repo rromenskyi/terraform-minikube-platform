@@ -58,6 +58,16 @@ variable "primary_domain" {
   default     = ""
 }
 
+variable "additional_domains" {
+  description = "Additional mail domains beyond the primary, declared by domain yamls that set `mail.submission_only: true`. Map of slug (e.g. `example-com`) → { name = <fqdn>, dkim_selector = <selector>, dmarc_policy = <none|quarantine|reject> }. Each entry causes engine to generate its own DKIM keypair and emit a Stalwart Domain + DkimSignature pair into the apply plan, so outgoing mail with `From:` matching an additional domain gets DKIM-signed with the right per-domain key. No accounts / mailboxes are auto-created — additional domains are submission-only out the door, no inbound or per-domain user provisioning. DNS records (MX/SPF/DKIM/DMARC) for each additional domain are emitted from the root mail.tf using this module's `additional_domain_dkim_dns` output."
+  type = map(object({
+    name          = string
+    dkim_selector = optional(string, "stalwart")
+    dmarc_policy  = optional(string, "none")
+  }))
+  default = {}
+}
+
 variable "zitadel_org_id" {
   description = "Zitadel organisation ID the OIDC application + role land in. Pulled from the parent module's data \"zitadel_orgs\" lookup."
   type        = string

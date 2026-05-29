@@ -79,6 +79,17 @@ output "dmarc_dns_value" {
   value       = var.enabled ? "v=DMARC1; p=quarantine; rua=mailto:postmaster@${var.primary_domain}" : null
 }
 
+output "additional_domain_dkim_dns" {
+  description = "Per-additional-domain DKIM TXT record value, keyed by the slug used in `var.additional_domains`. Each entry has `{ name = <selector>._domainkey, value = \"v=DKIM1; k=rsa; p=...\" }` — root mail.tf emits a `cloudflare_dns_record` per entry directly onto the matching CF zone. Empty map when `var.additional_domains` is empty."
+  value = {
+    for slug, cfg in var.additional_domains :
+    slug => {
+      name  = "${cfg.dkim_selector}._domainkey"
+      value = local.additional_dkim_dns_value[slug]
+    }
+  }
+}
+
 output "zitadel_user_role" {
   description = "Name of the Zitadel project role required for ordinary mailbox access. Operator grants this (or `zitadel_admin_role`) to every Zitadel user who should reach the webmail; users without a project-role are rejected at /authorize."
   value       = local.oidc_enabled ? zitadel_project_role.user["enabled"].role_key : null

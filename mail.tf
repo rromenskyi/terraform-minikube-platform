@@ -61,6 +61,26 @@ resource "kubernetes_resource_quota_v1" "mail" {
   }
 }
 
+# Additional submission-only mail domains. Any domain yaml that sets
+# `mail.submission_only: true` lands here as a separate Stalwart
+# Domain + DkimSignature pair. Outgoing mail with `From:` matching one
+# of these domains gets DKIM-signed with that domain's per-domain key;
+# no inbound mailboxes or per-domain user provisioning. Mail stack
+# must be enabled (primary domain set) for additional domains to take
+# effect — without a primary, the whole Stalwart module is off.
+locals {
+  _additional_mail_domains = local.mail == null ? {} : {
+    for name, cfg in local._domain_configs :
+    cfg.slug => {
+      name          = cfg.name
+      dkim_selector = try(cfg.mail.dkim_selector, "stalwart")
+      dmarc_policy  = try(cfg.mail.dmarc_policy, "none")
+      zone_id       = try(cfg.cloudflare_zone_id, "")
+    }
+    if try(cfg.mail.submission_only, false)
+  }
+}
+
 module "stalwart" {
   source     = "./modules/stalwart"
   depends_on = [module.addons, module.zitadel, kubernetes_resource_quota_v1.mail]
@@ -76,6 +96,19 @@ module "stalwart" {
   primary_domain     = try(local.mail.primary_domain, "")
   hostname           = try(local.mail.hostname, "")
   cloudflare_zone_id = try(local.mail.cloudflare_zone_id, "")
+
+  # Additional submission-only domains. Module emits one Stalwart
+  # Domain + DkimSignature per entry into the apply plan; DNS records
+  # for each (MX/SPF/DKIM/DMARC) are emitted from this file using the
+  # module's `additional_domain_dkim_dns` output.
+  additional_domains = {
+    for slug, cfg in local._additional_mail_domains :
+    slug => {
+      name          = cfg.name
+      dkim_selector = cfg.dkim_selector
+      dmarc_policy  = cfg.dmarc_policy
+    }
+  }
 
   # DNS / DKIM knobs from yaml.
   dkim_selector     = try(local.mail.dkim_selector, "stalwart")
@@ -150,4 +183,57 @@ data "zitadel_orgs" "platform_org" {
 
   name        = "ZITADEL"
   name_method = "TEXT_QUERY_METHOD_EQUALS"
+}
+
+# ── DNS records for additional submission-only mail domains ──────────────────
+#
+# Per-entry in `local._additional_mail_domains` emit three TXT records
+# onto the additional domain's own Cloudflare zone. No MX — additional
+# domains are outbound-only by design, no inbound mailbox to deliver
+# bounces to. Senders that need to bounce a noreply@ message simply
+# get a delivery failure their side, which is correct semantics.
+#
+#   - SPF → `v=spf1 ip4:<relay-public-ip> -all` — same authorised sender IP
+#           as primary. Without SPF every receiver flags forged-sender risk.
+#   - DKIM → per-domain `<selector>._domainkey` TXT carrying the public key
+#           Stalwart signs with for this domain.
+#   - DMARC → `_dmarc` TXT with policy from yaml. Default `none` (no `rua`
+#           since no inbound mailbox on `<add-domain>` to receive aggregate
+#           reports — gracefully omits the field rather than pointing at a
+#           non-existent address).
+
+resource "cloudflare_dns_record" "additional_mail_spf" {
+  for_each = {
+    for slug, cfg in local._additional_mail_domains : slug => cfg
+    if try(local.mail.spf_authorized_ip, "") != ""
+  }
+
+  zone_id = each.value.zone_id
+  name    = each.value.name
+  type    = "TXT"
+  content = "\"v=spf1 ip4:${local.mail.spf_authorized_ip} -all\""
+  ttl     = 300
+  comment = "additional mail domain — SPF authorises only the relay public IP"
+}
+
+resource "cloudflare_dns_record" "additional_mail_dkim" {
+  for_each = local._additional_mail_domains
+
+  zone_id = each.value.zone_id
+  name    = "${module.stalwart.additional_domain_dkim_dns[each.key].name}.${each.value.name}"
+  type    = "TXT"
+  content = "\"${module.stalwart.additional_domain_dkim_dns[each.key].value}\""
+  ttl     = 300
+  comment = "additional mail domain — DKIM TXT (per-domain key, signed by Stalwart on outbound)"
+}
+
+resource "cloudflare_dns_record" "additional_mail_dmarc" {
+  for_each = local._additional_mail_domains
+
+  zone_id = each.value.zone_id
+  name    = "_dmarc.${each.value.name}"
+  type    = "TXT"
+  content = "\"v=DMARC1; p=${each.value.dmarc_policy}\""
+  ttl     = 300
+  comment = "additional mail domain — DMARC policy (rua omitted: no inbound mailbox to receive reports)"
 }
