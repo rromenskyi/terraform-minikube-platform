@@ -663,6 +663,20 @@ envs:
 
 Engine emits `VaultStaticSecret` per entry → VSO syncs into a `kubernetes.io/ssh-auth` Secret named `git-deploy-key-<id>` in the project namespace. Components reference it via `git_sync.ssh_key_secret_name: git-deploy-key-<id>` exactly as before — Vault path is wholly invisible to consumer charts.
 
+### GCP Workload Identity Federation — standalone SAs for chart-managed workloads
+
+The per-component `gcp_wif:` knob (component yaml) wires the SA + credential-config + projected token + mounts into an engine-rendered `kind: deployment` Pod. For workloads the engine does NOT own the Pod of (Argo CD helm charts), use the per-env standalone variant:
+
+```yaml
+envs:
+  dev:
+    gcp_wif_service_accounts:
+      <k8s-sa-name>:
+        gcp_service_account: <gsa>@<project>.iam.gserviceaccount.com
+```
+
+Engine emits two objects per entry in the project namespace: a bare `ServiceAccount` named `<k8s-sa-name>` (the GCP-side WIF `principalSet` binding authorizes `system:serviceaccount:<ns>:<k8s-sa-name>` → the GCP SA), and a `<k8s-sa-name>-gcp-wif-credential-config` ConfigMap carrying `credential-config.json` (the GCP SDK `external_account` shape, audience from `services.gcp_wif.pool_provider_audience`, impersonating the given GCP SA). The chart sets `serviceAccountName: <k8s-sa-name>`, renders the projected SA-token volume (audience = the same pool provider), mounts the ConfigMap at `/var/run/secrets/gcp/creds/`, and points `GOOGLE_APPLICATION_CREDENTIALS` at `/var/run/secrets/gcp/creds/credential-config.json`. Engine emits only the SA + ConfigMap, never the Pod. Plan-time check fails if any entry is declared while the cluster audience is empty.
+
 ### Vault storage
 
 `services.vault.storage_class` in `config/platform.yaml` picks the storage backend:

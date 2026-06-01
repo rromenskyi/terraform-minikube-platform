@@ -396,8 +396,9 @@ locals {
           # Vault themselves via Zitadel SSO with the `tenant_<slug>`
           # role grant — operator out of the loop. `host` picks the
           # `known_hosts` line; default `github.com`.
-          git_deploy_keys    = try(env_spec.git_deploy_keys, {})
-          image_pull_secrets = try(env_spec.image_pull_secrets, {})
+          git_deploy_keys          = try(env_spec.git_deploy_keys, {})
+          image_pull_secrets       = try(env_spec.image_pull_secrets, {})
+          gcp_wif_service_accounts = try(env_spec.gcp_wif_service_accounts, {})
           # Engine-managed Zitadel OIDC clients for chart-deployed
           # apps. Engine creates a Zitadel Project + OIDC Application
           # per entry and emits a Secret in the project namespace
