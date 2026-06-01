@@ -193,6 +193,8 @@ module "project" {
   image_pull_secrets = try(each.value.image_pull_secrets, {})
   chart_oidc_apps    = try(each.value.chart_oidc_apps, {})
 
+  gcp_wif_service_accounts = try(each.value.gcp_wif_service_accounts, {})
+
   # Operator-supplied literal data for entries declared in this
   # project's `secrets:` map. When a `secrets:<name>` entry's name
   # appears as a top-level key in `var.operator_secret_values`, the

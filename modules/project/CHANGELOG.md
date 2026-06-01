@@ -8,6 +8,14 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **`gcp_wif_service_accounts` — standalone WIF SA + credential-config for
+  chart-managed workloads.** Per-env map of k8s SA name →
+  `{ gcp_service_account }`. Engine emits a bare `ServiceAccount` plus a
+  `<sa>-gcp-wif-credential-config` ConfigMap (same `external_account` shape
+  as the per-component `gcp_wif` knob) without owning any Pod — for Argo CD
+  helm charts that wire their own pod. Audience reuses
+  `gcp_wif_pool_provider_audience`; a plan-time check fails if entries are
+  declared while that audience is empty.
 - **GCP Workload Identity Federation per-component opt-in.** New variable
   `gcp_wif_pool_provider_audience` (cluster-wide audience string). When
   any component yaml under this project has `gcp_wif.gcp_service_account:

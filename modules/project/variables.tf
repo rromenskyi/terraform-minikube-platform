@@ -97,6 +97,14 @@ variable "gcp_wif_pool_provider_audience" {
   default     = ""
 }
 
+variable "gcp_wif_service_accounts" {
+  description = "Standalone GCP Workload Identity Federation ServiceAccounts for CHART-MANAGED workloads (Argo CD helm charts the engine does not own the pod of). Map of k8s SA name → { gcp_service_account = <email> }. Per entry the engine emits a bare `ServiceAccount` of that name PLUS a `<sa>-gcp-wif-credential-config` ConfigMap carrying the external_account `credential-config.json` impersonating the given GCP SA (same shape the per-component `gcp_wif` knob renders). The chart wires the pod itself — sets `serviceAccountName: <sa>`, mounts the ConfigMap at `/var/run/secrets/gcp/creds/`, renders the projected SA-token volume, points `GOOGLE_APPLICATION_CREDENTIALS` at the mounted file. Engine emits ONLY the SA + ConfigMap, never the pod. Audience comes from `gcp_wif_pool_provider_audience`; a plan-time check fails if any entry is set while that audience is empty. Declared under `envs.<env>.gcp_wif_service_accounts:` in the domain yaml."
+  type = map(object({
+    gcp_service_account = string
+  }))
+  default = {}
+}
+
 variable "zitadel_org_id" {
   description = "Zitadel org id where `kind: app` components auto-provision projects + applications. Caller resolves at root via `data \"zitadel_orgs\" \"platform_org\"` and passes the value down. Owning the data source at root rather than inside this module avoids the apply-time defer that propagates as `must be replaced` on every downstream resource whenever any consumer module declares `depends_on = [module.zitadel]`."
   type        = string

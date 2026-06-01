@@ -272,6 +272,15 @@ locals {
     if try(c.gcp_wif, null) != null && try(c.gcp_wif.gcp_service_account, "") != ""
   }
 
+  # Standalone WIF ServiceAccounts for chart-managed workloads — same
+  # external_account shape as `gcp_wif_components`, but the engine emits
+  # only the SA + ConfigMap (the chart owns the pod). Keyed by k8s SA
+  # name → GCP SA email it impersonates.
+  gcp_wif_service_accounts = {
+    for sa_name, cfg in var.gcp_wif_service_accounts :
+    sa_name => cfg.gcp_service_account
+  }
+
   # Routed through `terraform-null-label` (same module already adopted
   # by chart_oidc + postgres extras) so naming rules are uniform across
   # the engine. The output `module.label.id` is `<namespace>` with
@@ -1017,6 +1026,58 @@ resource "kubernetes_secret_v1" "ollama_endpoint" {
 # stack owns the GCP project IAM.
 resource "kubernetes_config_map_v1" "gcp_wif_credential_config" {
   for_each = local.gcp_wif_components
+
+  metadata {
+    name      = "${each.key}-gcp-wif-credential-config"
+    namespace = kubernetes_namespace_v1.this.metadata[0].name
+    labels    = module.project_label.tags
+  }
+
+  data = {
+    "credential-config.json" = jsonencode({
+      type                              = "external_account"
+      audience                          = var.gcp_wif_pool_provider_audience
+      subject_token_type                = "urn:ietf:params:oauth:token-type:jwt"
+      token_url                         = "https://sts.googleapis.com/v1/token"
+      service_account_impersonation_url = "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${each.value}:generateAccessToken"
+      credential_source = {
+        file = "/var/run/secrets/gcp/tokens/token"
+        format = {
+          type = "text"
+        }
+      }
+    })
+  }
+}
+
+# ── GCP WIF — standalone SA + credential-config for chart-managed workloads ────
+#
+# Same external_account ConfigMap as the per-component knob above, but
+# decoupled from any engine-owned Pod. Declared via
+# `envs.<env>.gcp_wif_service_accounts:` for workloads the engine does
+# NOT render (Argo CD helm charts). Engine emits the bare ServiceAccount
+# the GCP-side principalSet binding authorizes, plus the credential-config
+# ConfigMap; the chart sets `serviceAccountName`, renders the projected
+# SA-token volume, and mounts the ConfigMap itself.
+check "gcp_wif_service_accounts_audience_set" {
+  assert {
+    condition     = length(var.gcp_wif_service_accounts) == 0 || var.gcp_wif_pool_provider_audience != ""
+    error_message = "project '${local.namespace}' declares gcp_wif_service_accounts (${join(", ", keys(var.gcp_wif_service_accounts))}) but `services.gcp_wif.pool_provider_audience` is empty in config/platform.yaml. Set the audience or drop the entries."
+  }
+}
+
+resource "kubernetes_service_account_v1" "gcp_wif_standalone" {
+  for_each = local.gcp_wif_service_accounts
+
+  metadata {
+    name      = each.key
+    namespace = kubernetes_namespace_v1.this.metadata[0].name
+    labels    = module.project_label.tags
+  }
+}
+
+resource "kubernetes_config_map_v1" "gcp_wif_standalone_credential_config" {
+  for_each = local.gcp_wif_service_accounts
 
   metadata {
     name      = "${each.key}-gcp-wif-credential-config"
