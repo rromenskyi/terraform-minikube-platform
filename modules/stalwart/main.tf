@@ -209,21 +209,17 @@ locals {
       # since Domain shape is just `{name, description}` and never
       # changes after the first run, this is harmless.
     ],
-    local.oidc_enabled ? [
-      # Directory has no filterable fields — destroy-all is the
-      # only option. Safe because the only Directory entry we own
-      # is the Oidc one created below; Stalwart's built-in
-      # `Internal` directory is implicit (not stored as a
-      # registry object) and unaffected.
-      #
-      # Detaching Authentication.directoryId is NOT done here — the
-      # `stalwart-cli apply` engine groups all destroys before all
-      # updates, so a plan-level `update Authentication=null` step
-      # always runs AFTER the destroy attempt. The detach is instead
-      # a synchronous pre-step in the applier sidecar command before
-      # `stalwart-cli apply` is invoked.
-      jsonencode({ "@type" = "destroy", object = "Directory" }),
-    ] : [],
+    # Directory is intentionally NOT destroyed (mirrors the Domain policy
+    # above). The OIDC Directory keeps a stable internal id across applies,
+    # so Authentication never re-points at a freshly-created id and
+    # Stalwart's start-time directory cache never dangles — the exact
+    # regression that broke OIDC login after every pod restart / node
+    # reboot (the applier used to destroy + recreate the Directory each run,
+    # invalidating the id the running server had cached). On re-apply the
+    # applier rewrites the plan to skip `create Directory dir-zitadel` and
+    # resolve `#dir-zitadel` to the existing id (see the Directory-
+    # idempotency pre-step in the applier command). First apply still
+    # creates it; the create simply never runs a second time.
 
     # ── Create pass: parents-first ────────────────────────────────
     [
@@ -1211,17 +1207,6 @@ resource "kubernetes_deployment_v1" "stalwart" {
               sleep 2
             done
 
-            # Detach Authentication.directoryId BEFORE running the
-            # plan. `apply` does destroys, then updates, then creates —
-            # so a destroy of Directory in the plan fails (objectIsLinked,
-            # Authentication still points at it) before the update
-            # could detach it. Run the detach as a synchronous pre-step
-            # so the destroy pass is unblocked. Idempotent: if the field
-            # is already null (fresh DB), the update is a no-op.
-            echo "[applier] detaching Authentication.directoryId before plan"
-            /shared/bin/stalwart-cli update Authentication singleton --field directoryId=null \
-              || echo "[applier] detach update returned non-zero — proceeding anyway"
-
             # Delete any stale `smarthost` MtaRoute before the plan
             # tries to create one. MtaRoute has no destroy-by-filter
             # in `apply` ndjson, so a re-apply with an existing route
@@ -1264,6 +1249,25 @@ resource "kubernetes_deployment_v1" "stalwart" {
               sed -i '/"@type":"create","object":"Domain","value":{"dom-primary"/d' /tmp/plan.ndjson
               # Resolve every `#dom-primary` reference to the existing id.
               sed -i "s/#dom-primary/$DOM_ID/g" /tmp/plan.ndjson
+            fi
+
+            # Directory idempotency — same rewrite as Domain. The plan no
+            # longer destroys the OIDC Directory (so its id stays stable and
+            # the running server's directory cache never dangles), so on
+            # every re-apply `create Directory dir-zitadel` would
+            # primaryKeyViolate and `#dir-zitadel` would never resolve,
+            # cascading onto `update Authentication directoryId=#dir-zitadel`
+            # and leaving auth pointed at nothing. Query the existing Oidc
+            # Directory; if present, drop its create line and resolve every
+            # `#dir-zitadel` ref to the live id so Authentication keeps
+            # pointing at the same directory across restarts.
+            echo "[applier] checking for existing Oidc Directory"
+            DIR_ID=$(/shared/bin/stalwart-cli query Directory 2>/dev/null \
+              | awk '$2=="Oidc" {print $1; exit}') || true
+            if [ -n "$${DIR_ID:-}" ]; then
+              echo "[applier] Oidc Directory already exists as id '$DIR_ID' — rewriting plan to skip its create + resolve refs"
+              sed -i '/"@type":"create","object":"Directory","value":{"dir-zitadel"/d' /tmp/plan.ndjson
+              sed -i "s/#dir-zitadel/$DIR_ID/g" /tmp/plan.ndjson
             fi
 
             # `--continue-on-error` so a JMAP filter rejection on

@@ -7,6 +7,19 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **OIDC login no longer breaks after a Stalwart pod restart / node reboot.**
+  The applier used to `destroy` + recreate the OIDC `Directory` on every run,
+  minting a new internal id and re-pointing `Authentication` at it; the running
+  server had cached the *old* id at startup, so after the applier's mutation
+  every OIDC login resolved a dangling directory until a manual restart. The
+  plan no longer destroys the Directory, and the applier now rewrites the plan
+  to skip `create Directory dir-zitadel` + resolve `#dir-zitadel` to the
+  existing id when one is present (the same idempotency already used for
+  `Domain`). The Directory id is now stable across applies, so the start-time
+  cache stays valid and the `Authentication.directoryId=null` detach pre-step
+  (only needed because of the destroy) is removed.
+
 ### Added
 - **`additional_domains` variable for multi-domain submission-only mail.** Map of
   slug → { name, dkim_selector?, dmarc_policy? }. Engine generates one
