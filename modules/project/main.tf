@@ -834,134 +834,64 @@ resource "random_password" "redis" {
   special  = false
 }
 
-# Creates an ACL user on the shared Redis limited to the tenant's key
-# prefix. `resetkeys ~<ns>:*` wipes any previous key permissions then
-# grants only `<ns>:*` — two tenants can't read or overwrite each
-# other's keys. `+@all -@dangerous` gives every command group except
-# destructive ones (FLUSHDB, FLUSHALL, CONFIG, SHUTDOWN, …).
+# The tenant password is minted here and surfaced two ways:
+#   - plaintext in the namespace-local `redis-credentials` Secret (below),
+#     consumed by the tenant's pods via `envFrom`;
+#   - as a SHA-256 hash in a `redis-acl-<ns>` Secret in the Redis namespace
+#     (this block), consumed by the `redis-acl-keeper` in modules/redis.
 #
-# The user name is NOT deleted on terraform destroy — same policy as
-# MySQL, so data isn't lost if a project is removed and re-added.
-resource "kubernetes_job_v1" "redis_setup" {
+# Why a keeper instead of a one-shot setup Job: the Valkey deployment is
+# effectively ephemeral (the Sentinel chart has no aclfile and no PVC), so
+# ACL users created once vanish on every Valkey pod restart / node reboot,
+# breaking tenant auth until re-applied. The keeper re-applies every line
+# to each Valkey node on a loop, so the users survive reboots. Storing only
+# the hash here means the keeper never sees plaintext — `ACL SETUSER ...
+# #<sha256>` sets the password by hash, and nothing readable leaks into the
+# shared Redis namespace.
+#
+# `resetkeys ~<ns>:*` scopes keys to the tenant prefix (two tenants can't
+# read/overwrite each other's keys); `resetchannels &<ns>:* &<ns>::*`
+# scopes pub/sub to both colon conventions. `+@all -@dangerous +INFO` =
+# every command group except destructive ones, plus INFO (object-cache
+# health probe). FLUSHDB is intentionally NOT granted: this Valkey build
+# renames FLUSHDB/FLUSHALL away, so the grant would error and the WP
+# object-cache uses selective SCAN+UNLINK flush instead (see the
+# `WP_REDIS_SELECTIVE_FLUSH` env on `redis-credentials` below).
+#
+# The ACL user is NOT deleted on terraform destroy — same policy as MySQL,
+# so data isn't lost if a project is removed and re-added.
+resource "kubernetes_secret_v1" "redis_acl" {
   for_each = local.needs_redis ? toset(["enabled"]) : toset([])
 
-  depends_on = [kubernetes_namespace_v1.this]
-
   metadata {
-    # Job name carries the Valkey helm revision so a chart upgrade
-    # (which can switch the Sentinel master and discard the
-    # previously-applied tenant ACL) renames the Job, Terraform
-    # replaces it, and the ACL is re-applied against the post-upgrade
-    # master. Without this, tenant pods get `WRONGPASS` after every
-    # redis chart upgrade until the operator manually `terraform taint`s
-    # the Job — historic flake source documented 2026-05-09.
-    name      = "redis-setup-${local.namespace}-rev${var.redis_helm_revision}"
+    name      = "redis-acl-${local.namespace}"
     namespace = var.redis_namespace
     labels = merge(module.project_label.tags, {
-      "app.kubernetes.io/managed-by" = "terraform"
-      "project-namespace"            = local.namespace
+      "platform.local/redis-acl" = "true"
+      "project-namespace"        = local.namespace
     })
   }
 
-  spec {
-    backoff_limit = 3
-
-    template {
-      metadata {
-        labels = {
-          job = "redis-setup-${local.namespace}-rev${var.redis_helm_revision}"
-        }
-      }
-
-      spec {
-        restart_policy = "Never"
-
-        container {
-          name  = "redis-setup"
-          image = "redis:7-alpine"
-
-          env_from {
-            secret_ref {
-              name = var.redis_default_secret
-            }
-          }
-
-          # Tiny one-shot — see the mysql-setup container for the reasoning.
-          resources {
-            requests = {
-              cpu    = "50m"
-              memory = "64Mi"
-            }
-            limits = {
-              cpu    = "200m"
-              memory = "256Mi"
-            }
-          }
-
-          # The `>` prefix on the password is Redis ACL syntax ("add this
-          # password to the user"), *not* shell redirection — escape it so
-          # `sh -c` does not strip the password into a stray output file
-          # and leave the ACL user without any credentials.
-          #
-          # The trailing `ACL SAVE` persists the new user to Redis's
-          # aclfile (/data/users.acl on the shared PV). Without it the
-          # user lives only in-memory and vanishes on the next redis-0
-          # restart — the exact regression this fix addresses. `SETUSER`
-          # and `SAVE` run as two separate redis-cli invocations so the
-          # shell `&&` short-circuits SAVE if SETUSER fails.
-          command = [
-            "sh", "-c",
-            "${join(" ", [
-              "redis-cli -h ${var.redis_host} -a \"$REDIS_PASSWORD\"",
-              "ACL SETUSER ${local.redis_user}",
-              "on",
-              "\\>${values(random_password.redis)[0].result}",
-              "resetkeys",
-              "~${local.redis_key_prefix}*",
-              # Reset + scope pub/sub channels to the same prefix.
-              # Default `resetchannels` denies every channel; without
-              # this the user holds `+@pubsub` commands but can't
-              # subscribe to anything (NOPERM at SUBSCRIBE time).
-              # Two patterns: `<ns>:*` covers the keyspace-style
-              # channel naming (e.g. `<ns>:notifications`); `<ns>::*`
-              # covers the double-colon namespace separator some
-              # apps use (e.g. `<ns>::dialog_actions`). Both whitelisted
-              # so either convention works without per-app schema.
-              "resetchannels",
-              # `&` is a literal Redis ACL channel-pattern prefix; in
-              # `sh -c` it's also the background-job operator. Escape
-              # so the shell passes `&pattern*` through verbatim
-              # instead of interpreting as `&` + glob.
-              "\\&${local.redis_key_prefix}*",
-              "\\&${local.namespace}::*",
-              "+@all",
-              "-@dangerous",
-              # Object-cache plugins (WP redis-cache, Drupal Redis, …)
-              # use INFO for health / server-version detection and
-              # FLUSHDB to drop their tenant keyspace on admin action.
-              # Both live in `@dangerous` in Redis 7's category tree, so
-              # re-granting them explicitly is safer and cheaper than
-              # removing the whole `-@dangerous` ceiling.
-              "+INFO",
-              "+FLUSHDB",
-            ])} && redis-cli -h ${var.redis_host} -a \"$REDIS_PASSWORD\" ACL SAVE"
-          ]
-        }
-      }
-    }
-  }
-
-  wait_for_completion = true
-
-  timeouts {
-    create = "2m"
+  data = {
+    # `ACL SETUSER` argument string, applied verbatim by the keeper.
+    setuser = join(" ", [
+      local.redis_user,
+      "on",
+      "#${sha256(values(random_password.redis)[0].result)}",
+      "resetkeys",
+      "~${local.redis_key_prefix}*",
+      "resetchannels",
+      "&${local.redis_key_prefix}*",
+      "&${local.namespace}::*",
+      "+@all",
+      "-@dangerous",
+      "+INFO",
+    ])
   }
 }
 
 resource "kubernetes_secret_v1" "redis_credentials" {
   for_each = local.needs_redis ? toset(["enabled"]) : toset([])
-
-  depends_on = [kubernetes_job_v1.redis_setup]
 
   metadata {
     name      = "redis-credentials"
@@ -975,6 +905,11 @@ resource "kubernetes_secret_v1" "redis_credentials" {
     REDIS_USER       = local.redis_user
     REDIS_PASSWORD   = values(random_password.redis)[0].result
     REDIS_KEY_PREFIX = local.redis_key_prefix
+    # This Valkey build renames FLUSHDB/FLUSHALL away (destructive-command
+    # hardening), so WP redis-cache's default FLUSHDB-based flush errors
+    # with "unknown command". Selective flush switches it to SCAN+UNLINK
+    # by key prefix — the object-cache drop-in reads this env at load.
+    WP_REDIS_SELECTIVE_FLUSH = "1"
   }
 }
 

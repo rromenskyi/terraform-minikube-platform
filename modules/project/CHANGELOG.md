@@ -7,6 +7,21 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- **BREAKING (inputs): removed `redis_default_secret` and `redis_helm_revision`.**
+  Per-tenant Redis ACL provisioning moved from a one-shot `redis-setup` Job to
+  the declarative `redis-acl-keeper` in `modules/redis`. The project now writes
+  a `redis-acl-<ns>` Secret into the Redis namespace (one `ACL SETUSER` line,
+  password as a SHA-256 hash — never plaintext) and the keeper re-applies it to
+  every Valkey node on a loop, so tenant users survive a Valkey restart / node
+  reboot instead of `WRONGPASS`-ing until manual re-run. Migration: drop the
+  `redis_default_secret` / `redis_helm_revision` arguments from the module call
+  (root no longer wires them).
+- **`redis-credentials` gains `WP_REDIS_SELECTIVE_FLUSH=1`.** This Valkey build
+  renames `FLUSHDB`/`FLUSHALL` away, so WordPress redis-cache's default flush
+  errors with "unknown command" and 500s the site; the env switches the
+  object-cache drop-in to selective SCAN+UNLINK-by-prefix flush.
+
 ### Added
 - **`gcp_wif_service_accounts` — standalone WIF SA + credential-config for
   chart-managed workloads.** Per-env map of k8s SA name →

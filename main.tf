@@ -215,8 +215,6 @@ module "project" {
   postgres_superuser_secret = module.postgres.superuser_secret_name
   redis_namespace           = module.redis.namespace
   redis_host                = module.redis.host
-  redis_default_secret      = module.redis.default_secret_name
-  redis_helm_revision       = module.redis.helm_revision
   ollama_url                = module.ollama.url
 
   # GCP Workload Identity Federation — cluster-wide audience the
