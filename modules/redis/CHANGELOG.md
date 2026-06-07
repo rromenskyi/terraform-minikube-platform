@@ -7,6 +7,19 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- **Disable AOF/RDB persistence on the Sentinel cache** via `commonConfiguration`
+  (`appendonly no`, `save ""`). The data volume is an emptyDir (no PVC), so the
+  cache never survives a restart anyway, but the chart-default `appendonly yes`
+  fsynced to the node's local disk every second — under host disk contention
+  that fsync stalled ("Asynchronous AOF fsync is taking too long — disk is
+  busy?"), briefly wedging the server and dropping in-flight client connections
+  (WordPress object-cache logged `Error while reading line from the server` and
+  fell back to slow uncached page loads → occasional origin timeouts). Removing
+  the fsync removes the stalls. Only overrides the chart's default
+  `commonConfiguration`; the default `disableCommands: [FLUSHDB, FLUSHALL]`
+  (separate field) is untouched.
+
 ### Added
 - **`redis-acl-keeper` — per-tenant ACL users that survive Valkey restarts.**
   The Sentinel chart is effectively ephemeral (no `aclfile`, no PVC), so ACL

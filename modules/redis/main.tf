@@ -368,6 +368,21 @@ resource "helm_release" "valkey_sentinel" {
   values = [yamlencode({
     architecture = "replication"
 
+    # This is a cache, not a datastore — the data volume is an emptyDir
+    # (no PVC) so nothing here is meant to survive a pod restart anyway.
+    # The chart defaults to `appendonly yes`, which fsyncs the AOF to the
+    # node's local disk every second; under disk contention on the host
+    # that fsync stalls ("Asynchronous AOF fsync is taking too long — disk
+    # is busy?"), briefly wedging the server and dropping in-flight client
+    # connections (WordPress object-cache then logs `Error while reading
+    # line from the server` and falls back to slow uncached page loads).
+    # Disable both AOF and RDB: a cache has no durability requirement, and
+    # removing the fsync removes the stalls. Overrides only the chart's
+    # default `commonConfiguration` — the default `disableCommands:
+    # [FLUSHDB, FLUSHALL]` (rendered into primary/replica.conf, a separate
+    # field) is untouched.
+    commonConfiguration = "appendonly no\nsave \"\""
+
     image = {
       registry   = "docker.io"
       repository = var.sentinel.image_repo
