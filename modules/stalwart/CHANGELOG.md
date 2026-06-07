@@ -8,6 +8,16 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- **Applier no longer fails 3 ops on every Stalwart start (clean convergence).**
+  The Domain idempotency now covers *every* domain in the plan (primary +
+  each `additional_domains` entry), not just the primary — re-applies no
+  longer `primaryKeyViolation` on `dom-add-<slug>`. Added DkimSignature
+  idempotency: Stalwart auto-generates a DKIM signature per Domain (rotation
+  selectors `v1-rsa-<date>`), so the explicit `create DkimSignature` failed
+  (`invalidPatch` / duplicate) on any domain that already had one; the applier
+  now drops any DkimSignature create whose target Domain already has a
+  signature, keeping creates only for brand-new domains. Apply now reports
+  `0 failed` instead of 3.
 - **OIDC login no longer breaks after a Stalwart pod restart / node reboot.**
   The applier used to `destroy` + recreate the OIDC `Directory` on every run,
   minting a new internal id and re-pointing `Authentication` at it; the running
