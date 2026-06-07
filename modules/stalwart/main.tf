@@ -1240,16 +1240,44 @@ resource "kubernetes_deployment_v1" "stalwart" {
             # Plan file is mounted from a Secret (read-only); copy to
             # tmpfs first so sed -i can rewrite it.
             cp /seed/plan.ndjson /tmp/plan.ndjson
-            echo "[applier] checking for existing Domain named '$PRIMARY_DOMAIN'"
-            DOM_ID=$(/shared/bin/stalwart-cli query Domain 2>/dev/null \
-              | awk -v name="$PRIMARY_DOMAIN" '$2==name {print $1; exit}') || true
-            if [ -n "$${DOM_ID:-}" ]; then
-              echo "[applier] Domain '$PRIMARY_DOMAIN' already exists as id '$DOM_ID' — rewriting plan to skip its create + resolve refs"
-              # Drop the create-Domain line for friendly id `dom-primary`.
-              sed -i '/"@type":"create","object":"Domain","value":{"dom-primary"/d' /tmp/plan.ndjson
-              # Resolve every `#dom-primary` reference to the existing id.
-              sed -i "s/#dom-primary/$DOM_ID/g" /tmp/plan.ndjson
-            fi
+
+            # Domain idempotency (primary + every additional domain). Stalwart
+            # enforces uniqueness on Domain.name, so on every re-apply after the
+            # first, `create Domain` returns primaryKeyViolation and the friendly
+            # id never resolves — cascading onto everything that references it
+            # (DkimSignature.domainId, SystemSettings.defaultDomainId). For each
+            # `create Domain` line, if a Domain with that name already exists,
+            # drop the create and resolve its `#<friendly-id>` ref to the live id.
+            /shared/bin/stalwart-cli query Domain 2>/dev/null \
+              | awk 'NR>1 {print $1"\t"$2}' > /tmp/domains.tsv || true
+            grep '"object":"Domain","value":' /tmp/plan.ndjson | while IFS= read -r line; do
+              fid=$(printf '%s' "$line" | sed 's/.*"object":"Domain","value":{"\([^"]*\)":.*/\1/')
+              name=$(printf '%s' "$line" | sed 's/.*"name":"\([^"]*\)".*/\1/')
+              did=$(awk -F'\t' -v n="$name" '$2==n {print $1; exit}' /tmp/domains.tsv)
+              if [ -n "$did" ]; then
+                echo "[applier] Domain '$name' already exists as id '$did' — skip create '$fid' + resolve refs"
+                sed -i "/\"object\":\"Domain\",\"value\":{\"$fid\"/d" /tmp/plan.ndjson
+                sed -i "s/#$fid/$did/g" /tmp/plan.ndjson
+              fi
+            done
+
+            # DkimSignature idempotency. Stalwart auto-generates a DKIM signature
+            # per Domain (rotation selectors `v1-rsa-<date>` etc.), so our
+            # explicit `create DkimSignature` fails (invalidPatch / duplicate) on
+            # any domain that already has one. Drop any create whose target
+            # Domain (resolved to a real id by the block above) already has a
+            # signature; keep creates for brand-new domains (ref still `#...`).
+            SIGNED=$(/shared/bin/stalwart-cli query DkimSignature 2>/dev/null \
+              | grep -o 'id: [a-z0-9]*' | awk '{print $2}' | sort -u)
+            grep '"object":"DkimSignature","value":' /tmp/plan.ndjson | while IFS= read -r line; do
+              fid=$(printf '%s' "$line" | sed 's/.*"object":"DkimSignature","value":{"\([^"]*\)":.*/\1/')
+              did=$(printf '%s' "$line" | sed 's/.*"domainId":"\([^"]*\)".*/\1/')
+              case "$did" in "#"*) continue ;; esac
+              if printf '%s\n' "$SIGNED" | grep -qx "$did"; then
+                echo "[applier] Domain id '$did' already has a DKIM signature — skip create '$fid'"
+                sed -i "/\"object\":\"DkimSignature\",\"value\":{\"$fid\"/d" /tmp/plan.ndjson
+              fi
+            done
 
             # Directory idempotency — same rewrite as Domain. The plan no
             # longer destroys the OIDC Directory (so its id stays stable and
