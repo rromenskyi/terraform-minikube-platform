@@ -211,7 +211,7 @@ resource "cloudflare_dns_record" "additional_mail_spf" {
   zone_id = each.value.zone_id
   name    = each.value.name
   type    = "TXT"
-  content = "\"v=spf1 ip4:${local.mail.spf_authorized_ip} -all\""
+  content = "\"v=spf1 ip4:${try(local.mail.spf_authorized_ip, "")} -all\""
   ttl     = 300
   comment = "additional mail domain — SPF authorises only the relay public IP"
 }

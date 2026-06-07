@@ -50,14 +50,17 @@ resource "kubernetes_service_v1" "traefik_public" {
 
   spec {
     type = "LoadBalancer"
-    # `Cluster` (default) tolerates Traefik pods landing on any node
-    # — MetalLB-active node forwards via kube-proxy DNAT + flannel
-    # to wherever the Traefik pods live. Source IP is SNAT'd to the
-    # node IP (not the original client IP). Flip to `Local` only when
-    # source-IP preservation is needed AND every MetalLB-active node
-    # has a Traefik pod (otherwise the pool's node would drop
-    # incoming traffic).
-    external_traffic_policy = "Cluster"
+    # `Local` preserves the real client source IP (no SNAT to node IP)
+    # — required so tenant Services that SHARE this VIP and need source
+    # IP (SIP/RTP telephony) can co-own the address: MetalLB only lets
+    # Services share an IP when their externalTrafficPolicy matches, so
+    # a `Cluster` Traefik here would block a `Local` SIP Service from
+    # sharing. Safe because Traefik runs as a DaemonSet (one pod on
+    # every node, including each pool's MetalLB-announcer node), so
+    # `Local` never blackholes. Bonus: Traefik now sees real client
+    # IPs in its access logs / rate-limit / forwarded-for chain
+    # instead of the SNAT'd node IP.
+    external_traffic_policy = "Local"
 
     # Match the existing Traefik chart's pod labels — both Services
     # (chart-bundled ClusterIP + this engine-emitted LoadBalancer)

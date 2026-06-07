@@ -616,3 +616,205 @@ resource "kubernetes_deployment_v1" "haproxy" {
   }
 }
 
+# ── Per-tenant ACL keeper ─────────────────────────────────────────────────────
+#
+# The Valkey deployment loses every per-tenant ACL user on a pod restart /
+# node reboot: the Sentinel chart has no `aclfile` and no PVC, so users
+# created at runtime live only in memory; single mode persists an aclfile
+# on its PVC but a Sentinel-style failover would still land on a node that
+# never loaded it. Either way the recurring symptom is `WRONGPASS` /
+# `NOPERM` across every tenant after a reboot until someone re-applies the
+# ACLs by hand.
+#
+# This keeper closes that gap declaratively. Each consuming project writes a
+# `redis-acl-<ns>` Secret (labelled `platform.local/redis-acl=true`) into
+# THIS namespace, carrying one `ACL SETUSER` argument line with the tenant
+# password as a SHA-256 hash — never plaintext. The keeper lists those
+# Secrets and re-applies every line to EACH Valkey node directly (not via
+# the Service) on a short loop: Valkey does not replicate ACL changes, so
+# every node must be primed independently or a failover re-breaks auth.
+#
+# Security scope: a namespace-local Role (list/get Secrets in this namespace
+# only); the Secrets it reads carry hashes, and the only plaintext it
+# touches is the shared default-user password it needs to authenticate the
+# SETUSER calls (the same `redis-default` Secret the chart already uses).
+# `runAsRoot` is required solely because the stock `redis:7-alpine` image
+# has no HTTP client and the keeper `apk add`s `curl` at start — a follow-up
+# could bake a purpose-built image to drop the root + network dependency.
+locals {
+  # Address every Valkey node directly. Sentinel mode → per-pod headless
+  # DNS names; single mode → the one pod behind the flat Service.
+  acl_keeper_nodes = var.sentinel.enabled ? [
+    for i in range(var.sentinel.replica_count) :
+    "redis-valkey-node-${i}.redis-valkey-headless.${var.namespace}.svc.cluster.local"
+  ] : ["redis.${var.namespace}.svc.cluster.local"]
+}
+
+resource "kubernetes_service_account_v1" "acl_keeper" {
+  for_each = local.instances
+
+  metadata {
+    name      = "redis-acl-keeper"
+    namespace = var.namespace
+    labels    = local.tags
+  }
+}
+
+resource "kubernetes_role_v1" "acl_keeper" {
+  for_each = local.instances
+
+  metadata {
+    name      = "redis-acl-keeper"
+    namespace = var.namespace
+    labels    = local.tags
+  }
+
+  # List to discover every `redis-acl-<ns>` Secret; get is implied but
+  # listed for clarity. Scoped to this namespace — no cluster-wide reach.
+  rule {
+    api_groups = [""]
+    resources  = ["secrets"]
+    verbs      = ["get", "list"]
+  }
+}
+
+resource "kubernetes_role_binding_v1" "acl_keeper" {
+  for_each = local.instances
+
+  metadata {
+    name      = "redis-acl-keeper"
+    namespace = var.namespace
+    labels    = local.tags
+  }
+
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "Role"
+    name      = kubernetes_role_v1.acl_keeper["enabled"].metadata[0].name
+  }
+
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account_v1.acl_keeper["enabled"].metadata[0].name
+    namespace = var.namespace
+  }
+}
+
+resource "kubernetes_deployment_v1" "acl_keeper" {
+  for_each = local.instances
+
+  # Nodes/Service must exist before the keeper starts probing them. Both
+  # references are safe when the other mode's resource set is empty.
+  depends_on = [helm_release.valkey_sentinel, kubernetes_stateful_set_v1.redis]
+
+  metadata {
+    name      = "redis-acl-keeper"
+    namespace = var.namespace
+    labels    = merge(local.tags, { app = "redis-acl-keeper" })
+  }
+
+  spec {
+    replicas = 1
+
+    selector {
+      match_labels = { app = "redis-acl-keeper" }
+    }
+
+    template {
+      metadata {
+        labels = merge(local.tags, { app = "redis-acl-keeper" })
+        annotations = {
+          # Re-roll the keeper when the default password rotates so its
+          # SETUSER auth keeps working without a manual restart.
+          "checksum/redis-default" = sha256(jsonencode(kubernetes_secret_v1.default["enabled"].data))
+        }
+      }
+
+      spec {
+        service_account_name = kubernetes_service_account_v1.acl_keeper["enabled"].metadata[0].name
+
+        dynamic "toleration" {
+          for_each = var.tolerations
+          content {
+            key                = toleration.value.key
+            operator           = toleration.value.operator
+            value              = toleration.value.value
+            effect             = toleration.value.effect
+            toleration_seconds = toleration.value.toleration_seconds
+          }
+        }
+
+        container {
+          name  = "keeper"
+          image = "redis:7-alpine"
+
+          # Root only to `apk add curl` at start (see resource comment).
+          security_context {
+            run_as_user = 0
+          }
+
+          env {
+            name = "REDIS_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret_v1.default["enabled"].metadata[0].name
+                key  = "REDIS_PASSWORD"
+              }
+            }
+          }
+
+          env {
+            name  = "NS"
+            value = var.namespace
+          }
+
+          env {
+            name  = "NODES"
+            value = join(" ", local.acl_keeper_nodes)
+          }
+
+          # Loop: pull every `redis-acl-<ns>` Secret's `setuser` line from
+          # the API (token re-read each pass — projected tokens rotate),
+          # base64-decode it, and `ACL SETUSER` it against every node.
+          # `set -f` stops the shell globbing the `~ns:*` / `&ns:*` ACL
+          # patterns when the line is word-split into SETUSER args. Each
+          # apply is best-effort (`|| true`) so one unreachable node mid-
+          # failover never stalls the rest.
+          command = ["sh", "-c", <<-EOT
+            set -uf
+            until apk add --no-cache curl >/dev/null 2>&1; do
+              echo "[keeper] waiting for apk (network)"; sleep 5
+            done
+            API=https://kubernetes.default.svc
+            CA=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+            echo "[keeper] managing nodes: $NODES"
+            while true; do
+              TOK="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)"
+              LINES="$(curl -sf --max-time 8 --cacert "$CA" -H "Authorization: Bearer $TOK" \
+                "$API/api/v1/namespaces/$NS/secrets?labelSelector=platform.local%2Fredis-acl%3Dtrue" 2>/dev/null \
+                | grep -o '"setuser": *"[^"]*"' \
+                | sed 's/^"setuser": *"//; s/"$//' \
+                | while IFS= read -r b; do echo "$b" | base64 -d; echo; done)"
+              if [ -n "$LINES" ]; then
+                for node in $NODES; do
+                  printf '%s\n' "$LINES" | while IFS= read -r l; do
+                    [ -z "$l" ] && continue
+                    timeout 5 redis-cli -h "$node" -p 6379 -a "$REDIS_PASSWORD" --no-auth-warning ACL SETUSER $l >/dev/null 2>&1 || true
+                  done
+                done
+              fi
+              sleep 10
+            done
+          EOT
+          ]
+
+          resources {
+            requests = { cpu = "10m", memory = "32Mi" }
+            limits   = { cpu = "100m", memory = "64Mi" }
+          }
+        }
+      }
+    }
+  }
+}
+
