@@ -47,6 +47,13 @@ resource "kubectl_manifest" "middleware" {
 # `services` field is required by the CRD, so we point at the built-in
 # `noop@internal` service that's a no-op (never reached because the
 # middleware returns 301 before service dispatch).
+#
+# `priority: 1` pins this catch-all to the bottom of Traefik's route
+# table. Traefik's default priority is the rule length, and this OR'd
+# match is long enough to outrank a plain `Host(...)` rule — without
+# the pin, an explicit `routes:` carve-out on a subdomain of a
+# redirected zone (e.g. a link-tracking host on an otherwise
+# redirect-only domain) would be shadowed by the redirect.
 resource "kubectl_manifest" "ingressroute" {
   yaml_body = yamlencode({
     apiVersion = "traefik.io/v1alpha1"
@@ -59,8 +66,9 @@ resource "kubectl_manifest" "ingressroute" {
     spec = {
       entryPoints = ["web"]
       routes = [{
-        match = "Host(`${var.from_domain}`) || HostRegexp(`^.+\\.${replace(var.from_domain, ".", "\\.")}$`)"
-        kind  = "Rule"
+        match    = "Host(`${var.from_domain}`) || HostRegexp(`^.+\\.${replace(var.from_domain, ".", "\\.")}$`)"
+        kind     = "Rule"
+        priority = 1
         services = [{
           name = "noop@internal"
           kind = "TraefikService"
