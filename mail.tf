@@ -75,6 +75,7 @@ locals {
       name          = cfg.name
       dkim_selector = try(cfg.mail.dkim_selector, "stalwart")
       dmarc_policy  = try(cfg.mail.dmarc_policy, "none")
+      dmarc_rua     = try(cfg.mail.dmarc_rua, "")
       zone_id       = try(cfg.cloudflare_zone_id, "")
     }
     if try(cfg.mail.submission_only, false)
@@ -188,19 +189,23 @@ data "zitadel_orgs" "platform_org" {
 # ── DNS records for additional submission-only mail domains ──────────────────
 #
 # Per-entry in `local._additional_mail_domains` emit three TXT records
-# onto the additional domain's own Cloudflare zone. No MX — additional
-# domains are outbound-only by design, no inbound mailbox to deliver
+# onto the additional domain's own Cloudflare zone. No MX here — additional
+# domains are outbound-only by default, no inbound mailbox to deliver
 # bounces to. Senders that need to bounce a noreply@ message simply
-# get a delivery failure their side, which is correct semantics.
+# get a delivery failure their side, which is correct semantics. A
+# domain that DOES take inbound mail publishes its MX through the
+# generic per-domain `dns:` record list instead (same as the primary),
+# with the relay + Stalwart side provisioned by the operator.
 #
 #   - SPF → `v=spf1 ip4:<relay-public-ip> -all` — same authorised sender IP
 #           as primary. Without SPF every receiver flags forged-sender risk.
 #   - DKIM → per-domain `<selector>._domainkey` TXT carrying the public key
 #           Stalwart signs with for this domain.
-#   - DMARC → `_dmarc` TXT with policy from yaml. Default `none` (no `rua`
-#           since no inbound mailbox on `<add-domain>` to receive aggregate
-#           reports — gracefully omits the field rather than pointing at a
-#           non-existent address).
+#   - DMARC → `_dmarc` TXT with policy from yaml. Default `none`. `rua`
+#           is emitted only when the yaml sets `mail.dmarc_rua` (an
+#           address that actually receives mail — see the `dns:` MX
+#           note above); otherwise the field is omitted rather than
+#           pointing at a non-existent mailbox.
 
 resource "cloudflare_dns_record" "additional_mail_spf" {
   for_each = {
@@ -233,7 +238,7 @@ resource "cloudflare_dns_record" "additional_mail_dmarc" {
   zone_id = each.value.zone_id
   name    = "_dmarc.${each.value.name}"
   type    = "TXT"
-  content = "\"v=DMARC1; p=${each.value.dmarc_policy}\""
+  content = "\"v=DMARC1; p=${each.value.dmarc_policy}${each.value.dmarc_rua != "" ? "; rua=mailto:${each.value.dmarc_rua}" : ""}\""
   ttl     = 300
-  comment = "additional mail domain — DMARC policy (rua omitted: no inbound mailbox to receive reports)"
+  comment = "additional mail domain — DMARC policy (rua only when the yaml provides a receiving address)"
 }
