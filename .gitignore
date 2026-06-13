@@ -18,6 +18,7 @@ config/domains/*.yaml
 # fresh clone trips the gitignore instead of polluting state.
 config/components/sipmesh-frontend.yaml
 config/components/platform-dash.yaml
+config/components/lineoneagent-frontend-dev.yaml
 
 # Platform-service toggles — the live file is per-operator
 config/platform.yaml
