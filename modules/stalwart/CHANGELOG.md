@@ -8,6 +8,17 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **VERP attribution on ingest forwards — `X-Original-To` header.** Each
+  forward's Sieve rule now stamps `X-Original-To` on the forked copy,
+  recovered from the relay's `Received: ... for <addr>` clause. Stalwart
+  strips subaddressing (`mail+<token>@`) *before* the DATA-stage Sieve
+  runs — `:detail`/`:all` return the bare address, so the VERP token is
+  not recoverable from the envelope (verified). The relay (Postfix)
+  records the true envelope recipient in its `Received` `for` clause
+  *before* Stalwart, so the script extracts it there into
+  `X-Original-To` for the consumer (works even when `To:` is the
+  original sender, as in real DSNs). No-ops cleanly when no `for` clause
+  exists. Adds the `editheader` + `variables` Sieve requires.
 - **`ingest_forwards` — SMTP-push machine intake for mailbox traffic.**
   Map of slug → { address, synthetic_domain, smtp_host, smtp_port }.
   Each entry adds a `redirect :copy` rule (every message whose SMTP

@@ -430,9 +430,20 @@ locals {
           "sieve-ingest-forwards" = {
             name     = "ingest-forwards"
             isActive = true
-            contents = "require [\"envelope\", \"copy\"];\n${join("", [
+            # VERP attribution: Stalwart strips subaddressing
+            # (`mail+<token>@`) BEFORE the DATA-stage Sieve, so the
+            # token is gone from the envelope (`:detail`/`:all` return
+            # the bare address — verified). The relay (Postfix) records
+            # the real envelope recipient in its `Received: ... for
+            # <mail+<token>@dom>` clause, added before Stalwart, so we
+            # recover it from there into `X-Original-To` for the
+            # listener. `${2}` is the Sieve match var (TF-escaped
+            # `$${2}`); the `header :matches` test no-ops (no header
+            # added) when no `for` clause is present, so plain mail
+            # without a token still forwards cleanly.
+            contents = "require [\"envelope\", \"copy\", \"editheader\", \"variables\"];\n${join("", [
               for key, f in var.ingest_forwards :
-              "if envelope :is \"to\" \"${f.address}\" {\n  redirect :copy \"ingest@${f.synthetic_domain}\";\n}\n"
+              "if envelope :is \"to\" \"${f.address}\" {\n  if header :matches \"Received\" \"*for <*>*\" {\n    addheader \"X-Original-To\" \"$${2}\";\n  }\n  redirect :copy \"ingest@${f.synthetic_domain}\";\n}\n"
             ])}"
           }
         }
