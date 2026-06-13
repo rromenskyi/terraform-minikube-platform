@@ -86,6 +86,17 @@ variable "zitadel_provider_authenticated" {
   default     = false
 }
 
+variable "ingest_forwards" {
+  description = "SMTP-push forwards keyed by a stable slug. Each entry adds a `redirect :copy` rule (every message whose SMTP envelope recipient is `address` → a synthetic ingest address) into the combined DATA-stage Sieve script, and an MtaRoute pinning `synthetic_domain` to a plain-SMTP in-cluster listener at `smtp_host:smtp_port`. The copy never leaves the cluster and never hits MX/smarthost; the original is preserved in the mailbox; a down listener means standard SMTP queue+retry. Coexists with the spam filter (left enabled). Used for machine intake of mailbox traffic (e.g. campaign bounce/DSN ingest) without minting mailbox credentials. The applier triggers a settings reload when this is non-empty so the DATA-stage binding takes effect on the already-running server."
+  type = map(object({
+    address          = string
+    synthetic_domain = string
+    smtp_host        = string
+    smtp_port        = number
+  }))
+  default = {}
+}
+
 variable "smarthost_address" {
   description = "Hostname or IP of the outbound SMTP relay. Empty string keeps the default `mx` route (direct MX delivery); set to a relay address (typically the WireGuard IP of a public Postfix relay VPS, or its public hostname) to push every non-local message through it. Residential ISPs and Cloudflare Tunnel both block outbound :25 — without a smart host the queue spools forever and bounces. The relay must be configured to accept mail from this Stalwart's outgoing IP (typically by static IP / WG peer ACL) and to handle SPF/DKIM signing on the public side."
   type        = string

@@ -349,13 +349,13 @@ locals {
     ] : [],
 
     # ── Outbound smart host (when configured) ─────────────────────
-    # MtaRoute Relay variant + MtaOutboundStrategy.route override.
-    # The pre-existing built-in routes `local` and `mx` are NOT
-    # touched — we add a third route named `smarthost` and rewire the
-    # default else-branch from `'mx'` to `'smarthost'` so non-local
-    # mail goes through the relay. The applier sidecar deletes any
-    # stale MtaRoute named `smarthost` before this create runs (see
-    # the applier command), so plan re-applies are idempotent.
+    # MtaRoute Relay variant. The pre-existing built-in routes `local`
+    # and `mx` are NOT touched — we add a route named `smarthost`; the
+    # single combined MtaOutboundStrategy update further below flips the
+    # default else-branch from `'mx'` to `'smarthost'` so non-local mail
+    # goes through the relay. The applier sidecar deletes any stale
+    # MtaRoute named `smarthost` before this create runs (see the
+    # applier command), so plan re-applies are idempotent.
     local.smarthost_enabled ? [
       jsonencode({
         "@type" = "create"
@@ -380,17 +380,100 @@ locals {
           }
         }
       }),
-      # Route every non-local recipient through the smart host. The
-      # `match` keeps the upstream `is_local_domain → 'local'` branch
-      # so accounts on this Stalwart still deliver locally; the
-      # `else` flips from `'mx'` to `'smarthost'`.
+    ] : [],
+
+    # ── SMTP-push ingest forwards (machine intake of mailbox mail) ─
+    # Per `var.ingest_forwards` entry: a `redirect :copy` rule (every
+    # message whose SMTP envelope recipient is `address` → a synthetic
+    # ingest address) lives in ONE combined DATA-stage Sieve script
+    # (`ingest-forwards`), and the synthetic domain is pinned to an
+    # in-cluster SMTP listener via an MtaRoute Relay. `:copy` keeps the
+    # original in the mailbox as archive; a down listener means standard
+    # SMTP queue+retry. The Sieve uses `envelope :is "to"` (the SMTP
+    # RCPT TO) not the `To:` header — bounces/DSNs carry the original
+    # sender in the header, only the envelope names our mailbox. Proven
+    # to coexist with the spam filter (it stays enabled; both run at the
+    # DATA stage). The script lives in ONE object because the DATA stage
+    # runs a single script (`MtaStageData.script`); per-forward scripts
+    # would never fire. CRITICAL: the running server caches MtaStageData
+    # at startup, so the applier MUST `ReloadSettings` after this apply
+    # for the binding to take effect (see the applier command) — same
+    # start-time-cache class as the OIDC Directory id.
+    [
+      for key, f in var.ingest_forwards :
+      jsonencode({
+        "@type" = "create"
+        object  = "MtaRoute"
+        value = {
+          "ingest-${key}" = {
+            "@type"           = "Relay"
+            name              = "ingest-${key}"
+            description       = "SMTP-push ingest: ${f.synthetic_domain} delivers to an in-cluster listener."
+            address           = f.smtp_host
+            port              = f.smtp_port
+            protocol          = "smtp"
+            implicitTls       = false
+            allowInvalidCerts = false
+            authSecret        = { "@type" = "None" }
+          }
+        }
+      })
+    ],
+
+    # Combined DATA-stage Sieve script (one `redirect :copy` per
+    # forward) + bind it into the DATA stage. Only when ≥1 forward.
+    length(var.ingest_forwards) > 0 ? [
+      jsonencode({
+        "@type" = "create"
+        object  = "SieveSystemScript"
+        value = {
+          "sieve-ingest-forwards" = {
+            name     = "ingest-forwards"
+            isActive = true
+            contents = "require [\"envelope\", \"copy\"];\n${join("", [
+              for key, f in var.ingest_forwards :
+              "if envelope :is \"to\" \"${f.address}\" {\n  redirect :copy \"ingest@${f.synthetic_domain}\";\n}\n"
+            ])}"
+          }
+        }
+      }),
+      # Bind the script into the SMTP DATA stage. `script` is an
+      # Expression object (`{match, else}`), not a bare string — the
+      # unconditional `else` names the script (default is the
+      # expression `false` = run nothing). `enableSpamFilter` is left
+      # untouched; both run at the DATA stage.
+      jsonencode({
+        "@type" = "update"
+        object  = "MtaStageData"
+        value = {
+          script = {
+            match = {}
+            else  = "'ingest-forwards'"
+          }
+        }
+      }),
+    ] : [],
+
+    # Single combined outbound routing strategy. Keeps the upstream
+    # `is_local_domain → 'local'` branch, pins each synthetic ingest
+    # domain to its route, and falls back to the smart host (or plain
+    # MX when no smart host is configured).
+    (local.smarthost_enabled || length(var.ingest_forwards) > 0) ? [
       jsonencode({
         "@type" = "update"
         object  = "MtaOutboundStrategy"
         value = {
           route = {
-            match = { "0" = { if = "is_local_domain(rcpt_domain)", then = "'local'" } }
-            else  = "'smarthost'"
+            match = merge(
+              { "0" = { if = "is_local_domain(rcpt_domain)", then = "'local'" } },
+              { for i, key in keys(var.ingest_forwards) :
+                tostring(i + 1) => {
+                  if   = "rcpt_domain == '${var.ingest_forwards[key].synthetic_domain}'"
+                  then = "'ingest-${key}'"
+                }
+              }
+            )
+            else = local.smarthost_enabled ? "'smarthost'" : "'mx'"
           }
         }
       }),
@@ -1198,6 +1281,14 @@ resource "kubernetes_deployment_v1" "stalwart" {
             name  = "PRIMARY_DOMAIN"
             value = var.primary_domain
           }
+          env {
+            name  = "INGEST_ROUTE_NAMES"
+            value = join(" ", [for k, _ in var.ingest_forwards : "ingest-${k}"])
+          }
+          env {
+            name  = "INGEST_RELOAD"
+            value = length(var.ingest_forwards) > 0 ? "1" : ""
+          }
 
           command = ["bash", "-eu", "-c", <<-EOT
             for i in $(seq 1 180); do
@@ -1207,16 +1298,28 @@ resource "kubernetes_deployment_v1" "stalwart" {
               sleep 2
             done
 
-            # Delete any stale `smarthost` MtaRoute before the plan
-            # tries to create one. MtaRoute has no destroy-by-filter
-            # in `apply` ndjson, so a re-apply with an existing route
-            # would primary-key-violate — handled here by id lookup.
-            echo "[applier] removing stale MtaRoute named 'smarthost' (if present)"
-            SH_ID=$(/shared/bin/stalwart-cli query MtaRoute 2>/dev/null \
-              | awk '$2=="smarthost" {print $1; exit}') || true
-            if [ -n "$${SH_ID:-}" ]; then
-              /shared/bin/stalwart-cli delete MtaRoute --ids "$SH_ID" \
-                || echo "[applier] smarthost delete returned non-zero — proceeding anyway"
+            # Delete stale create-only objects before the plan tries to
+            # recreate them (no destroy-by-filter in `apply` ndjson, so a
+            # re-apply with an existing object would primary-key-violate)
+            # — handled here by name → id lookup. Covers the `smarthost`
+            # MtaRoute, every `ingest-*` ingest-forward MtaRoute (names in
+            # INGEST_ROUTE_NAMES), and the combined `ingest-forwards`
+            # DATA-stage Sieve script.
+            for rname in smarthost $${INGEST_ROUTE_NAMES:-}; do
+              RID=$(/shared/bin/stalwart-cli query MtaRoute 2>/dev/null \
+                | awk -v n="$rname" '$2==n {print $1; exit}') || true
+              if [ -n "$${RID:-}" ]; then
+                echo "[applier] removing stale MtaRoute '$rname' (id $RID)"
+                /shared/bin/stalwart-cli delete MtaRoute --ids "$RID" \
+                  || echo "[applier] $rname delete returned non-zero — proceeding anyway"
+              fi
+            done
+            SID=$(/shared/bin/stalwart-cli query SieveSystemScript 2>/dev/null \
+              | awk '$2=="ingest-forwards" {print $1; exit}') || true
+            if [ -n "$${SID:-}" ]; then
+              echo "[applier] removing stale SieveSystemScript 'ingest-forwards' (id $SID)"
+              /shared/bin/stalwart-cli delete SieveSystemScript --ids "$SID" \
+                || echo "[applier] ingest-forwards delete returned non-zero — proceeding anyway"
             fi
 
             # Domain idempotency. The plan declares
@@ -1307,6 +1410,20 @@ resource "kubernetes_deployment_v1" "stalwart" {
               echo "[applier] plan applied OK"
             else
               echo "[applier] apply finished with errors — see above; main server stays up"
+            fi
+
+            # Settings-class objects (MtaStageData.script) are cached by
+            # the running server at startup; the applier mutates them in
+            # the DB AFTER the server is up, so the DATA-stage ingest
+            # script binding stays inert until a reload. Trigger one when
+            # ingest forwards are configured (same start-time-cache class
+            # the OIDC Directory idempotency works around). Data objects
+            # (Domains, MtaRoutes, accounts) take effect without it, so
+            # the reload is skipped when there are no forwards.
+            if [ -n "$${INGEST_RELOAD:-}" ]; then
+              echo "[applier] reloading settings (ingest DATA-stage script binding)"
+              /shared/bin/stalwart-cli create Action --json '{"@type":"ReloadSettings"}' \
+                || echo "[applier] ReloadSettings returned non-zero — proceeding anyway"
             fi
 
             sleep infinity

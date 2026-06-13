@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`mail.ingest_forward` — SMTP-push intake of a mailbox's inbound mail.**
+  A domain yaml's `mail:` block can declare `ingest_forward: { address,
+  synthetic_domain, smtp_host, smtp_port }`; the stalwart module forks
+  every message whose SMTP envelope recipient is `address` (DATA-stage
+  Sieve `redirect :copy`) onto the synthetic domain, which an MtaRoute
+  pins to an in-cluster SMTP listener. Machine consumers (campaign
+  bounce/DSN ingest) get realtime push with SMTP queue+retry and zero
+  mailbox credentials; the mailbox keeps the original as archive; the
+  spam filter stays on. See `modules/stalwart` CHANGELOG for the
+  mechanism (and the start-time-cache `ReloadSettings` gotcha).
 - **Optional `mail.dmarc_rua` knob for additional mail domains.** A domain yaml
   with `mail.submission_only: true` can now also set `mail.dmarc_rua: <address>`;
   the emitted `_dmarc` TXT then carries `rua=mailto:<address>` so aggregate
