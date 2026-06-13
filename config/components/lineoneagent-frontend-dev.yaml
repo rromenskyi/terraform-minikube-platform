@@ -1,0 +1,11 @@
+# External component — routing only, no Deployment. Points at the
+# ArgoCD-managed lineoneagent-frontend dev Service (the chart in
+# phost-lineoneagent-com-dev owns the workload). Used to route
+# carve-out hostnames on other zones (campaign link-tracking host)
+# into the same frontend.
+kind: external
+
+service:
+  name:      lineoneagent-frontend-dev-web
+  namespace: phost-lineoneagent-com-dev
+  port:      3000

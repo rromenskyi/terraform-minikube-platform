@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **VERP attribution on `mail.ingest_forward` — `X-Original-To` header.**
+  The ingest-forward Sieve now stamps `X-Original-To: <original
+  recipient>` on the forked copy so a consumer can attribute a bounce to
+  the exact campaign/recipient via a VERP `mail+<token>@` envelope.
+  Recovered from the relay's `Received: ... for <addr>` clause because
+  Stalwart strips subaddressing before the DATA-stage Sieve. See
+  `modules/stalwart` CHANGELOG.
 - **`mail.ingest_forward` — SMTP-push intake of a mailbox's inbound mail.**
   A domain yaml's `mail:` block can declare `ingest_forward: { address,
   synthetic_domain, smtp_host, smtp_port }`; the stalwart module forks
