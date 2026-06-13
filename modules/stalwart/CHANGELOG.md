@@ -7,6 +7,34 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **`ingest_forwards` — SMTP-push machine intake for mailbox traffic.**
+  Map of slug → { address, synthetic_domain, smtp_host, smtp_port }.
+  Each entry adds a `redirect :copy` rule (every message whose SMTP
+  envelope recipient is `address` → `ingest@<synthetic_domain>`) into
+  ONE combined DATA-stage Sieve script (`ingest-forwards`), plus its
+  own MtaRoute Relay pinning the synthetic domain to a plain-SMTP
+  in-cluster listener. The script is bound via `MtaStageData.script`
+  (an Expression object — `{match, else}`, the `else` names the
+  script) and **coexists with the spam filter** (left enabled; both
+  run at the DATA stage — verified e2e). The Sieve matches the SMTP
+  envelope recipient (`envelope :is "to"`), not the `To:` header, so
+  bounces/DSNs (whose header carries the original sender) are caught.
+  Built for campaign bounce/DSN ingest by a backend service: realtime
+  push at delivery, zero mailbox credentials (the auth directory is
+  external/OIDC — internal account passwords aren't even possible),
+  original kept in the mailbox, SMTP queue+retry when the listener is
+  down. **Critical applier change:** the running server caches
+  `MtaStageData` at startup, so the applier now triggers a
+  `ReloadSettings` action after the apply when forwards exist — without
+  it the DATA-stage binding stays inert (same start-time-cache class
+  the OIDC Directory idempotency works around; cost us a full debug
+  cycle). The applier's stale-object pre-step is generalised from the
+  single `smarthost` route to every `ingest-*` MtaRoute + the
+  `ingest-forwards` script. The single combined `MtaOutboundStrategy`
+  update now composes the per-domain ingest branches ahead of the
+  smarthost/mx fallback (and is emitted even with no smart host).
+
 ### Fixed
 - **Applier no longer fails 3 ops on every Stalwart start (clean convergence).**
   The Domain idempotency now covers *every* domain in the plan (primary +

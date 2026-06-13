@@ -80,6 +80,21 @@ locals {
     }
     if try(cfg.mail.submission_only, false)
   }
+
+  # SMTP-push ingest forwards declared by domain yamls
+  # (`mail.ingest_forward`). Machine intake of a mailbox's inbound
+  # traffic (campaign bounce/DSN ingest) without minting mailbox
+  # credentials — see `modules/stalwart` `ingest_forwards`.
+  _mail_ingest_forwards = local.mail == null ? {} : {
+    for name, cfg in local._domain_configs :
+    cfg.slug => {
+      address          = cfg.mail.ingest_forward.address
+      synthetic_domain = cfg.mail.ingest_forward.synthetic_domain
+      smtp_host        = cfg.mail.ingest_forward.smtp_host
+      smtp_port        = try(cfg.mail.ingest_forward.smtp_port, 25)
+    }
+    if try(cfg.mail.ingest_forward.address, "") != ""
+  }
 }
 
 module "stalwart" {
@@ -110,6 +125,9 @@ module "stalwart" {
       dmarc_policy  = cfg.dmarc_policy
     }
   }
+
+  # SMTP-push ingest forwards (machine intake of mailbox traffic).
+  ingest_forwards = local._mail_ingest_forwards
 
   # DNS / DKIM knobs from yaml.
   dkim_selector     = try(local.mail.dkim_selector, "stalwart")
