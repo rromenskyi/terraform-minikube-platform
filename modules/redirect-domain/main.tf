@@ -48,12 +48,16 @@ resource "kubectl_manifest" "middleware" {
 # `noop@internal` service that's a no-op (never reached because the
 # middleware returns 301 before service dispatch).
 #
-# `priority: 1` pins this catch-all to the bottom of Traefik's route
-# table. Traefik's default priority is the rule length, and this OR'd
-# match is long enough to outrank a plain `Host(...)` rule — without
-# the pin, an explicit `routes:` carve-out on a subdomain of a
+# `priority: 2` pins this catch-all near the bottom of Traefik's
+# route table. Traefik's default priority is the rule length, and this
+# OR'd match is long enough to outrank a plain `Host(...)` rule —
+# without the pin, an explicit `routes:` carve-out on a subdomain of a
 # redirected zone (e.g. a link-tracking host on an otherwise
-# redirect-only domain) would be shadowed by the redirect.
+# redirect-only domain) would be shadowed by the redirect. NOT 1: the
+# platform-wide `traefik-fallback` catch-all (the "Service is starting
+# up" page) sits at priority 1, and on an equal-priority tie Traefik's
+# winner is effectively arbitrary — at 1 the fallback page can (and
+# did) swallow every host of a redirected zone.
 resource "kubectl_manifest" "ingressroute" {
   yaml_body = yamlencode({
     apiVersion = "traefik.io/v1alpha1"
@@ -68,7 +72,7 @@ resource "kubectl_manifest" "ingressroute" {
       routes = [{
         match    = "Host(`${var.from_domain}`) || HostRegexp(`^.+\\.${replace(var.from_domain, ".", "\\.")}$`)"
         kind     = "Rule"
-        priority = 1
+        priority = 2
         services = [{
           name = "noop@internal"
           kind = "TraefikService"
