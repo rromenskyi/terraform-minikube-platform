@@ -195,6 +195,19 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "main" {
           }
         }
       ],
+      # Per-host redirects (`redirect_hosts:` in domain yamls). Same
+      # cleartext-to-Traefik backend; the per-host IngressRoute serves a
+      # 301 to a different target than the zone redirect.
+      [
+        for hostname, cfg in local.redirect_host_tunnel_hostnames : {
+          hostname = hostname
+          service  = cfg.service
+          origin_request = {
+            origin_server_name = hostname
+            http2_origin       = false
+          }
+        }
+      ],
       # Catch-all (required by Cloudflare — must be the last entry,
       # match-anything by omitting `hostname`).
       [{
@@ -212,6 +225,7 @@ resource "cloudflare_dns_record" "tunnel" {
       local.all_hostnames,
       local.tunnel_argocd_hostnames,
       local.redirect_tunnel_hostnames,
+      local.redirect_host_tunnel_hostnames,
     ) :
     hostname => cfg
     if cfg.zone_id != null

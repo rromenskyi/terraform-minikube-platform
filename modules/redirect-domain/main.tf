@@ -41,23 +41,23 @@ resource "kubectl_manifest" "middleware" {
   })
 }
 
-# Matches both the apex (`Host(...)`) and any subdomain
-# (`HostRegexp(...)`). Single rule with both predicates OR'd so one
-# IngressRoute covers the entire zone. No backend — Traefik's
-# `services` field is required by the CRD, so we point at the built-in
-# `noop@internal` service that's a no-op (never reached because the
+# Matches the apex (`Host(...)`) and — when `include_subdomains` —
+# every subdomain (`HostRegexp(...)`), OR'd into one rule so a single
+# IngressRoute covers the whole zone. With `include_subdomains = false`
+# it matches only the exact `from_domain` (single-host redirect). No
+# backend — Traefik's `services` field is required by the CRD, so we
+# point at the built-in `noop@internal` no-op (never reached: the
 # middleware returns 301 before service dispatch).
 #
-# `priority: 2` pins this catch-all near the bottom of Traefik's
-# route table. Traefik's default priority is the rule length, and this
-# OR'd match is long enough to outrank a plain `Host(...)` rule —
-# without the pin, an explicit `routes:` carve-out on a subdomain of a
-# redirected zone (e.g. a link-tracking host on an otherwise
-# redirect-only domain) would be shadowed by the redirect. NOT 1: the
-# platform-wide `traefik-fallback` catch-all (the "Service is starting
-# up" page) sits at priority 1, and on an equal-priority tie Traefik's
-# winner is effectively arbitrary — at 1 the fallback page can (and
-# did) swallow every host of a redirected zone.
+# `priority` (default 2) places the rule in Traefik's route table.
+# Default 2 sits just above the platform-wide `traefik-fallback` (the
+# "Service is starting up" page, priority 1) and below a default-
+# priority service route — so a whole-zone redirect yields to explicit
+# carve-outs. NOT 1: on an equal-priority tie Traefik's winner is
+# arbitrary, and at 1 the fallback page swallowed redirected zones. A
+# single-host redirect that must WIN over an overlapping zone redirect
+# passes a higher value (Traefik's default rule-length priority is
+# unreliable when a long zone-redirect rule competes — observed live).
 resource "kubectl_manifest" "ingressroute" {
   yaml_body = yamlencode({
     apiVersion = "traefik.io/v1alpha1"
@@ -70,9 +70,11 @@ resource "kubectl_manifest" "ingressroute" {
     spec = {
       entryPoints = ["web"]
       routes = [{
-        match    = "Host(`${var.from_domain}`) || HostRegexp(`^.+\\.${replace(var.from_domain, ".", "\\.")}$`)"
+        match = var.include_subdomains ? (
+          "Host(`${var.from_domain}`) || HostRegexp(`^.+\\.${replace(var.from_domain, ".", "\\.")}$`)"
+        ) : "Host(`${var.from_domain}`)"
         kind     = "Rule"
-        priority = 2
+        priority = var.priority
         services = [{
           name = "noop@internal"
           kind = "TraefikService"
