@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`redirect_hosts:` — per-host 301 redirects on a domain.** A domain
+  yaml can now carry `redirect_hosts: { <prefix>: <target-fqdn> }`
+  alongside (or instead of) the zone-wide `redirect_to:`. Each entry
+  redirects exactly `<prefix>.<domain>` (path + query preserved) to its
+  own target, winning over the zone redirect via an explicit high Traefik
+  priority. Use for campaign link hosts that must stay on the link domain
+  for alignment (e.g. `dev-links.l1promo.com`) but land on a different
+  app (`dev.lineoneagent.com`) than the rest of the zone. Tunnel DNS +
+  ingress are wired automatically. No project namespace is created (it's
+  a pure redirect, not a routed component).
 - **VERP attribution on `mail.ingest_forward` — `X-Original-To` header.**
   The ingest-forward Sieve now stamps `X-Original-To: <original
   recipient>` on the forked copy so a consumer can attribute a bounce to

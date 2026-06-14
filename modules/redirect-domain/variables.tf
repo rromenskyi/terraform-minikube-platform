@@ -29,3 +29,15 @@ variable "labels" {
   type        = map(string)
   default     = {}
 }
+
+variable "include_subdomains" {
+  description = "Whether the IngressRoute also matches every subdomain of `from_domain` (the `HostRegexp` predicate). True (default) for a whole-zone redirect (apex + `*.from_domain`). Set false for a single-host redirect (e.g. a campaign link host) so only the exact `from_domain` is matched and unrelated subdomains fall through to whatever else claims them."
+  type        = bool
+  default     = true
+}
+
+variable "priority" {
+  description = "Traefik route priority for the redirect IngressRoute. Default 2 sits just above the platform-wide `traefik-fallback` (priority 1) but below a default-priority service route, so a whole-zone redirect yields to explicit carve-outs. A single-host redirect that must WIN over an overlapping zone redirect should pass a higher value (e.g. 100) — relying on Traefik's default rule-length priority is unreliable when a long zone-redirect rule competes."
+  type        = number
+  default     = 2
+}

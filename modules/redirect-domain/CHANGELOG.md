@@ -7,6 +7,19 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **`priority` and `include_subdomains` inputs — single-host redirects.**
+  `include_subdomains` (default true) keeps the whole-zone behaviour
+  (apex + `*.from_domain`); set false to match only the exact
+  `from_domain`, for redirecting one host that sits on an otherwise
+  redirect-only zone. `priority` (default 2, unchanged for zone
+  redirects) lets a single-host redirect pass a higher value so it wins
+  over an overlapping zone redirect — Traefik's default rule-length
+  priority proved unreliable when a long zone-redirect rule competes
+  with a default-priority host route (observed live: a carve-out lost
+  to the zone redirect despite a longer rule). Backward compatible:
+  existing callers get the previous apex+wildcard, priority-2 shape.
+
 ### Fixed
 - **Catch-all redirect no longer shadows explicit per-host routes on the
   same zone.** The IngressRoute now carries `priority: 2`, pinning it to

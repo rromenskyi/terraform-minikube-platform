@@ -43,6 +43,35 @@ locals {
       }
     }
   ]...)
+
+  # Per-HOST 301 redirects, driven from a `redirect_hosts:` map in a
+  # domain yaml: `{ <prefix>: <target-fqdn> }`. Unlike `redirect_to`
+  # (whole zone → one target), this redirects ONE host to its own
+  # target, overriding the zone redirect for that host. Use for
+  # campaign link hosts that live on an otherwise redirect-only zone
+  # but must land on a different app (e.g. `dev-links.l1promo.com` →
+  # `dev.lineoneagent.com` while the rest of l1promo.com → the prod
+  # site). Keyed by FQDN for a stable for_each.
+  _redirect_hosts = merge([
+    for name, cfg in local._domain_configs : {
+      for prefix, target in try(cfg.redirect_hosts, {}) :
+      "${prefix}.${cfg.name}" => {
+        zone_id   = cfg.cloudflare_zone_id
+        from_host = "${prefix}.${cfg.name}"
+        to_domain = target
+      }
+    }
+  ]...)
+
+  # Tunnel/DNS wiring for the per-host redirects — just the host itself
+  # (no wildcard; a single-host redirect owns exactly one name).
+  redirect_host_tunnel_hostnames = {
+    for fqdn, r in local._redirect_hosts :
+    fqdn => {
+      zone_id = r.zone_id
+      service = "http://traefik.ingress-controller.svc.cluster.local:80"
+    }
+  }
 }
 
 # One in-cluster Traefik IngressRoute + RedirectRegex Middleware per
@@ -54,6 +83,22 @@ module "redirect_domain" {
   from_domain = each.value.from_domain
   to_domain   = each.value.to_domain
   labels      = module.platform_label.tags
+}
+
+# One in-cluster redirect per `redirect_hosts:` entry. Matches the exact
+# host only (`include_subdomains = false`) at an explicit high priority
+# so it wins over any overlapping zone redirect on the same domain
+# (Traefik's default rule-length priority proved unreliable for this —
+# a long zone-redirect rule outranked a default-priority carve-out).
+module "redirect_host" {
+  source   = "./modules/redirect-domain"
+  for_each = local._redirect_hosts
+
+  from_domain        = each.value.from_host
+  to_domain          = each.value.to_domain
+  include_subdomains = false
+  priority           = 100
+  labels             = module.platform_label.tags
 }
 
 output "redirect_domains" {
