@@ -384,8 +384,8 @@ locals {
 
     # ── SMTP-push ingest forwards (machine intake of mailbox mail) ─
     # Per `var.ingest_forwards` entry: a `redirect :copy` rule (every
-    # message whose SMTP envelope recipient is `address` → a synthetic
-    # ingest address) lives in ONE combined DATA-stage Sieve script
+    # message whose SMTP envelope recipient matches ANY of `addresses`
+    # → a synthetic ingest address) lives in ONE combined DATA-stage Sieve script
     # (`ingest-forwards`), and the synthetic domain is pinned to an
     # in-cluster SMTP listener via an MtaRoute Relay. `:copy` keeps the
     # original in the mailbox as archive; a down listener means standard
@@ -443,7 +443,7 @@ locals {
             # without a token still forwards cleanly.
             contents = "require [\"envelope\", \"copy\", \"editheader\", \"variables\"];\n${join("", [
               for key, f in var.ingest_forwards :
-              "if envelope :is \"to\" \"${f.address}\" {\n  if header :matches \"Received\" \"*for <*>*\" {\n    addheader \"X-Original-To\" \"$${2}\";\n  }\n  redirect :copy \"ingest@${f.synthetic_domain}\";\n}\n"
+              "if anyof(${join(", ", [for a in f.addresses : "envelope :is \"to\" \"${a}\""])}) {\n  if header :matches \"Received\" \"*for <*>*\" {\n    addheader \"X-Original-To\" \"$${2}\";\n  }\n  redirect :copy \"ingest@${f.synthetic_domain}\";\n}\n"
             ])}"
           }
         }
