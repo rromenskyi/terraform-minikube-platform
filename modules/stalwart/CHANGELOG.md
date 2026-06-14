@@ -8,6 +8,14 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **`ingest_forwards` entries take a LIST of `addresses`.** One forward
+  now fans several tagged mailbox addresses into the SAME listener via a
+  single Sieve `anyof(envelope :is "to" ...)` rule — e.g. `mail@` (bounce
+  VERP `mail+<token>@`) + `reply@` (reply-conversion `reply+<id>@`) both
+  push to the campaign-ingest listener; the consumer branches on the
+  tagged local-part it reads from `X-Original-To`. Each address must
+  resolve to a deliverable mailbox/alias (the `:copy` keeps the original
+  locally). Replaces the former single `address` field.
 - **VERP attribution on ingest forwards — `X-Original-To` header.** Each
   forward's Sieve rule now stamps `X-Original-To` on the forked copy,
   recovered from the relay's `Received: ... for <addr>` clause. Stalwart

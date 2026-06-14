@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   app (`dev.lineoneagent.com`) than the rest of the zone. Tunnel DNS +
   ingress are wired automatically. No project namespace is created (it's
   a pure redirect, not a routed component).
+- **`mail.ingest_forward` takes a LIST of `addresses`.** One forward can
+  now fan several tagged addresses (e.g. `mail@` for bounce VERP +
+  `reply@` for reply-conversion) into the same in-cluster listener; the
+  consumer branches on the tagged local-part from `X-Original-To`.
+  Replaces the former single `address` field.
 - **VERP attribution on `mail.ingest_forward` — `X-Original-To` header.**
   The ingest-forward Sieve now stamps `X-Original-To: <original
   recipient>` on the forked copy so a consumer can attribute a bounce to

@@ -88,12 +88,12 @@ locals {
   _mail_ingest_forwards = local.mail == null ? {} : {
     for name, cfg in local._domain_configs :
     cfg.slug => {
-      address          = cfg.mail.ingest_forward.address
+      addresses        = cfg.mail.ingest_forward.addresses
       synthetic_domain = cfg.mail.ingest_forward.synthetic_domain
       smtp_host        = cfg.mail.ingest_forward.smtp_host
       smtp_port        = try(cfg.mail.ingest_forward.smtp_port, 25)
     }
-    if try(cfg.mail.ingest_forward.address, "") != ""
+    if length(try(cfg.mail.ingest_forward.addresses, [])) > 0
   }
 }
 
