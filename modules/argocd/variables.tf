@@ -63,3 +63,16 @@ variable "tolerations" {
   }))
   default = []
 }
+
+variable "notifications_config" {
+  description = "Decoded `notifications:` block (notifiers / templates / triggers) for the argo-cd chart's notifications subsystem, fed by the caller from `config/argocd-notifications.yaml`. The module forces `argocdUrl` from `hostname` and attaches the secret items itself, so those keys can be omitted here. An empty map leaves notifications untouched — the rendered values stay byte-identical and the chart behaves as before."
+  type        = any
+  default     = {}
+}
+
+variable "telegram_token" {
+  description = "Telegram bot token written into `argocd-notifications-secret` (data key `telegram-token`, referenced as `$telegram-token` by the `service.telegram` notifier). Sensitive — it lands in a Helm-managed Secret and in Terraform state. Empty leaves the secret items empty so the notifier stays inert until a token is supplied."
+  type        = string
+  default     = ""
+  sensitive   = true
+}

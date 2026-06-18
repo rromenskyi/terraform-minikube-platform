@@ -101,6 +101,14 @@ module "argocd" {
 
   node_selector = local.platform.services.argocd.node_selector
   tolerations   = local.platform.services.argocd.tolerations
+
+  # Notifications ("deploy succeeded → Telegram") folded into the chart
+  # values for durability — see modules/argocd/main.tf. The yaml is
+  # helm-values-shaped (notifiers / templates / triggers); the bot token
+  # comes from TF_VAR_telegram_token (.env, gitignored), never from the
+  # file. Collapses to {} when argocd is disabled.
+  notifications_config = local.platform.services.argocd.enabled ? yamldecode(file("${path.module}/config/argocd-notifications.yaml")).notifications : {}
+  telegram_token       = var.telegram_token
 }
 
 output "argocd_url" {

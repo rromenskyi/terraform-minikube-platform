@@ -155,3 +155,16 @@ variable "zitadel_login_client_pat" {
 # can re-add a sensitive `smarthost_password` variable here and pipe
 # it through `mail.tf`. The home-cluster relay accepts by WG peer-ACL,
 # so no AUTH is needed and the var is unused.
+
+variable "telegram_token" {
+  description = <<-EOT
+    Telegram bot token for the Argo CD "deploy succeeded" notifier. Piped
+    into `module.argocd` → `argocd-notifications-secret` (key
+    `telegram-token`). Sourced from `TF_VAR_telegram_token` in `.env`
+    (gitignored) so the token never enters the repo. Empty leaves the
+    notifications secret without a token and the notifier stays inert.
+  EOT
+  type        = string
+  default     = ""
+  sensitive   = true
+}
