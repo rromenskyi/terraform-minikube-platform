@@ -16,8 +16,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   delete) with time-retained, searchable logs in the existing Grafana — the
   module emits a sidecar-discovered Grafana datasource and the root installs
   the VictoriaLogs Grafana plugin (`monitoring_grafana_extra_values`, gated on
-  the toggle) for full LogsQL + the Explore UI. Lands in `monitoring`. Alerting
-  (vmalert → Alertmanager) is a separate follow-up.
+  the toggle) for full LogsQL + the Explore UI. Lands in `monitoring`.
+- **`services.logging.alert_email` — log alerts to email.** Set a (local)
+  mailbox to also deploy **vmalert** evaluating LogsQL alert rules against
+  VictoriaLogs → the existing Alertmanager → an `AlertmanagerConfig` email
+  receiver, delivering through the in-cluster Stalwart SMTP (local mailbox, no
+  relay-trust change or credentials). Ships two tunable starter rules
+  (critical-pattern + error-burst). Empty = no alerting (store + collector
+  only). Verified e2e end to delivered email.
 - **`redirect_hosts:` — per-host 301 redirects on a domain.** A domain
   yaml can now carry `redirect_hosts: { <prefix>: <target-fqdn> }`
   alongside (or instead of) the zone-wide `redirect_to:`. Each entry

@@ -4,6 +4,10 @@ terraform {
       source  = "hashicorp/kubernetes"
       version = "~> 2.0"
     }
+    kubectl = {
+      source  = "gavinbunney/kubectl"
+      version = "~> 1.14"
+    }
   }
 }
 
@@ -33,10 +37,41 @@ terraform {
 
 locals {
   instances = var.enabled ? toset(["enabled"]) : toset([])
-  tags      = module.label.tags
+  # Alerting (vmalert + Alertmanager receiver) only when an alert email is set.
+  alerting = var.enabled && var.alert_email != "" ? toset(["enabled"]) : toset([])
+  tags     = module.label.tags
 
-  vl_name     = "victorialogs"
-  vector_name = "vector"
+  vl_name      = "victorialogs"
+  vector_name  = "vector"
+  vmalert_name = "vmalert"
+
+  # vmalert rule file: one `type: vlogs` group whose rules evaluate the
+  # operator's LogsQL `stats count() | filter` queries against VictoriaLogs.
+  # Each alert carries `namespace = <this ns>` so the AlertmanagerConfig's
+  # OnNamespace matcher routes it to the email receiver.
+  vmalert_rules = yamlencode({
+    groups = [{
+      name     = "log-alerts"
+      type     = "vlogs"
+      interval = "1m"
+      rules = [
+        for k, r in var.alert_rules : {
+          alert = k
+          expr  = r.query
+          for   = r.for
+          labels = {
+            severity  = r.severity
+            namespace = var.namespace
+            # Distinguishes log alerts from the built-in kube-prometheus-stack
+            # metric alerts (which also carry namespace=monitoring) so the
+            # email route matches ONLY these.
+            alert_source = "log"
+          }
+          annotations = { summary = r.summary }
+        }
+      ]
+    }]
+  })
 
   # kubernetes_logs emits `.message` / `.timestamp` / `.kubernetes.*`;
   # map those onto VictoriaLogs' message/time/stream fields at ingest.
@@ -373,4 +408,145 @@ resource "kubernetes_config_map_v1" "grafana_datasource" {
       }]
     })
   }
+}
+
+# ── Alerting — vmalert (LogsQL rules) → existing Alertmanager → email ─────────
+# Only when `alert_email` is set. vmalert evaluates the `type: vlogs` rule
+# group against VictoriaLogs' stats endpoint and fires to the kube-prometheus-
+# stack Alertmanager; an AlertmanagerConfig adds the email receiver. The store
+# + collector run with no alerting when this is empty.
+
+resource "kubernetes_config_map_v1" "vmalert_rules" {
+  for_each = local.alerting
+
+  metadata {
+    name      = "${local.vmalert_name}-rules"
+    namespace = var.namespace
+    labels    = merge(local.tags, { app = local.vmalert_name })
+  }
+
+  data = {
+    "log-alerts.yaml" = local.vmalert_rules
+  }
+}
+
+resource "kubernetes_deployment_v1" "vmalert" {
+  for_each = local.alerting
+
+  metadata {
+    name      = local.vmalert_name
+    namespace = var.namespace
+    labels    = merge(local.tags, { app = local.vmalert_name })
+  }
+
+  spec {
+    replicas = 1
+    selector {
+      match_labels = { app = local.vmalert_name }
+    }
+
+    template {
+      metadata {
+        labels      = merge(local.tags, { app = local.vmalert_name })
+        annotations = { "checksum/rules" = sha256(local.vmalert_rules) }
+      }
+
+      spec {
+        security_context {
+          run_as_user     = 1000
+          run_as_non_root = true
+        }
+
+        container {
+          name  = local.vmalert_name
+          image = var.vmalert_image
+
+          args = [
+            "-rule=/etc/vmalert/log-alerts.yaml",
+            "-datasource.url=http://${local.vl_name}:9428",
+            "-notifier.url=${var.alertmanager_url}",
+            "-evaluationInterval=1m",
+          ]
+
+          port {
+            name           = "http"
+            container_port = 8880
+          }
+
+          volume_mount {
+            name       = "rules"
+            mount_path = "/etc/vmalert"
+            read_only  = true
+          }
+
+          resources {
+            requests = { cpu = "20m", memory = "64Mi" }
+            limits   = { cpu = "200m", memory = "192Mi" }
+          }
+
+          security_context {
+            allow_privilege_escalation = false
+            capabilities { drop = ["ALL"] }
+          }
+        }
+
+        volume {
+          name = "rules"
+          config_map {
+            name = kubernetes_config_map_v1.vmalert_rules["enabled"].metadata[0].name
+          }
+        }
+      }
+    }
+  }
+}
+
+# Email receiver on the existing kube-prometheus-stack Alertmanager. The
+# Alertmanager CR selects AlertmanagerConfigs cluster-wide (selector `{}`); the
+# default `OnNamespace` matcher strategy scopes this to alerts labelled
+# `namespace=<this ns>` — which the vmalert rules above all carry. Sends through
+# the in-cluster Stalwart inbound listener (plaintext, in-cluster hop) to the
+# operator's local mailbox; no relay-trust change or SMTP credentials.
+resource "kubectl_manifest" "alertmanager_email" {
+  for_each = local.alerting
+
+  yaml_body = yamlencode({
+    apiVersion = "monitoring.coreos.com/v1alpha1"
+    kind       = "AlertmanagerConfig"
+    metadata = {
+      name      = "log-alerts-email"
+      namespace = var.namespace
+      labels    = local.tags
+    }
+    spec = {
+      route = {
+        receiver       = "email"
+        groupBy        = ["alertname"]
+        groupWait      = "30s"
+        groupInterval  = "5m"
+        repeatInterval = "3h"
+        # Only our log alerts (the OnNamespace strategy already injects a
+        # `namespace=<ns>` matcher; this narrows to log alerts so the
+        # built-in metric alerts in this namespace don't hit the receiver).
+        matchers = [{
+          name      = "alert_source"
+          value     = "log"
+          matchType = "="
+        }]
+      }
+      receivers = [{
+        name = "email"
+        emailConfigs = [{
+          to   = var.alert_email
+          from = var.smtp_from
+          # EHLO hostname — must be a valid FQDN or Stalwart rejects the
+          # session with "550 Invalid EHLO domain" (the pod hostname isn't).
+          hello        = var.smtp_hello
+          smarthost    = var.smtp_smarthost
+          requireTLS   = false
+          sendResolved = true
+        }]
+      }]
+    }
+  })
 }

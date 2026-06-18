@@ -71,6 +71,10 @@ locals {
         storage_class    = "longhorn"
         storage_size     = "50Gi"
         node_selector    = {}
+        # Empty = store + collector only (no alerting). Set to a LOCAL mailbox
+        # (e.g. an @ipsupport.us address Stalwart delivers without auth) to
+        # wire vmalert LogsQL alerts → Alertmanager → email.
+        alert_email = ""
       }
       # Optional Cloudflare DNS-01 ACME solver — adds a second solver to
       # the Let's Encrypt ClusterIssuers gated by `dns_zones`. HTTP-01
