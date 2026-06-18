@@ -61,6 +61,17 @@ locals {
       kured = {
         enabled = false
       }
+      # Cluster log aggregation — VictoriaLogs store + Vector collector +
+      # Grafana datasource (see modules/logging). Time-retained, searchable
+      # logs in the existing Grafana, replacing node-local kubelet rotation.
+      logging = {
+        enabled          = false
+        namespace        = "monitoring"
+        retention_period = "30d"
+        storage_class    = "longhorn"
+        storage_size     = "50Gi"
+        node_selector    = {}
+      }
       # Optional Cloudflare DNS-01 ACME solver — adds a second solver to
       # the Let's Encrypt ClusterIssuers gated by `dns_zones`. HTTP-01
       # stays the default for hosts outside those zones. Required for
@@ -300,6 +311,7 @@ locals {
       vault            = merge(local._platform_defaults.services.vault, try(local._platform_services.vault, {}))
       argocd           = merge(local._platform_defaults.services.argocd, try(local._platform_services.argocd, {}))
       kured            = merge(local._platform_defaults.services.kured, try(local._platform_services.kured, {}))
+      logging          = merge(local._platform_defaults.services.logging, try(local._platform_services.logging, {}))
       dns01_cloudflare = merge(local._platform_defaults.services.dns01_cloudflare, try(local._platform_services.dns01_cloudflare, {}))
       longhorn         = merge(local._platform_defaults.services.longhorn, try(local._platform_services.longhorn, {}))
       metallb          = merge(local._platform_defaults.services.metallb, try(local._platform_services.metallb, {}))

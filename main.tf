@@ -145,6 +145,14 @@ module "addons" {
   traefik_deployment_kind = local.platform.services.addons.traefik_deployment_kind
   traefik_tolerations     = local.platform.services.addons.traefik_tolerations
   traefik_node_selector   = local.platform.services.addons.traefik_node_selector
+
+  # Install the VictoriaLogs Grafana plugin when the logging stack is on,
+  # so the datasource the `logging` module emits (sidecar-discovered) renders
+  # with full LogsQL + the Explore field/time UI. Gated so a disabled logging
+  # stack adds nothing to the Grafana pod. The plugin downloads at pod start.
+  monitoring_grafana_extra_values = local.platform.services.logging.enabled ? {
+    plugins = ["victoriametrics-logs-datasource"]
+  } : {}
 }
 
 # =============================================================================
