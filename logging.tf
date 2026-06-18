@@ -16,4 +16,9 @@ module "logging" {
   storage_class    = local.platform.services.logging.storage_class
   storage_size     = local.platform.services.logging.storage_size
   node_selector    = local.platform.services.logging.node_selector
+
+  # Alerting — empty alert_email leaves the store + collector running with no
+  # vmalert / Alertmanager receiver. Set it to wire LogsQL rule alerts to email
+  # via the existing Alertmanager + the in-cluster Stalwart SMTP (local mailbox).
+  alert_email = local.platform.services.logging.alert_email
 }

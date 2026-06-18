@@ -83,3 +83,64 @@ variable "vector_resources" {
     limits   = { cpu = "500m", memory = "256Mi" }
   }
 }
+
+# ── Alerting (vmalert → Alertmanager → email) ────────────────────────────────
+
+variable "alert_email" {
+  description = "Destination address for log alerts. Empty (default) deploys NO alerting (no vmalert, no Alertmanager receiver) — the store + collector run alone. Set it to wire vmalert (evaluates the LogsQL rules against VictoriaLogs) + an AlertmanagerConfig email receiver on the existing kube-prometheus-stack Alertmanager."
+  type        = string
+  default     = ""
+}
+
+variable "smtp_smarthost" {
+  description = "SMTP host:port Alertmanager sends through. Default is the in-cluster Stalwart inbound listener, which accepts unauthenticated submission for LOCAL recipients (e.g. an `@ipsupport.us` mailbox) — no relay-trust change or credentials needed. External recipients would require auth/relay changes (out of scope)."
+  type        = string
+  default     = "stalwart-smtp.mail.svc.cluster.local:25"
+}
+
+variable "smtp_from" {
+  description = "Envelope/From address for alert emails."
+  type        = string
+  default     = "alerts@ipsupport.us"
+}
+
+variable "smtp_hello" {
+  description = "EHLO hostname Alertmanager presents to the SMTP server. Must be a valid FQDN — the default pod hostname is not, and Stalwart rejects the session with `550 Invalid EHLO domain`."
+  type        = string
+  default     = "alertmanager.ipsupport.us"
+}
+
+variable "vmalert_image" {
+  description = "vmalert container image (VictoriaMetrics' alerting evaluator). Runs the LogsQL rule groups against VictoriaLogs and fires to Alertmanager."
+  type        = string
+  default     = "victoriametrics/vmalert:v1.106.0"
+}
+
+variable "alertmanager_url" {
+  description = "In-cluster Alertmanager endpoint vmalert fires alerts to (the existing kube-prometheus-stack Alertmanager)."
+  type        = string
+  default     = "http://kube-prometheus-stack-alertmanager.monitoring.svc.cluster.local:9093"
+}
+
+variable "alert_rules" {
+  description = "Log alert rules, each a small object the module renders into a vmalert `type: vlogs` rule group. `query` is LogsQL returning a single count via `stats count() as <name>` (the module thresholds with `| filter`); `for` is the sustain duration; `summary` is the notification text. Defaults ship two starter templates (critical-pattern + error burst) the operator can tune/extend."
+  type = map(object({
+    query    = string
+    for      = optional(string, "5m")
+    severity = optional(string, "warning")
+    summary  = string
+  }))
+  default = {
+    critical-log-pattern = {
+      query   = "_time:10m (panic OR fatal OR segfault OR \"OOMKilled\" OR \"out of memory\") | stats count() as hits | filter hits:>0"
+      for     = "1m"
+      summary = "{{ $value }} critical log line(s) (panic/fatal/OOM) in the last 10m"
+    }
+    error-burst = {
+      query    = "_time:5m error | stats count() as errors | filter errors:>500"
+      for      = "5m"
+      severity = "warning"
+      summary  = "Cluster-wide error-log burst: {{ $value }} 'error' lines in 5m (tune the >500 threshold)"
+    }
+  }
+}

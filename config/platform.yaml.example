@@ -180,6 +180,9 @@ services:
     storage_class: longhorn        # "" = node-local local-path (lost on node loss)
     storage_size: 50Gi
     # node_selector: {}            # empty = scheduler picks (fine with Longhorn PV)
+    # alert_email: ""              # set a LOCAL mailbox to wire vmalert LogsQL
+    #                              # alerts → Alertmanager → email (empty = no
+    #                              # alerting, store + collector only)
 
   # Longhorn — distributed block storage. Provides a `longhorn`
   # StorageClass that PVCs can use instead of the per-node
