@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`modules/logging` — cluster log aggregation (VictoriaLogs + Vector).**
+  New `services.logging` toggle stands up VictoriaLogs (single-binary store +
+  LogsQL query API, data on a Longhorn PV, time-based `retention_period`) and a
+  Vector DaemonSet that tails every node's `/var/log/pods` and ships to it.
+  Replaces node-local kubelet log rotation (~50 MiB/container, lost on pod
+  delete) with time-retained, searchable logs in the existing Grafana — the
+  module emits a sidecar-discovered Grafana datasource and the root installs
+  the VictoriaLogs Grafana plugin (`monitoring_grafana_extra_values`, gated on
+  the toggle) for full LogsQL + the Explore UI. Lands in `monitoring`. Alerting
+  (vmalert → Alertmanager) is a separate follow-up.
 - **`redirect_hosts:` — per-host 301 redirects on a domain.** A domain
   yaml can now carry `redirect_hosts: { <prefix>: <target-fqdn> }`
   alongside (or instead of) the zone-wide `redirect_to:`. Each entry

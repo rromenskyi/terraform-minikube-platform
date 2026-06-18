@@ -168,6 +168,19 @@ services:
   kured:
     enabled: false
 
+  # Cluster log aggregation — VictoriaLogs (store + LogsQL query) + a
+  # Vector DaemonSet collector + a Grafana datasource. Replaces node-local
+  # kubelet log rotation (~50 MiB/container, lost on pod delete) with a
+  # time-retained, searchable store in the existing Grafana. Lands in the
+  # `monitoring` namespace next to kube-prometheus-stack.
+  logging:
+    enabled: false
+    # namespace: monitoring        # co-locate with Grafana (datasource sidecar)
+    retention_period: 30d          # TIME-based retention (not the kubelet size cap)
+    storage_class: longhorn        # "" = node-local local-path (lost on node loss)
+    storage_size: 50Gi
+    # node_selector: {}            # empty = scheduler picks (fine with Longhorn PV)
+
   # Longhorn — distributed block storage. Provides a `longhorn`
   # StorageClass that PVCs can use instead of the per-node
   # hostPath default. Volumes get replicated across cluster
