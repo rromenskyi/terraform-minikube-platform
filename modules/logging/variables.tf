@@ -123,24 +123,12 @@ variable "alertmanager_url" {
 }
 
 variable "alert_rules" {
-  description = "Log alert rules, each a small object the module renders into a vmalert `type: vlogs` rule group. `query` is LogsQL returning a single count via `stats count() as <name>` (the module thresholds with `| filter`); `for` is the sustain duration; `summary` is the notification text. Defaults ship two starter templates (critical-pattern + error burst) the operator can tune/extend."
+  description = "Log alert rules the module renders into a vmalert `type: vlogs` rule group. Each: `query` is a LogsQL stats query ending in `stats count() as <name> | filter <name>:>N` (the time window lives in the query's `_time:` filter, the threshold in `| filter`); `for` is the sustain duration; `summary` is the notification text. The caller supplies these — the root wires a generic default set (panic/fatal/OOM) merged with the operator's `services.logging.alert_rules`."
   type = map(object({
     query    = string
     for      = optional(string, "5m")
     severity = optional(string, "warning")
     summary  = string
   }))
-  default = {
-    critical-log-pattern = {
-      query   = "_time:10m (panic OR fatal OR segfault OR \"OOMKilled\" OR \"out of memory\") | stats count() as hits | filter hits:>0"
-      for     = "1m"
-      summary = "{{ $value }} critical log line(s) (panic/fatal/OOM) in the last 10m"
-    }
-    error-burst = {
-      query    = "_time:5m error | stats count() as errors | filter errors:>500"
-      for      = "5m"
-      severity = "warning"
-      summary  = "Cluster-wide error-log burst: {{ $value }} 'error' lines in 5m (tune the >500 threshold)"
-    }
-  }
+  default = {}
 }

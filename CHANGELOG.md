@@ -21,9 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mailbox to also deploy **vmalert** evaluating LogsQL alert rules against
   VictoriaLogs → the existing Alertmanager → an `AlertmanagerConfig` email
   receiver, delivering through the in-cluster Stalwart SMTP (local mailbox, no
-  relay-trust change or credentials). Ships two tunable starter rules
-  (critical-pattern + error-burst). Empty = no alerting (store + collector
-  only). Verified e2e end to delivered email.
+  relay-trust change or credentials). Alert rules are config: the root wires a
+  generic baseline (panic/fatal/OOM) merged with the operator's
+  `services.logging.alert_rules` (each a LogsQL `stats count() | filter`
+  query + threshold) — so the operator config lists only app-specific
+  additions. Empty `alert_email` = no alerting (store + collector only).
+  Verified e2e end to delivered email.
 - **`redirect_hosts:` — per-host 301 redirects on a domain.** A domain
   yaml can now carry `redirect_hosts: { <prefix>: <target-fqdn> }`
   alongside (or instead of) the zone-wide `redirect_to:`. Each entry
