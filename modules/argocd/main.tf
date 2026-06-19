@@ -40,7 +40,7 @@ locals {
   # Chart values. `commonLabels` propagates to every chart-rendered
   # resource. Server-config is built conditionally so empty OIDC
   # inputs don't render a half-shaped `oidc.config` block.
-  values = yamlencode({
+  base_values = {
     global = {
       nodeSelector = var.node_selector
       tolerations = [
@@ -109,7 +109,27 @@ locals {
         enabled = false
       }
     }
-  })
+  }
+
+  # Argo CD notifications, folded into the chart values so the chart
+  # renders `argocd-notifications-cm` + `argocd-notifications-secret`
+  # itself. Without this a `helm upgrade` overwrites the live (kubectl-
+  # patched) CM and wipes the telegram token, since both objects are
+  # already Helm-managed. `argocdUrl` is forced from `var.hostname` to
+  # stay single-sourced with `configs.cm.url`. An empty
+  # `notifications_config` collapses the block, so callers that don't
+  # opt in render byte-identical values and see no change.
+  notifications_values = length(var.notifications_config) == 0 ? {} : {
+    notifications = merge(var.notifications_config, {
+      argocdUrl = "https://${var.hostname}"
+      secret = {
+        create = true
+        items  = var.telegram_token != "" ? { "telegram-token" = var.telegram_token } : {}
+      }
+    })
+  }
+
+  values = yamlencode(merge(local.base_values, local.notifications_values))
 }
 
 # ── Resources ─────────────────────────────────────────────────────────────

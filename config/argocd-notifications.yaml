@@ -1,0 +1,55 @@
+# Argo CD Notifications — "deploy succeeded" → Telegram.
+#
+# Read by Terraform: `argocd.tf` decodes this file's `notifications:` block and
+# passes it to `module.argocd`, which folds it into the `argo-cd` Helm release
+# values. The chart then renders `argocd-notifications-cm` (notifiers ->
+# service.*, templates -> template.*, triggers -> trigger.*). This is the
+# durable replacement for the previous live `kubectl patch` flow — a
+# `helm upgrade` no longer wipes the config.
+#
+# Mirror of lineoneagent-infra/k8s/argocd/notifications-values.yaml. Two keys
+# are intentionally NOT set here and are supplied by the module instead:
+#   - `argocdUrl` — forced from `var.hostname` to stay single-sourced with
+#     `configs.cm.url`.
+#   - `secret` — the module attaches `telegram-token` from TF_VAR_telegram_token
+#     (.env, gitignored). The bot token is referenced as `$telegram-token` and
+#     never lives in this file.
+# Recipients (chat ids) are set per-Application via a subscribe annotation in
+# each app's deploy/argocd/apps manifest (app-of-apps managed).
+
+notifications:
+  notifiers:
+    service.telegram: |
+      token: $telegram-token
+
+  templates:
+    # For the lineoneagent frontend/backend dev apps the deploy lines show the
+    # REAL source commit — short sha + subject, and the author name on its own
+    # line — not the digest-bump commit ArgoCD synced to. Mechanism: the
+    # `bump-dev-digest` CI job in ipsupport-llc/lineoneagent-frontend and
+    # ipsupport-llc/lineoneagent-backend (.github/workflows/ci.yml) writes
+    # `built-from=<github.sha>` into the bump-commit body; here we parse it and
+    # resolve subject + author via a second GetCommitMetadata (author trimmed
+    # to the name before `<email>`). Guarded on the app name so other tenants
+    # keep the plain `revision:` line and incur no extra repo lookup. Falls back
+    # to `revision:` when the token is absent.
+    template.app-deployed: |
+      message: |
+        Deployed: {{.app.metadata.name}}
+        {{ if has .app.metadata.name (list "lineoneagent-frontend-dev" "lineoneagent-backend-dev") }}{{ $bump := call .repo.GetCommitMetadata .app.status.sync.revision }}{{ $sha := regexFind "built-from=[0-9a-f]{7,40}" $bump.Message | trimPrefix "built-from=" }}{{ if $sha }}{{ $real := call .repo.GetCommitMetadata $sha }}{{ printf "%s — %s\n%s" (trunc 7 $sha) (first (splitList "\n" $real.Message)) (trim (regexFind "^[^<]+" $real.Author)) }}{{ else }}revision: {{ .app.status.sync.revision }}{{ end }}{{ else }}revision: {{ .app.status.sync.revision }}{{ end }}
+        {{.context.argocdUrl}}/applications/{{.app.metadata.name}}
+
+  triggers:
+    # For the lineoneagent frontend/backend dev apps, only notify when the
+    # synced revision is a digest-bump commit (carries `built-from=`). A dev
+    # deploy advances ArgoCD through TWO main revisions — the code/merge commit
+    # (phantom no-op sync on the old image) then the bump commit (the real
+    # rollout) — which otherwise fires two notifications. The guard suppresses
+    # the phantom one. `or` short-circuits for other tenants, so they keep the
+    # original behaviour with no extra repo lookup.
+    trigger.on-deployed: |
+      - description: Application is synced and healthy. Triggered once per commit.
+        oncePer: app.status.sync.revision
+        when: app.status.operationState.phase in ['Succeeded'] and app.status.health.status == 'Healthy' and (app.metadata.name not in ['lineoneagent-frontend-dev','lineoneagent-backend-dev'] or repo.GetCommitMetadata(app.status.sync.revision).Message matches 'built-from=')
+        send:
+          - app-deployed
