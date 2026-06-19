@@ -75,6 +75,10 @@ locals {
         # (e.g. an @ipsupport.us address Stalwart delivers without auth) to
         # wire vmalert LogsQL alerts → Alertmanager → email.
         alert_email = ""
+        # Operator-defined alert rules, MERGED on top of the generic default
+        # set (`local._default_alert_rules`) by logging.tf — so the yaml only
+        # lists ADDITIONS (e.g. app-specific substrings), not the defaults.
+        alert_rules = {}
       }
       # Optional Cloudflare DNS-01 ACME solver — adds a second solver to
       # the Let's Encrypt ClusterIssuers gated by `dns_zones`. HTTP-01

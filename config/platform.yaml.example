@@ -183,6 +183,12 @@ services:
     # alert_email: ""              # set a LOCAL mailbox to wire vmalert LogsQL
     #                              # alerts → Alertmanager → email (empty = no
     #                              # alerting, store + collector only)
+    # alert_rules:                 # app-specific rules, MERGED on top of the
+    #   my-rule:                   # generic default set (panic/fatal/OOM). The
+    #     query: '_time:5m kubernetes.pod_namespace:"phost-x" "some error" | stats count() as n | filter n:>3'
+    #     for: 1m                  # window lives in the query's _time:; the
+    #     severity: warning        # threshold in | filter. Scope to a namespace
+    #     summary: "{{ $value }} hits in 5m"   # to avoid alerting on dev/test.
 
   # Longhorn — distributed block storage. Provides a `longhorn`
   # StorageClass that PVCs can use instead of the per-node

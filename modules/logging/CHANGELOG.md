@@ -15,6 +15,11 @@ the project itself follows [Semantic Versioning](https://semver.org/).
   kube-prometheus-stack Alertmanager. An `AlertmanagerConfig` adds an email
   receiver routed to the operator's mailbox through the in-cluster Stalwart
   SMTP listener (local delivery — no relay-trust change or credentials).
+  `alert_rules` is caller-supplied (default empty); the root wires a generic
+  baseline (panic/fatal/OOM) merged with the operator's app-specific rules, so
+  operator config lists only additions. Each rule's LogsQL ends in
+  `stats count() as <name> | filter <name>:>N` (window in `_time:`, threshold
+  in `filter`).
   Notes: alerts carry an `alert_source=log` label and the route matches it, so
   the receiver gets ONLY log alerts (not the built-in metric alerts that also
   carry `namespace=monitoring`); the email `hello` (EHLO) is a real FQDN
