@@ -306,8 +306,11 @@ locals {
       }
     }
   }
-  _platform_file     = "${path.module}/config/platform.yaml"
-  _platform_raw      = fileexists(local._platform_file) ? yamldecode(file(local._platform_file)) : {}
+  _platform_file = "${path.module}/config/platform.yaml"
+  # Decode the YAML string (file content, or "{}" when absent) — conditioning on
+  # the string keeps the ternary's branch types consistent regardless of which
+  # top-level keys the config declares, while still surfacing invalid-YAML errors.
+  _platform_raw      = yamldecode(fileexists(local._platform_file) ? file(local._platform_file) : "{}")
   _platform_services = try(local._platform_raw.services, {})
   platform = {
     services = {
@@ -336,6 +339,10 @@ locals {
       security_scan    = merge(local._platform_defaults.services.security_scan, try(local._platform_services.security_scan, {}))
       traefik_public   = merge(local._platform_defaults.services.traefik_public, try(local._platform_services.traefik_public, {}))
     }
+    # Operator-supplied monitoring extras (gitignored config). Generic engine
+    # in prometheus_rules.tf renders whatever is under `monitoring.prometheus_rules`
+    # into a PrometheusRule — app/tenant-specific exprs stay out of tracked TF.
+    monitoring = try(local._platform_raw.monitoring, {})
   }
 
   # Load raw domain configs from YAML files
