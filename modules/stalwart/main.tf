@@ -1135,6 +1135,11 @@ resource "kubernetes_deployment_v1" "stalwart" {
         #    overwrite — small file, only datastore stanza), patches the
         #    upstream WebUI bundle with our Zitadel client_id and places
         #    the result on /shared, downloads stalwart-cli onto /shared.
+        # 2) wait-zitadel (OIDC only): block the main container until the
+        #    configured issuer is reachable, so a node reboot can't start
+        #    Stalwart before Zitadel is back and leave it rejecting every
+        #    OIDC token + serving no TLS until manually restarted. Bounded
+        #    wait then starts anyway, so a down Zitadel never blocks SMTP.
         init_container {
           name  = "bootstrap"
           image = "alpine:3.22"
@@ -1228,6 +1233,47 @@ resource "kubernetes_deployment_v1" "stalwart" {
           volume_mount {
             name       = "seed"
             mount_path = "/seed"
+          }
+        }
+
+        # Gated on OIDC: only meaningful when Stalwart validates Zitadel
+        # tokens. alpine image matches the bootstrap init above (already
+        # pulled); `apk add curl` brings ca-certificates for the HTTPS
+        # issuer probe. Bounded ~5m (100 × 3s) then exits 0 regardless.
+        dynamic "init_container" {
+          for_each = local.oidc_set
+          content {
+            name  = "wait-zitadel"
+            image = "alpine:3.22"
+
+            security_context {
+              run_as_user = 0
+            }
+
+            resources {
+              requests = { cpu = "10m", memory = "16Mi" }
+              limits   = { cpu = "100m", memory = "64Mi" }
+            }
+
+            env {
+              name  = "ZITADEL_ISSUER"
+              value = var.zitadel_issuer_url
+            }
+
+            command = ["sh", "-eu", "-c", <<-EOT
+              apk add --no-cache curl >/dev/null
+              URL="$ZITADEL_ISSUER/.well-known/openid-configuration"
+              echo "[wait-zitadel] waiting up to ~5m for $URL"
+              for i in $(seq 1 100); do
+                if curl -sf -m 5 -o /dev/null "$URL"; then
+                  echo "[wait-zitadel] Zitadel OIDC reachable — starting Stalwart"
+                  exit 0
+                fi
+                sleep 3
+              done
+              echo "[wait-zitadel] still unreachable after ~5m — starting Stalwart anyway"
+            EOT
+            ]
           }
         }
 
