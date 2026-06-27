@@ -430,6 +430,29 @@ resource "kubernetes_config_map_v1" "vmalert_rules" {
   }
 }
 
+# vmalert had no Service — its alert Source/generator links fell back to the
+# raw pod address (`vmalert-<hash>:8880`), which no browser can reach. This
+# gives the UI a stable in-cluster name so a consumer can route a hostname to
+# it (pair with `vmalert_external_url` so the generated links match).
+resource "kubernetes_service_v1" "vmalert" {
+  for_each = local.alerting
+
+  metadata {
+    name      = local.vmalert_name
+    namespace = var.namespace
+    labels    = merge(local.tags, { app = local.vmalert_name })
+  }
+
+  spec {
+    selector = { app = local.vmalert_name }
+    port {
+      name        = "http"
+      port        = 8880
+      target_port = 8880
+    }
+  }
+}
+
 resource "kubernetes_deployment_v1" "vmalert" {
   for_each = local.alerting
 
@@ -461,12 +484,17 @@ resource "kubernetes_deployment_v1" "vmalert" {
           name  = local.vmalert_name
           image = var.vmalert_image
 
-          args = [
+          args = concat([
             "-rule=/etc/vmalert/log-alerts.yaml",
             "-datasource.url=http://${local.vl_name}:9428",
             "-notifier.url=${var.alertmanager_url}",
             "-evaluationInterval=1m",
-          ]
+            ], var.vmalert_external_url != "" ? [
+            # Browser-reachable base for the Source/generator links vmalert
+            # stamps on alerts (the notification "Source" button). Omitted
+            # when unset, so vmalert keeps its in-cluster pod-address default.
+            "-external.url=${var.vmalert_external_url}",
+          ] : [])
 
           port {
             name           = "http"

@@ -1,0 +1,17 @@
+# External component — routing only, no Deployment. Points at the
+# kube-prometheus-stack chart's Prometheus Service installed by the
+# terraform-k8s-addons module (same pattern as `grafana.yaml`/`alertmanager.yaml`).
+# Lets the "Source" link on a metric-alert email reach the Prometheus UI.
+#
+# Prometheus ships no built-in auth, so the `auth: zitadel` forward-auth
+# middleware gates it. Wire by adding a route to your domain yaml (e.g.
+# `prometheus: prometheus`); the prefix becomes `prometheus.<domain>`. For the
+# chart's generator links to match, also set `monitoring.prometheus_external_url`
+# to `https://prometheus.<domain>` in `config/platform.yaml` — main.tf feeds it
+# to the addons module's `monitoring_prometheus_extra_values`.
+kind: external
+service:
+  name: kube-prometheus-stack-prometheus
+  namespace: monitoring
+  port: 9090
+auth: zitadel

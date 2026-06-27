@@ -1,0 +1,16 @@
+# External component — routing only, no Deployment. Points at the `vmalert`
+# Service emitted by `modules/logging` (the LogsQL alert evaluator). Lets the
+# "Source" link on a log-alert email reach vmalert's UI.
+#
+# vmalert ships no built-in auth, so the `auth: zitadel` forward-auth
+# middleware gates it. Wire by adding a route to your domain yaml (e.g.
+# `vmalert: vmalert`); the prefix becomes `vmalert.<domain>`. For the link
+# vmalert stamps on alerts to match, also set `monitoring.vmalert_external_url`
+# to `https://vmalert.<domain>` in `config/platform.yaml` (fed to the logging
+# module's `vmalert_external_url` => vmalert's `-external.url`).
+kind: external
+service:
+  name: vmalert
+  namespace: monitoring
+  port: 8880
+auth: zitadel

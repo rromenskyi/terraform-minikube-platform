@@ -8,6 +8,13 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **`vmalert_external_url` + a vmalert `Service`.** vmalert had no Service, so
+  the `Source`/generator links it stamps on alerts fell back to the raw pod
+  address (`vmalert-<hash>:8880`) — unreachable from a browser, the dead
+  "Source" button on alert emails. Now the module always emits
+  `kubernetes_service_v1.vmalert` (ClusterIP, port 8880) so a consumer can
+  route a hostname to the UI, and `vmalert_external_url` (default `""` = no-op)
+  sets vmalert's `-external.url` so the generated links use that host.
 - **Alerting — vmalert (LogsQL rules) → existing Alertmanager → email.** When
   `alert_email` is set, deploys a vmalert Deployment that evaluates a
   `type: vlogs` rule group (from `alert_rules`, two starter templates:

@@ -38,4 +38,9 @@ module "logging" {
 
   # Generic baseline rules + the operator's app-specific additions.
   alert_rules = merge(local._default_alert_rules, local.platform.services.logging.alert_rules)
+
+  # Browser-reachable base for vmalert's alert Source/generator links (read
+  # from the `monitoring:` config block alongside the alertmanager/prometheus
+  # external URLs). Empty => vmalert keeps its in-cluster pod-address default.
+  vmalert_external_url = try(local.platform.monitoring.vmalert_external_url, "")
 }

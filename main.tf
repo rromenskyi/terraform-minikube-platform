@@ -83,7 +83,7 @@ check "k3s_ssh_vars_set" {
 # Layer 2: Platform add-ons (Traefik, cert-manager, monitoring, namespaces).
 # -----------------------------------------------------------------------------
 module "addons" {
-  source = "git::https://github.com/rromenskyi/terraform-k8s-addons.git?ref=v2.4.1"
+  source = "git::https://github.com/rromenskyi/terraform-k8s-addons.git?ref=v2.4.2"
 
   kubeconfig_path      = module.k8s.kubeconfig_path
   cluster_name         = module.k8s.cluster_name
@@ -163,6 +163,16 @@ module "addons" {
   monitoring_alertmanager_extra_values = try(local.platform.monitoring.alertmanager_external_url, "") != "" ? {
     alertmanagerSpec = {
       externalUrl = local.platform.monitoring.alertmanager_external_url
+    }
+  } : {}
+
+  # Same treatment for Prometheus — pins prometheusSpec.externalUrl so a
+  # metric alert's "Source" link resolves to the browser-reachable host
+  # instead of the in-cluster Service. Needs the `prometheus` route +
+  # component. Empty config => {} => chart default (unchanged).
+  monitoring_prometheus_extra_values = try(local.platform.monitoring.prometheus_external_url, "") != "" ? {
+    prometheusSpec = {
+      externalUrl = local.platform.monitoring.prometheus_external_url
     }
   } : {}
 }
