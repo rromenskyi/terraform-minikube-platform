@@ -8,6 +8,17 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **`wait-zitadel` init container — survive node reboots without a
+  manual restart.** When OIDC is enabled, an init container now blocks
+  the main Stalwart container until the configured `zitadel_issuer_url`
+  discovery endpoint (`/.well-known/openid-configuration`) is reachable.
+  On a node reboot Stalwart otherwise comes up before Zitadel
+  (`id.<domain>`) is back, fails to fetch OIDC keys, then rejects every
+  token and serves no TLS until someone restarts it. The wait is bounded
+  (~5m, 100 × 3s) and then starts anyway, so a genuinely-down Zitadel
+  never blocks SMTP mail delivery — it only falls back to the prior
+  start-anyway behaviour. Gated on `local.oidc_enabled` (no-op when OIDC
+  is off).
 - **`ingest_forwards` entries take a LIST of `addresses`.** One forward
   now fans several tagged mailbox addresses into the SAME listener via a
   single Sieve `anyof(envelope :is "to" ...)` rule — e.g. `mail@` (bounce
