@@ -134,6 +134,11 @@ module "stalwart" {
   spf_authorized_ip = try(local.mail.spf_authorized_ip, "")
   dmarc_policy      = try(local.mail.dmarc_policy, "quarantine")
 
+  # CIDRs whose inbound :25 traffic skips the spam filter (in-cluster
+  # senders like Alertmanager fail public SPF from a pod IP). From the
+  # primary domain's `mail.trusted_networks` yaml; empty = stock filter.
+  internal_trusted_cidrs = try(local.mail.trusted_networks, [])
+
   # SMTP inbound forwarder bind IP — typically the WireGuard interface
   # address on the home node so the public relay's outbound tunnel can
   # reach it without exposing :25 on the LAN.

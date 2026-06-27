@@ -465,6 +465,26 @@ locals {
       }),
     ] : [],
 
+    # Trust in-cluster senders: exclude operator-listed CIDRs from the
+    # DATA-stage spam filter. Mail delivered straight to :25 from a pod
+    # (e.g. Alertmanager) fails public SPF/DMARC and would otherwise be
+    # scored as spam and filed to Junk. JMAP `update` is a per-property
+    # PATCH, so this coexists with the `script` update above. Keeps the
+    # stock default (`is_empty(authenticated_as)` = filter unauthenticated
+    # sessions) and ANDs in a `!is_ip_in_cidr` exclusion per trusted range.
+    length(var.internal_trusted_cidrs) > 0 ? [
+      jsonencode({
+        "@type" = "update"
+        object  = "MtaStageData"
+        value = {
+          enableSpamFilter = {
+            match = {}
+            else  = "is_empty(authenticated_as)${join("", [for c in var.internal_trusted_cidrs : " && !is_ip_in_cidr(remote_ip, '${c}')"])}"
+          }
+        }
+      }),
+    ] : [],
+
     # Single combined outbound routing strategy. Keeps the upstream
     # `is_local_domain → 'local'` branch, pins each synthetic ingest
     # domain to its route, and falls back to the smart host (or plain
