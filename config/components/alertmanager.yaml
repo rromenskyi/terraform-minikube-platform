@@ -1,0 +1,18 @@
+# External component — routing only, no Deployment. Points at the
+# kube-prometheus-stack chart's Alertmanager Service installed by the
+# terraform-k8s-addons module (same pattern as `grafana.yaml`).
+#
+# Alertmanager ships no built-in auth, so the `auth: zitadel` forward-auth
+# middleware gates it — never expose the UI open. Wire by adding a route to
+# your domain yaml (e.g. `alertmanager: alertmanager` in the routes map);
+# the prefix becomes `alertmanager.<domain>`. For the chart's notification
+# links (the email "View in Alertmanager" button, generator URLs) to point
+# here, also set `monitoring.alertmanager_external_url` to the matching
+# `https://alertmanager.<domain>` in `config/platform.yaml` — main.tf feeds
+# it to the addons module's `monitoring_alertmanager_extra_values`.
+kind: external
+service:
+  name: kube-prometheus-stack-alertmanager
+  namespace: monitoring
+  port: 9093
+auth: zitadel
