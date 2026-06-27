@@ -122,6 +122,12 @@ variable "alertmanager_url" {
   default     = "http://kube-prometheus-stack-alertmanager.monitoring.svc.cluster.local:9093"
 }
 
+variable "vmalert_external_url" {
+  description = "Browser-reachable base URL for vmalert (e.g. https://vmalert.example.com). Passed as `-external.url` so the `Source`/generator links vmalert stamps on alerts point at this host instead of the in-cluster pod address (a notification's \"Source\" button otherwise dead-ends). Empty (default) omits the flag — vmalert falls back to its pod address, unchanged. The module always emits a `kubernetes_service_v1.vmalert` (port 8880) so a consumer can route a hostname to it; this var only fixes the link vmalert generates."
+  type        = string
+  default     = ""
+}
+
 variable "alert_rules" {
   description = "Log alert rules the module renders into a vmalert `type: vlogs` rule group. Each: `query` is a LogsQL stats query ending in `stats count() as <name> | filter <name>:>N` (the time window lives in the query's `_time:` filter, the threshold in `| filter`); `for` is the sustain duration; `summary` is the notification text. The caller supplies these — the root wires a generic default set (panic/fatal/OOM) merged with the operator's `services.logging.alert_rules`."
   type = map(object({
