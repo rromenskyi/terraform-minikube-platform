@@ -12,7 +12,7 @@ the project itself follows [Semantic Versioning](https://semver.org/).
   in-cluster senders.** New list variable (default `[]`, a no-op). When
   set, the DATA-stage `enableSpamFilter` expression keeps Stalwart's
   stock default (`is_empty(authenticated_as)`) and ANDs in a
-  `!matches(remote_ip, <regex>)` exclusion per pattern. Internal mail
+  `!matches(<regex>, remote_ip)` exclusion per pattern. Internal mail
   delivered straight to `:25` (e.g. Alertmanager → mail) comes from a
   pod IP, fails public SPF/DMARC, and was being spam-scored to Junk;
   trusting the cluster IP range lets it land in the inbox. Regex (not

@@ -468,12 +468,13 @@ locals {
     # Trust in-cluster senders: exclude IPs matching operator-listed regex
     # patterns from the DATA-stage spam filter. Mail delivered straight to
     # :25 from a pod (e.g. Alertmanager) fails public SPF/DMARC and would
-    # otherwise be scored as spam and filed to Junk. `matches(remote_ip, …)`
-    # rather than a CIDR builtin — Stalwart 0.16.x has no CIDR expression
-    # function (`is_ip_in_cidr` only landed post-0.16.3). JMAP `update` is a
-    # per-property PATCH, so this coexists with the `script` update above.
-    # Keeps the stock default (`is_empty(authenticated_as)` = filter
-    # unauthenticated sessions) and ANDs in a `!matches` exclusion per pattern.
+    # otherwise be scored as spam and filed to Junk. `matches(regex, value)`
+    # (pattern FIRST per Stalwart's signature) rather than a CIDR builtin —
+    # 0.16.x has no CIDR expression function (`is_ip_in_cidr` only landed
+    # post-0.16.3). JMAP `update` is a per-property PATCH, so this coexists
+    # with the `script` update above. Keeps the stock default
+    # (`is_empty(authenticated_as)` = filter unauthenticated sessions) and
+    # ANDs in a `!matches` exclusion per pattern.
     length(var.internal_trusted_ip_patterns) > 0 ? [
       jsonencode({
         "@type" = "update"
@@ -481,7 +482,7 @@ locals {
         value = {
           enableSpamFilter = {
             match = {}
-            else  = "is_empty(authenticated_as)${join("", [for p in var.internal_trusted_ip_patterns : " && !matches(remote_ip, '${p}')"])}"
+            else  = "is_empty(authenticated_as)${join("", [for p in var.internal_trusted_ip_patterns : " && !matches('${p}', remote_ip)"])}"
           }
         }
       }),
