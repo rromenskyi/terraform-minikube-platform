@@ -158,8 +158,8 @@ variable "dmarc_policy" {
   default     = "quarantine"
 }
 
-variable "internal_trusted_cidrs" {
-  description = "CIDR ranges whose inbound SMTP connections are trusted and bypass the DATA-stage spam filter. Intended for in-cluster senders that deliver straight to Stalwart's :25 (e.g. Alertmanager → mail) — their mail comes from a pod IP, fails public SPF/DMARC, and would otherwise be scored as spam and filed to Junk. Empty list (default) leaves Stalwart's stock `enableSpamFilter` (filter every unauthenticated session) untouched, so this is a no-op unless an operator opts in."
+variable "internal_trusted_ip_patterns" {
+  description = "Regex patterns matched against the connecting IP (`remote_ip`); matching inbound SMTP connections are trusted and bypass the DATA-stage spam filter. Intended for in-cluster senders that deliver straight to Stalwart's :25 (e.g. Alertmanager → mail) — their mail comes from a pod IP, fails public SPF/DMARC, and would otherwise be scored as spam and filed to Junk. Regex (not CIDR) because Stalwart 0.16.x has no CIDR expression function; e.g. `^100\\.(6[4-9]|7[0-9])\\.` matches the k3s 100.64.0.0/12 range. Empty list (default) leaves Stalwart's stock `enableSpamFilter` (filter every unauthenticated session) untouched, so this is a no-op unless an operator opts in."
   type        = list(string)
   default     = []
 }

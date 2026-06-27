@@ -8,16 +8,17 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
-- **`internal_trusted_cidrs` — skip the spam filter for trusted
+- **`internal_trusted_ip_patterns` — skip the spam filter for trusted
   in-cluster senders.** New list variable (default `[]`, a no-op). When
   set, the DATA-stage `enableSpamFilter` expression keeps Stalwart's
   stock default (`is_empty(authenticated_as)`) and ANDs in a
-  `!is_ip_in_cidr(remote_ip, <cidr>)` exclusion per range. Internal
-  mail delivered straight to `:25` (e.g. Alertmanager → mail) comes
-  from a pod IP, fails public SPF/DMARC, and was being spam-scored to
-  Junk; trusting the cluster CIDR lets it land in the inbox. Emitted as
-  a separate `MtaStageData` PATCH so it coexists with the ingest-forward
-  `script` binding.
+  `!matches(remote_ip, <regex>)` exclusion per pattern. Internal mail
+  delivered straight to `:25` (e.g. Alertmanager → mail) comes from a
+  pod IP, fails public SPF/DMARC, and was being spam-scored to Junk;
+  trusting the cluster IP range lets it land in the inbox. Regex (not
+  CIDR) because Stalwart 0.16.x has no CIDR expression function. Emitted
+  as a separate `MtaStageData` PATCH so it coexists with the
+  ingest-forward `script` binding.
 - **`wait-zitadel` init container — survive node reboots without a
   manual restart.** When OIDC is enabled, an init container now blocks
   the main Stalwart container until the configured `zitadel_issuer_url`
