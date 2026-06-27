@@ -83,7 +83,7 @@ check "k3s_ssh_vars_set" {
 # Layer 2: Platform add-ons (Traefik, cert-manager, monitoring, namespaces).
 # -----------------------------------------------------------------------------
 module "addons" {
-  source = "git::https://github.com/rromenskyi/terraform-k8s-addons.git?ref=v2.4.0"
+  source = "git::https://github.com/rromenskyi/terraform-k8s-addons.git?ref=v2.4.1"
 
   kubeconfig_path      = module.k8s.kubeconfig_path
   cluster_name         = module.k8s.cluster_name
@@ -152,6 +152,18 @@ module "addons" {
   # stack adds nothing to the Grafana pod. The plugin downloads at pod start.
   monitoring_grafana_extra_values = local.platform.services.logging.enabled ? {
     plugins = ["victoriametrics-logs-datasource"]
+  } : {}
+
+  # Pin Alertmanager's externalUrl (from the gitignored monitoring config)
+  # so notification links — the email "View in Alertmanager" button and
+  # generator URLs — resolve to the browser-reachable host instead of the
+  # in-cluster Service name. Requires the matching `alertmanager` route +
+  # `config/components/alertmanager.yaml`. Empty config => {} => chart
+  # default (unchanged), so this is a no-op until an operator opts in.
+  monitoring_alertmanager_extra_values = try(local.platform.monitoring.alertmanager_external_url, "") != "" ? {
+    alertmanagerSpec = {
+      externalUrl = local.platform.monitoring.alertmanager_external_url
+    }
   } : {}
 }
 
