@@ -158,6 +158,12 @@ variable "dmarc_policy" {
   default     = "quarantine"
 }
 
+variable "internal_trusted_cidrs" {
+  description = "CIDR ranges whose inbound SMTP connections are trusted and bypass the DATA-stage spam filter. Intended for in-cluster senders that deliver straight to Stalwart's :25 (e.g. Alertmanager → mail) — their mail comes from a pod IP, fails public SPF/DMARC, and would otherwise be scored as spam and filed to Junk. Empty list (default) leaves Stalwart's stock `enableSpamFilter` (filter every unauthenticated session) untouched, so this is a no-op unless an operator opts in."
+  type        = list(string)
+  default     = []
+}
+
 variable "dkim_selector" {
   description = "DKIM selector — the DNS label `<selector>._domainkey.<domain>` where the public key is published. Stable; rotating means generating a new key under a new selector and dual-signing through the cutover."
   type        = string
