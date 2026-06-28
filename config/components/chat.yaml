@@ -88,7 +88,7 @@ env_static:
   # stay visible so the user can A/B them side-by-side. Tiny qwen3.5
   # variants (0.8b + 2b) ride along for snappy single-shot prompts where
   # the bigger 4b/9b/14b round-trip latency feels heavy.
-  DEFAULT_MODELS: qwen3.5:9b
+  DEFAULT_MODELS: gemma4:12b-it-qat
   # NOTE: `ENABLE_MODEL_FILTER` + `MODEL_FILTER_LIST` are no-ops in
   # Open WebUI v0.9.x — model visibility is purely per-model ACL
   # in the local SQLite (`model.access_control` + AccessGrants).
