@@ -77,6 +77,12 @@ locals {
       dmarc_policy  = try(cfg.mail.dmarc_policy, "none")
       dmarc_rua     = try(cfg.mail.dmarc_rua, "")
       zone_id       = try(cfg.cloudflare_zone_id, "")
+      # Optional per-domain SPF override. When a submission-only domain
+      # exits a different relay than the primary (e.g. lineoneagent.com +
+      # l1promo.com go out relay.l1promo.com), it authorises its own sender
+      # IP(s) here instead of inheriting the primary's — so the primary's SPF
+      # is never widened. Empty ⇒ inherit the shared `mail.spf_authorized_ip`.
+      spf_authorized_ip = try(cfg.mail.spf_authorized_ip, "")
     }
     if try(cfg.mail.submission_only, false)
   }
@@ -232,17 +238,19 @@ data "zitadel_orgs" "platform_org" {
 #           pointing at a non-existent mailbox.
 
 resource "cloudflare_dns_record" "additional_mail_spf" {
+  # Per-domain `mail.spf_authorized_ip` wins over the primary's shared value;
+  # empty falls back to the primary. Skip only when neither is set.
   for_each = {
     for slug, cfg in local._additional_mail_domains : slug => cfg
-    if try(local.mail.spf_authorized_ip, "") != ""
+    if(cfg.spf_authorized_ip != "" ? cfg.spf_authorized_ip : try(local.mail.spf_authorized_ip, "")) != ""
   }
 
   zone_id = each.value.zone_id
   name    = each.value.name
   type    = "TXT"
-  content = "\"v=spf1 ip4:${try(local.mail.spf_authorized_ip, "")} -all\""
+  content = "\"v=spf1 ip4:${each.value.spf_authorized_ip != "" ? each.value.spf_authorized_ip : try(local.mail.spf_authorized_ip, "")} -all\""
   ttl     = 300
-  comment = "additional mail domain — SPF authorises only the relay public IP"
+  comment = "additional mail domain — SPF authorises the relay public IP(s)"
 }
 
 resource "cloudflare_dns_record" "additional_mail_dkim" {
