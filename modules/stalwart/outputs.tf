@@ -94,3 +94,9 @@ output "zitadel_user_role" {
   description = "Name of the Zitadel project role required for ordinary mailbox access. Operator grants this (or `zitadel_admin_role`) to every Zitadel user who should reach the webmail; users without a project-role are rejected at /authorize."
   value       = local.oidc_enabled ? zitadel_project_role.user["enabled"].role_key : null
 }
+
+output "native_client_id" {
+  description = "OIDC client_id of the native-mail-client app (for email-oauth2-proxy). Empty unless both OIDC and the native-client listeners (`client_listen_ip`) are enabled. Public client (PKCE, no secret)."
+  value       = var.client_listen_ip != "" && local.oidc_enabled ? zitadel_application_oidc.stalwart_native_client["enabled"].client_id : ""
+  sensitive   = true
+}

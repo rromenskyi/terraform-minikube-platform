@@ -126,6 +126,12 @@ output "stalwart_dkim_dns" {
   }
 }
 
+output "stalwart_native_client_id" {
+  description = "OIDC client_id for the native mail client (email-oauth2-proxy). Read with `terraform output -raw stalwart_native_client_id`. PKCE public client — no secret needed."
+  value       = module.stalwart.native_client_id
+  sensitive   = true
+}
+
 output "stalwart_spf_dns" {
   description = "Recommended SPF TXT for the primary mail domain — paste under `name: \"@\"`, type: TXT in the domain yaml."
   value       = module.stalwart.spf_dns_value
