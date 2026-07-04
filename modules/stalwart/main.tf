@@ -738,6 +738,33 @@ resource "zitadel_application_oidc" "stalwart" {
   clock_skew                  = "0s"
 }
 
+# OIDC app for native desktop/mobile mail clients (Apple Mail, Thunderbird) that
+# reach Stalwart through a local email-oauth2-proxy: browser auth-code + PKCE
+# against Zitadel, then XOAUTH2 to Stalwart's IMAP/SMTP. Created ONLY when the
+# native-client listeners are published (`client_listen_ip`). In the SAME
+# project as the WebUI app, so its JWT access token carries the project-id
+# audience Stalwart's `requireAudience` checks. Native app + loopback redirect
+# (RFC 8252 — any localhost port matches) + PKCE (no client secret to store).
+resource "zitadel_application_oidc" "stalwart_native_client" {
+  for_each = var.client_listen_ip != "" ? local.oidc_set : toset([])
+
+  org_id     = var.zitadel_org_id
+  project_id = zitadel_project.stalwart["enabled"].id
+
+  name = "stalwart-native-client"
+
+  redirect_uris = ["http://localhost"]
+
+  response_types   = ["OIDC_RESPONSE_TYPE_CODE"]
+  grant_types      = ["OIDC_GRANT_TYPE_AUTHORIZATION_CODE", "OIDC_GRANT_TYPE_REFRESH_TOKEN"]
+  app_type         = "OIDC_APP_TYPE_NATIVE"
+  auth_method_type = "OIDC_AUTH_METHOD_TYPE_NONE"
+  version          = "OIDC_VERSION_1_0"
+
+  dev_mode          = true
+  access_token_type = "OIDC_TOKEN_TYPE_JWT"
+}
+
 resource "zitadel_project_role" "admin" {
   for_each = local.oidc_set
 
