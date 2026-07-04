@@ -1730,15 +1730,43 @@ resource "kubernetes_deployment_v1" "stalwart_smtp_relay" {
   }
 }
 
+# Public cert for the native-client listeners. cert-manager issues a
+# publicly-trusted cert for `client_cert_dns_names` (via `client_cert_issuer`,
+# DNS-01 recommended for raw-TCP hosts) into Secret `stalwart-client-tls`; the
+# client proxy terminates TLS with it, so strict clients / OAuth proxies get a
+# trusted cert instead of Stalwart's self-signed. Only when both a listen IP and
+# SAN names are set.
+resource "kubectl_manifest" "stalwart_client_cert" {
+  for_each = var.client_listen_ip != "" && length(var.client_cert_dns_names) > 0 ? local.instances : toset([])
+
+  yaml_body = yamlencode({
+    apiVersion = "cert-manager.io/v1"
+    kind       = "Certificate"
+    metadata = {
+      name      = "stalwart-client-tls"
+      namespace = var.namespace
+      labels    = local.tags
+    }
+    spec = {
+      secretName = "stalwart-client-tls"
+      dnsNames   = var.client_cert_dns_names
+      issuerRef = {
+        name  = var.client_cert_issuer
+        kind  = "ClusterIssuer"
+        group = "cert-manager.io"
+      }
+    }
+  })
+}
+
 # ── Native-client listeners (IMAPS 993 + submission 465) ──────────────────────
 #
 # Publishes Stalwart's client ports on `var.client_listen_ip` (typically the
-# node's PUBLIC IP) for desktop/mobile mail clients. Same pattern as the SMTP
-# relay forwarder: a tiny hostNetwork socat pod that binds the host IP and
-# forwards raw TCP to the in-cluster Stalwart Service — TLS is passed through
-# end-to-end (Stalwart's own listener cert terminates), and Stalwart itself is
-# untouched (no restart, no extra host interfaces on its own pod). Gated on
-# `client_listen_ip`; empty = no client exposure.
+# node's PUBLIC IP) for desktop/mobile mail clients. A tiny hostNetwork socat
+# pod binds the host IP and terminates client TLS with the public cert
+# (`stalwart-client-tls`), re-originating TLS to the in-cluster Stalwart Service
+# (its self-signed cert stays internal). Stalwart itself is untouched (no
+# restart, no extra host interfaces on its own pod). Gated on `client_listen_ip`.
 resource "kubernetes_deployment_v1" "stalwart_client_proxy" {
   for_each = var.client_listen_ip != "" ? local.instances : toset([])
 
@@ -1780,15 +1808,28 @@ resource "kubernetes_deployment_v1" "stalwart_client_proxy" {
           }
         }
 
-        # IMAPS 993 → Stalwart IMAP listener (TLS passthrough).
+        # IMAPS 993 — TLS-terminate with the public cert (when issued), re-TLS to
+        # Stalwart; else raw passthrough to Stalwart's self-signed cert.
         container {
           name  = "socat-imaps"
           image = "alpine/socat:1.8.0.0"
 
-          args = [
+          args = length(var.client_cert_dns_names) > 0 ? [
+            "OPENSSL-LISTEN:993,bind=${var.client_listen_ip},cert=/certs/tls.crt,key=/certs/tls.key,verify=0,fork,reuseaddr",
+            "OPENSSL:stalwart.${var.namespace}.svc.cluster.local:993,verify=0",
+            ] : [
             "TCP-LISTEN:993,bind=${var.client_listen_ip},fork,reuseaddr",
             "TCP:stalwart.${var.namespace}.svc.cluster.local:993",
           ]
+
+          dynamic "volume_mount" {
+            for_each = length(var.client_cert_dns_names) > 0 ? toset(["cert"]) : toset([])
+            content {
+              name       = "client-tls"
+              mount_path = "/certs"
+              read_only  = true
+            }
+          }
 
           security_context {
             run_as_user                = 0
@@ -1805,15 +1846,27 @@ resource "kubernetes_deployment_v1" "stalwart_client_proxy" {
           }
         }
 
-        # SMTP submission 465 → Stalwart submission listener (TLS passthrough).
+        # SMTP submission 465 — same TLS-terminate/passthrough as IMAPS.
         container {
           name  = "socat-submission"
           image = "alpine/socat:1.8.0.0"
 
-          args = [
+          args = length(var.client_cert_dns_names) > 0 ? [
+            "OPENSSL-LISTEN:465,bind=${var.client_listen_ip},cert=/certs/tls.crt,key=/certs/tls.key,verify=0,fork,reuseaddr",
+            "OPENSSL:stalwart.${var.namespace}.svc.cluster.local:465,verify=0",
+            ] : [
             "TCP-LISTEN:465,bind=${var.client_listen_ip},fork,reuseaddr",
             "TCP:stalwart.${var.namespace}.svc.cluster.local:465",
           ]
+
+          dynamic "volume_mount" {
+            for_each = length(var.client_cert_dns_names) > 0 ? toset(["cert"]) : toset([])
+            content {
+              name       = "client-tls"
+              mount_path = "/certs"
+              read_only  = true
+            }
+          }
 
           security_context {
             run_as_user                = 0
@@ -1827,6 +1880,16 @@ resource "kubernetes_deployment_v1" "stalwart_client_proxy" {
           resources {
             requests = { cpu = "10m", memory = "16Mi" }
             limits   = { cpu = "100m", memory = "32Mi" }
+          }
+        }
+
+        dynamic "volume" {
+          for_each = length(var.client_cert_dns_names) > 0 ? toset(["cert"]) : toset([])
+          content {
+            name = "client-tls"
+            secret {
+              secret_name = "stalwart-client-tls"
+            }
           }
         }
       }

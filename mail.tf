@@ -155,6 +155,11 @@ module "stalwart" {
   # the node's public IP). Empty = no client listeners.
   client_listen_ip = try(local.mail.client_listen_ip, "")
 
+  # SAN hostnames for the public cert the client proxy presents on 993/465.
+  # Non-empty ⇒ cert-manager issues a trusted cert and the proxy TLS-terminates
+  # with it (so strict OAuth proxies validate cleanly). Empty ⇒ passthrough.
+  client_cert_dns_names = try(local.mail.client_cert_dns_names, [])
+
   # Zitadel wiring — when zitadel is on at platform root, the module
   # creates an OIDC app + role + the bootstrap plan attaches Zitadel
   # as the authentication directory. When off, Stalwart still comes

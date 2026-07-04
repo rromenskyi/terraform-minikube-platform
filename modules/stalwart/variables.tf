@@ -47,9 +47,21 @@ variable "smtp_relay_listen_ip" {
 }
 
 variable "client_listen_ip" {
-  description = "Host IP on which to publish the native-mail-client listeners — IMAPS (993) and SMTP submission (465) — for desktop/mobile clients (Apple Mail, Thunderbird via email-oauth2-proxy, etc.). A tiny socat forwarder (separate hostNetwork Deployment, so Stalwart itself is untouched and never restarts) binds `client_listen_ip:993/465` and forwards to the in-cluster Stalwart Service. Set to the node's PUBLIC IP to expose clients to the internet (open 993/465 in the host firewall too); TLS is passed through end-to-end to Stalwart (its own listener cert terminates). Empty (default) = no client listeners published. Requires `node_selector` on multi-node clusters so the pod lands where the bind IP exists."
+  description = "Host IP on which to publish the native-mail-client listeners — IMAPS (993) and SMTP submission (465) — for desktop/mobile clients (Apple Mail, Thunderbird via email-oauth2-proxy, etc.). A tiny socat forwarder (separate hostNetwork Deployment, so Stalwart itself is untouched and never restarts) binds `client_listen_ip:993/465` and terminates client TLS with a real cert (see `client_cert_dns_names`), re-originating TLS to the in-cluster Stalwart Service (Stalwart's own self-signed listener cert stays internal). Set to the node's PUBLIC IP to expose clients to the internet (open 993/465 in the host firewall too). Empty (default) = no client listeners published. Requires `node_selector` on multi-node clusters so the pod lands where the bind IP exists."
   type        = string
   default     = ""
+}
+
+variable "client_cert_dns_names" {
+  description = "SAN hostnames for the public cert the client-listener proxy presents on 993/465 (e.g. [\"imap.<domain>\", \"smtp.<domain>\"]). When non-empty AND `client_listen_ip` is set, the module requests a cert-manager Certificate (issuer `client_cert_issuer`) into Secret `stalwart-client-tls` and the socat proxy terminates client TLS with it — so mail clients (and OAuth proxies that validate strictly, e.g. email-oauth2-proxy) get a publicly-trusted cert instead of Stalwart's self-signed. Empty = TLS passthrough to Stalwart's self-signed cert."
+  type        = list(string)
+  default     = []
+}
+
+variable "client_cert_issuer" {
+  description = "cert-manager ClusterIssuer name used to issue the client-listener cert (`client_cert_dns_names`). Must resolve the SAN hostnames' zone — DNS-01 is cleanest for raw-TCP hosts (no :80). Default suits a platform whose ACME ClusterIssuer is `letsencrypt-production`."
+  type        = string
+  default     = "letsencrypt-production"
 }
 
 variable "hostname" {
