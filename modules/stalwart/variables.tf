@@ -46,6 +46,12 @@ variable "smtp_relay_listen_ip" {
   default     = ""
 }
 
+variable "client_listen_ip" {
+  description = "Host IP on which to publish the native-mail-client listeners — IMAPS (993) and SMTP submission (465) — for desktop/mobile clients (Apple Mail, Thunderbird via email-oauth2-proxy, etc.). A tiny socat forwarder (separate hostNetwork Deployment, so Stalwart itself is untouched and never restarts) binds `client_listen_ip:993/465` and forwards to the in-cluster Stalwart Service. Set to the node's PUBLIC IP to expose clients to the internet (open 993/465 in the host firewall too); TLS is passed through end-to-end to Stalwart (its own listener cert terminates). Empty (default) = no client listeners published. Requires `node_selector` on multi-node clusters so the pod lands where the bind IP exists."
+  type        = string
+  default     = ""
+}
+
 variable "hostname" {
   description = "Public hostname Stalwart announces in SMTP banners and signs DKIM with. Should match the relay's reverse DNS — Gmail rejects mismatches. Required."
   type        = string
