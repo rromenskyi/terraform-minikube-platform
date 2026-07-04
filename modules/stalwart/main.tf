@@ -1730,3 +1730,107 @@ resource "kubernetes_deployment_v1" "stalwart_smtp_relay" {
   }
 }
 
+# ── Native-client listeners (IMAPS 993 + submission 465) ──────────────────────
+#
+# Publishes Stalwart's client ports on `var.client_listen_ip` (typically the
+# node's PUBLIC IP) for desktop/mobile mail clients. Same pattern as the SMTP
+# relay forwarder: a tiny hostNetwork socat pod that binds the host IP and
+# forwards raw TCP to the in-cluster Stalwart Service — TLS is passed through
+# end-to-end (Stalwart's own listener cert terminates), and Stalwart itself is
+# untouched (no restart, no extra host interfaces on its own pod). Gated on
+# `client_listen_ip`; empty = no client exposure.
+resource "kubernetes_deployment_v1" "stalwart_client_proxy" {
+  for_each = var.client_listen_ip != "" ? local.instances : toset([])
+
+  metadata {
+    name      = "stalwart-client-proxy"
+    namespace = var.namespace
+    labels    = merge(local.tags, { app = "stalwart-client-proxy" })
+  }
+
+  spec {
+    replicas = 1
+
+    strategy {
+      type = "Recreate"
+    }
+
+    selector {
+      match_labels = { app = "stalwart-client-proxy" }
+    }
+
+    template {
+      metadata {
+        labels = merge(local.tags, { app = "stalwart-client-proxy" })
+      }
+
+      spec {
+        host_network  = true
+        dns_policy    = "ClusterFirstWithHostNet"
+        node_selector = length(var.node_selector) > 0 ? var.node_selector : null
+
+        dynamic "toleration" {
+          for_each = var.tolerations
+          content {
+            key                = toleration.value.key
+            operator           = toleration.value.operator
+            value              = toleration.value.value
+            effect             = toleration.value.effect
+            toleration_seconds = toleration.value.toleration_seconds
+          }
+        }
+
+        # IMAPS 993 → Stalwart IMAP listener (TLS passthrough).
+        container {
+          name  = "socat-imaps"
+          image = "alpine/socat:1.8.0.0"
+
+          args = [
+            "TCP-LISTEN:993,bind=${var.client_listen_ip},fork,reuseaddr",
+            "TCP:stalwart.${var.namespace}.svc.cluster.local:993",
+          ]
+
+          security_context {
+            run_as_user                = 0
+            allow_privilege_escalation = false
+            capabilities {
+              add  = ["NET_BIND_SERVICE"]
+              drop = ["ALL"]
+            }
+          }
+
+          resources {
+            requests = { cpu = "10m", memory = "16Mi" }
+            limits   = { cpu = "100m", memory = "32Mi" }
+          }
+        }
+
+        # SMTP submission 465 → Stalwart submission listener (TLS passthrough).
+        container {
+          name  = "socat-submission"
+          image = "alpine/socat:1.8.0.0"
+
+          args = [
+            "TCP-LISTEN:465,bind=${var.client_listen_ip},fork,reuseaddr",
+            "TCP:stalwart.${var.namespace}.svc.cluster.local:465",
+          ]
+
+          security_context {
+            run_as_user                = 0
+            allow_privilege_escalation = false
+            capabilities {
+              add  = ["NET_BIND_SERVICE"]
+              drop = ["ALL"]
+            }
+          }
+
+          resources {
+            requests = { cpu = "10m", memory = "16Mi" }
+            limits   = { cpu = "100m", memory = "32Mi" }
+          }
+        }
+      }
+    }
+  }
+}
+

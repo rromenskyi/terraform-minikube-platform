@@ -151,6 +151,10 @@ module "stalwart" {
   # reach it without exposing :25 on the LAN.
   smtp_relay_listen_ip = try(local.mail.smtp_relay_listen_ip, "")
 
+  # Host IP to publish native-client IMAPS(993)/submission(465) on (typically
+  # the node's public IP). Empty = no client listeners.
+  client_listen_ip = try(local.mail.client_listen_ip, "")
+
   # Zitadel wiring — when zitadel is on at platform root, the module
   # creates an OIDC app + role + the bootstrap plan attaches Zitadel
   # as the authentication directory. When off, Stalwart still comes
