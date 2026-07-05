@@ -59,9 +59,21 @@ variable "client_cert_dns_names" {
 }
 
 variable "client_cert_issuer" {
-  description = "cert-manager ClusterIssuer name used to issue the client-listener cert (`client_cert_dns_names`). Must resolve the SAN hostnames' zone — DNS-01 is cleanest for raw-TCP hosts (no :80). Default suits a platform whose ACME ClusterIssuer is `letsencrypt-production`."
+  description = "cert-manager ClusterIssuer name used to issue the client-listener cert (`client_cert_dns_names`) AND the LAN admin cert (`admin_hostname`). Must resolve the hostnames' zone — DNS-01 is cleanest for raw-TCP / private-IP hosts (no :80 reachability needed). Default suits a platform whose ACME ClusterIssuer is `letsencrypt-production`."
   type        = string
   default     = "letsencrypt-production"
+}
+
+variable "admin_hostname" {
+  description = "Dedicated FQDN for the Stalwart admin/account WebUI, served LAN-only. When set (with `admin_listen_ip`), a socat pod publishes Stalwart's HTTP on this host at `admin_listen_ip:443` with a cert-manager cert, and the OIDC WebUI URLs + redirect_uris move to `https://<admin_hostname>/admin` — no obscurity prefix, since it isn't public. Needed because Stalwart serves its webadmin only at the bare `/admin` path and ignores X-Forwarded-Prefix, so prefix-on-mail-host routing 404s. Empty = keep the (public, prefix-obscured) IngressRoute model."
+  type        = string
+  default     = ""
+}
+
+variable "admin_listen_ip" {
+  description = "Private/LAN host IP to bind the admin WebUI proxy on (443). Publish the admin UI only where the operator's trusted network can reach it (open 443 from that subnet in the host firewall). Empty = no LAN admin listener. Paired with `admin_hostname`; requires `node_selector` on multi-node clusters so the pod lands where the bind IP exists."
+  type        = string
+  default     = ""
 }
 
 variable "hostname" {

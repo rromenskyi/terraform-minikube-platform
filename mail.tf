@@ -160,6 +160,12 @@ module "stalwart" {
   # with it (so strict OAuth proxies validate cleanly). Empty ⇒ passthrough.
   client_cert_dns_names = try(local.mail.client_cert_dns_names, [])
 
+  # Dedicated LAN-only admin WebUI host + the private IP to bind it on. Empty ⇒
+  # keep the public prefix-obscured IngressRoute (which 404s on this Stalwart —
+  # see modules/stalwart admin_hostname docs).
+  admin_hostname  = try(local.mail.admin_hostname, "")
+  admin_listen_ip = try(local.mail.admin_listen_ip, "")
+
   # Zitadel wiring — when zitadel is on at platform root, the module
   # creates an OIDC app + role + the bootstrap plan attaches Zitadel
   # as the authentication directory. When off, Stalwart still comes

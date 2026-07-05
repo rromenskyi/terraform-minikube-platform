@@ -83,12 +83,24 @@ locals {
   # since password lives in Zitadel). Surfaced to the operator via
   # the `admin_url` / `account_url` outputs and the root cheatsheet.
   admin_path_prefix = var.enabled ? "/${random_password.admin_path["enabled"].result}" : ""
-  webui_admin_url   = var.enabled ? "https://${var.hostname}${local.admin_path_prefix}/admin" : null
-  webui_account_url = var.enabled ? "https://${var.hostname}${local.admin_path_prefix}/account" : null
-  webui_url_prefixes = local.admin_path_prefix == "" ? {} : {
-    "${local.admin_path_prefix}/admin"   = true
-    "${local.admin_path_prefix}/account" = true
-  }
+  # Base origin the admin/account WebUI + its OIDC callbacks live under. With a
+  # dedicated `admin_hostname` (served LAN-only by the socat admin proxy) the UI
+  # sits at that host's root — no obscurity prefix needed since it isn't public.
+  # Falls back to the prefix-on-mail-host model when no admin_hostname is set.
+  admin_origin      = var.enabled ? (var.admin_hostname != "" ? "https://${var.admin_hostname}" : "https://${var.hostname}${local.admin_path_prefix}") : ""
+  webui_admin_url   = var.enabled ? "${local.admin_origin}/admin" : null
+  webui_account_url = var.enabled ? "${local.admin_origin}/account" : null
+  # URL prefixes the webadmin Application is served at. With a dedicated
+  # LAN-only `admin_hostname` the UI sits at bare /admin + /account (no
+  # obscurity prefix needed off the public internet); otherwise it hides behind
+  # the random prefix on the public mail host.
+  webui_url_prefixes = var.admin_hostname != "" ? {
+    "/admin"   = true
+    "/account" = true
+    } : (local.admin_path_prefix == "" ? {} : {
+      "${local.admin_path_prefix}/admin"   = true
+      "${local.admin_path_prefix}/account" = true
+  })
 
   # DKIM key + DNS body. tls_private_key.public_key_pem is X.509
   # SubjectPublicKeyInfo PEM; DKIM TXT for k=rsa wants the
@@ -716,12 +728,12 @@ resource "zitadel_application_oidc" "stalwart" {
   # doesn't surface on the public root, where Roundcube lives) — both
   # are registered with the Zitadel app.
   redirect_uris = [
-    "https://${var.hostname}${local.admin_path_prefix}/admin/oauth/callback",
-    "https://${var.hostname}${local.admin_path_prefix}/account/oauth/callback",
+    "${local.admin_origin}/admin/oauth/callback",
+    "${local.admin_origin}/account/oauth/callback",
   ]
   post_logout_redirect_uris = [
-    "https://${var.hostname}${local.admin_path_prefix}/admin/login",
-    "https://${var.hostname}${local.admin_path_prefix}/account/login",
+    "${local.admin_origin}/admin/login",
+    "${local.admin_origin}/account/login",
   ]
 
   response_types   = ["OIDC_RESPONSE_TYPE_CODE"]
@@ -1064,7 +1076,10 @@ resource "kubernetes_service_v1" "stalwart_smtp" {
 # still proper OIDC auth at the application layer; the prefix just
 # keeps drive-by scans off the login screen.
 resource "kubectl_manifest" "stalwart_admin_ingressroute" {
-  for_each = local.instances
+  # Prefix-on-mail-host routing — superseded by the LAN-only socat admin proxy
+  # when `admin_hostname` is set (Stalwart serves webadmin only at bare `/admin`,
+  # so a prefixed path 404s and can't be stripped — it ignores X-Forwarded-Prefix).
+  for_each = var.admin_hostname == "" ? local.instances : toset([])
 
   yaml_body = yamlencode({
     apiVersion = "traefik.io/v1alpha1"
@@ -1090,7 +1105,7 @@ resource "kubectl_manifest" "stalwart_admin_ingressroute" {
 }
 
 resource "kubectl_manifest" "stalwart_account_ingressroute" {
-  for_each = local.instances
+  for_each = var.admin_hostname == "" ? local.instances : toset([])
 
   yaml_body = yamlencode({
     apiVersion = "traefik.io/v1alpha1"
@@ -1519,6 +1534,16 @@ resource "kubernetes_deployment_v1" "stalwart" {
               echo "[applier] apply finished with errors — see above; main server stays up"
             fi
 
+            # The webadmin (Application) is (re)created by the plan AFTER the
+            # HTTP listener has already booted, so the listener never mounts it
+            # on its own and every /admin + /account request 404s until an
+            # explicit re-mount. `ReloadSettings` does NOT cover applications;
+            # `UpdateApps` does. Trigger it after each apply so the WebUI is
+            # always served at its urlPrefix.
+            echo "[applier] mounting web applications on the live HTTP listener (UpdateApps)"
+            /shared/bin/stalwart-cli create Action --json '{"@type":"UpdateApps"}' \
+              || echo "[applier] UpdateApps returned non-zero — proceeding anyway"
+
             # Settings-class objects (MtaStageData.script) are cached by
             # the running server at startup; the applier mutates them in
             # the DB AFTER the server is up, so the DATA-stage ingest
@@ -1917,6 +1942,126 @@ resource "kubernetes_deployment_v1" "stalwart_client_proxy" {
             secret {
               secret_name = "stalwart-client-tls"
             }
+          }
+        }
+      }
+    }
+  }
+}
+
+# ── LAN-only admin listener (mailadmin.<domain>:443) ──────────────────────────
+#
+# Stalwart serves its webadmin ONLY at the bare `/admin` path and ignores
+# X-Forwarded-Prefix, so the obscurity-prefix IngressRoute 404s and can't be
+# fixed with StripPrefix. Instead, publish Stalwart's whole HTTP surface on a
+# dedicated hostname bound to the node's LAN IP: a hostNetwork socat pod
+# terminates TLS with a real cert (`stalwart-admin-tls`) on `admin_listen_ip:443`
+# and forwards plaintext to Stalwart's in-cluster HTTP (8080) — the same hop
+# Traefik/Cloudflare already use. Reachable only from the LAN (bound to the
+# private interface; host firewall admits 443 from the LAN subnet only) — the
+# admin UI never touches the internet, and OIDC auth still gates it. Gated on
+# both `admin_hostname` and `admin_listen_ip`.
+resource "kubectl_manifest" "stalwart_admin_cert" {
+  for_each = var.admin_hostname != "" && var.admin_listen_ip != "" ? local.instances : toset([])
+
+  yaml_body = yamlencode({
+    apiVersion = "cert-manager.io/v1"
+    kind       = "Certificate"
+    metadata = {
+      name      = "stalwart-admin-tls"
+      namespace = var.namespace
+      labels    = local.tags
+    }
+    spec = {
+      secretName = "stalwart-admin-tls"
+      dnsNames   = [var.admin_hostname]
+      issuerRef = {
+        name  = var.client_cert_issuer
+        kind  = "ClusterIssuer"
+        group = "cert-manager.io"
+      }
+    }
+  })
+}
+
+resource "kubernetes_deployment_v1" "stalwart_admin_proxy" {
+  for_each = var.admin_hostname != "" && var.admin_listen_ip != "" ? local.instances : toset([])
+
+  metadata {
+    name      = "stalwart-admin-proxy"
+    namespace = var.namespace
+    labels    = merge(local.tags, { app = "stalwart-admin-proxy" })
+  }
+
+  spec {
+    replicas = 1
+
+    strategy {
+      type = "Recreate"
+    }
+
+    selector {
+      match_labels = { app = "stalwart-admin-proxy" }
+    }
+
+    template {
+      metadata {
+        labels = merge(local.tags, { app = "stalwart-admin-proxy" })
+      }
+
+      spec {
+        host_network  = true
+        dns_policy    = "ClusterFirstWithHostNet"
+        node_selector = length(var.node_selector) > 0 ? var.node_selector : null
+
+        dynamic "toleration" {
+          for_each = var.tolerations
+          content {
+            key                = toleration.value.key
+            operator           = toleration.value.operator
+            value              = toleration.value.value
+            effect             = toleration.value.effect
+            toleration_seconds = toleration.value.toleration_seconds
+          }
+        }
+
+        # HTTPS 443 on the LAN IP — TLS-terminate with the admin cert, forward
+        # plaintext to Stalwart's in-cluster HTTP (8080), the same hop Traefik
+        # and Cloudflare already terminate in front of.
+        container {
+          name  = "socat-admin"
+          image = "alpine/socat:1.8.0.0"
+
+          args = [
+            "OPENSSL-LISTEN:443,bind=${var.admin_listen_ip},cert=/certs/tls.crt,key=/certs/tls.key,verify=0,fork,reuseaddr",
+            "TCP:stalwart.${var.namespace}.svc.cluster.local:8080",
+          ]
+
+          volume_mount {
+            name       = "admin-tls"
+            mount_path = "/certs"
+            read_only  = true
+          }
+
+          security_context {
+            run_as_user                = 0
+            allow_privilege_escalation = false
+            capabilities {
+              add  = ["NET_BIND_SERVICE"]
+              drop = ["ALL"]
+            }
+          }
+
+          resources {
+            requests = { cpu = "10m", memory = "16Mi" }
+            limits   = { cpu = "100m", memory = "32Mi" }
+          }
+        }
+
+        volume {
+          name = "admin-tls"
+          secret {
+            secret_name = "stalwart-admin-tls"
           }
         }
       }
