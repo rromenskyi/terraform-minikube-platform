@@ -26,7 +26,7 @@ variable "volume_base_path" {
 variable "image" {
   description = "Roundcube container image. The Apache flavour is used because the upstream image bakes a working PHP+Apache config; the alpine-fpm flavour needs an extra fpm/nginx pair."
   type        = string
-  default     = "roundcube/roundcubemail:1.6.10-apache"
+  default     = "roundcube/roundcubemail:1.6.16-apache"
 }
 
 variable "imap_host" {
