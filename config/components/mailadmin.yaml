@@ -1,0 +1,20 @@
+# mailadmin.<domain> — Stalwart admin (/admin) + self-service account portal
+# (/account), served publicly via the Cloudflare Tunnel → Traefik → Stalwart
+# HTTP (8080), same path the webmail (mail.<domain>) already uses.
+#
+# Why a dedicated host (not a path on mail.<domain>): Stalwart serves its
+# webadmin only at the bare /admin + /account paths and ignores
+# X-Forwarded-Prefix, so a prefixed route can't work. A dedicated host lets
+# Stalwart own the whole origin.
+#
+# Auth is Stalwart's own OIDC (the WebUI SPA redirects to Zitadel, PKCE) — NOT
+# the platform oauth2-proxy, so no `auth:` gate here (that would double-auth).
+# /account is the self-service portal where OIDC users mint App Passwords for
+# native mail clients (IMAP/SMTP), which is why this is exposed to the internet
+# rather than kept LAN-only.
+kind: external
+
+service:
+  name:      stalwart
+  namespace: mail
+  port:      8080
