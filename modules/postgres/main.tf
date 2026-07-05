@@ -300,8 +300,15 @@ resource "kubernetes_job_v1" "pg_extensions" {
   }
 
   spec {
-    backoff_limit              = 6
-    ttl_seconds_after_finished = 300
+    backoff_limit = 6
+    # No `ttl_seconds_after_finished`: this Job is Terraform-managed, so TF owns
+    # its lifecycle. A TTL self-deletes the completed Job out from under state,
+    # which makes every subsequent apply re-plan a `create` (churn) and — if an
+    # apply is interrupted after the Job is created but before state is written —
+    # fail the retry with `jobs.batch "postgres-pg-extensions" already exists`.
+    # The other setup Jobs in this repo (mysql_setup, postgres_setup, vault_init,
+    # …) deliberately carry no TTL for the same reason. The completed Job lingers
+    # harmlessly; `CREATE EXTENSION IF NOT EXISTS` is idempotent on re-run.
 
     template {
       metadata {
