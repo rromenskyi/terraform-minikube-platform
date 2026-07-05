@@ -25,7 +25,7 @@ variable "volume_base_path" {
 variable "image" {
   description = "Stalwart server container image. Repo changed from stalwartlabs/mail-server to stalwartlabs/stalwart at 0.16. Pin a specific tag — `latest` would silently pull schema changes between restarts."
   type        = string
-  default     = "stalwartlabs/stalwart:v0.16.3"
+  default     = "stalwartlabs/stalwart:v0.16.11"
 }
 
 variable "cli_url" {
@@ -37,7 +37,7 @@ variable "cli_url" {
 variable "webui_url" {
   description = "URL of the upstream Stalwart WebUI bundle. Pinned to the version that ships with the server image — stale bundles drift the API contract. The init container downloads, sed-patches the OAuth client_id, repackages, and Stalwart's Application is pointed at the local file."
   type        = string
-  default     = "https://github.com/stalwartlabs/webui/releases/download/v1.0.2/webui.zip"
+  default     = "https://github.com/stalwartlabs/webui/releases/download/v1.0.5/webui.zip"
 }
 
 variable "smtp_relay_listen_ip" {
