@@ -83,6 +83,16 @@ resource "kubernetes_service_v1" "traefik_public" {
       protocol    = "TCP"
     }
   }
+
+  # MetalLB stamps `metallb.io/ip-allocated-from-pool` onto the Service at
+  # runtime (its own bookkeeping). It's not in the annotations we declare, so
+  # without this the provider wants to strip it on every apply — perpetual
+  # no-op drift. Ignore just that one MetalLB-owned key.
+  lifecycle {
+    ignore_changes = [
+      metadata[0].annotations["metallb.io/ip-allocated-from-pool"],
+    ]
+  }
 }
 
 output "traefik_public_endpoints" {
