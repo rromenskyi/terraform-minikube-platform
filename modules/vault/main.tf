@@ -929,9 +929,13 @@ resource "kubernetes_job_v1" "vault_bootstrap" {
 
   spec {
     backoff_limit = 3
-    # Auto-cleanup completed Jobs after 10 minutes — keeps `kubectl get jobs`
-    # from accumulating one entry per apply over weeks.
-    ttl_seconds_after_finished = 600
+    # No ttl_seconds_after_finished: a TTL self-deletes the completed Job, so
+    # every apply re-plans a `create` and RE-RUNS the bootstrap (churn — and it
+    # re-emits sensitive config to the Job log each time). The Job name is
+    # hash-suffixed on the configure script, so an unchanged script keeps the
+    # same name and the lingering completed Job means TF sees it and does not
+    # re-create. Old hash-named Jobs only accumulate when the script actually
+    # changes (rare); clean those up by hand if they ever pile up.
 
     template {
       metadata {

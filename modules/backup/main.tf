@@ -221,8 +221,12 @@ resource "kubernetes_job_v1" "restic_init" {
   }
 
   spec {
-    backoff_limit              = 4
-    ttl_seconds_after_finished = 300
+    backoff_limit = 4
+    # No ttl_seconds_after_finished: this Job is Terraform-managed with a
+    # static name, so a TTL self-deletes the completed Job out from under state
+    # and makes every apply re-plan a `create` (churn — and re-runs the init).
+    # The other setup Jobs in this repo carry no TTL for the same reason; the
+    # completed Job lingers harmlessly and `restic init` is idempotent on re-run.
 
     template {
       metadata {

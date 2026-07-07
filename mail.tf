@@ -274,7 +274,15 @@ resource "cloudflare_dns_record" "additional_mail_dkim" {
   zone_id = each.value.zone_id
   name    = "${module.stalwart.additional_domain_dkim_dns[each.key].name}.${each.value.name}"
   type    = "TXT"
-  content = "\"${module.stalwart.additional_domain_dkim_dns[each.key].value}\""
+  # Chunk the DKIM value into <=255-char TXT character-strings. A single TXT
+  # string holds at most 255 bytes, so Cloudflare stores the long RSA key as
+  # multiple quoted strings; rendering it as one string made every plan show
+  # drift (Cloudflare splits it back). Resolvers concatenate the chunks, so
+  # DKIM verification is identical either way.
+  content = join(" ", [
+    for i in range(0, length(module.stalwart.additional_domain_dkim_dns[each.key].value), 255) :
+    format("%q", substr(module.stalwart.additional_domain_dkim_dns[each.key].value, i, min(255, length(module.stalwart.additional_domain_dkim_dns[each.key].value) - i)))
+  ])
   ttl     = 300
   comment = "additional mail domain — DKIM TXT (per-domain key, signed by Stalwart on outbound)"
 }
