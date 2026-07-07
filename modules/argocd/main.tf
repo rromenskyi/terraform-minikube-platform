@@ -22,6 +22,10 @@ terraform {
       source  = "hashicorp/kubernetes"
       version = "~> 2.0"
     }
+    kubectl = {
+      source  = "gavinbunney/kubectl"
+      version = "~> 1.14"
+    }
   }
 }
 
@@ -109,6 +113,59 @@ locals {
         enabled = false
       }
     }
+
+    # Deploy notifications (operator ruling 2026-07-06: Slack, not Telegram).
+    # This block ALSO adopts config that previously drifted outside TF — the
+    # app-deployed template/trigger were hand-applied to the live CM; from
+    # here on the chart renders them. The Slack INCOMING WEBHOOK URL is a
+    # secret and is NOT in TF: the chart-managed secret is disabled and a
+    # VaultStaticSecret (below) syncs
+    # `secret/platform/slack/argocd-notifications` (key `slack-webhook`)
+    # into `argocd-notifications-secret`.
+    notifications = {
+      argocdUrl = "https://${var.hostname}"
+      notifiers = {
+        # Slack INCOMING WEBHOOK (operator ruling 2026-07-06) — the channel is
+        # baked into the URL, which lives in Vault (key slack-webhook), never
+        # in this repo.
+        "service.webhook.slack-deploys" = <<-EOT
+          url: $slack-webhook
+          headers:
+            - name: Content-Type
+              value: application/json
+        EOT
+      }
+      templates = {
+        "template.app-deployed" = <<-EOT
+          webhook:
+            slack-deploys:
+              method: POST
+              body: |
+                {{- $line := printf "revision: %s" .app.status.sync.revision -}}
+                {{- if has .app.metadata.name (list "lineoneagent-frontend-dev" "lineoneagent-backend-dev") -}}
+                  {{- $bump := call .repo.GetCommitMetadata .app.status.sync.revision -}}
+                  {{- $sha := regexFind "built-from=[0-9a-f]{7,40}" $bump.Message | trimPrefix "built-from=" -}}
+                  {{- if $sha -}}
+                    {{- $real := call .repo.GetCommitMetadata $sha -}}
+                    {{- $line = printf "`%s` — `%s`\n`%s`" (trunc 7 $sha) (first (splitList "\n" $real.Message) | replace "`" "'") (trim (regexFind "^[^<]+" $real.Author) | replace "`" "'") -}}
+                  {{- end -}}
+                {{- end -}}
+                {"text": {{ toJson (printf "Deployed: %s\n%s\n%s/applications/%s" .app.metadata.name $line .context.argocdUrl .app.metadata.name) }}}
+        EOT
+      }
+      triggers = {
+        "trigger.on-deployed" = <<-EOT
+          - description: Application is synced and healthy. Triggered once per commit.
+            oncePer: app.status.sync.revision
+            when: app.status.operationState.phase in ['Succeeded'] and app.status.health.status == 'Healthy' and (app.metadata.name not in ['lineoneagent-frontend-dev','lineoneagent-backend-dev'] or repo.GetCommitMetadata(app.status.sync.revision).Message matches 'built-from=')
+            send:
+              - app-deployed
+        EOT
+      }
+      secret = {
+        create = false # owned by VSO (Vault → argocd-notifications-secret)
+      }
+    }
   })
 }
 
@@ -135,3 +192,37 @@ resource "helm_release" "argocd" {
   values = [local.values]
 }
 
+
+# ── Slack notifications secret (Vault → VSO) ──────────────────────────────
+# The chart's own notifications secret is disabled (`secret.create=false`);
+# VSO owns `argocd-notifications-secret` instead. The Slack incoming-webhook
+# URL for the deploys channel lives at
+# `secret/data/platform/slack/argocd-notifications` under the key
+# `slack-webhook`; VSO syncs it here and rotation is a Vault edit, no TF.
+
+# The consuming-namespace SA `vault-secrets-operator-controller-manager`
+# already exists in the argocd namespace (root argocd_repos.tf emits it for
+# Vault-mode repo creds) — this VSS rides the same auth.
+resource "kubectl_manifest" "notifications_secret_vault" {
+  for_each = var.enabled ? toset(["enabled"]) : toset([])
+
+  yaml_body = yamlencode({
+    apiVersion = "secrets.hashicorp.com/v1beta1"
+    kind       = "VaultStaticSecret"
+    metadata = {
+      name      = "argocd-notifications-slack"
+      namespace = var.namespace
+    }
+    spec = {
+      vaultAuthRef = ""
+      mount        = "secret"
+      type         = "kv-v2"
+      path         = "platform/slack/argocd-notifications"
+      destination = {
+        name   = "argocd-notifications-secret"
+        create = true
+      }
+      refreshAfter = "30s"
+    }
+  })
+}
