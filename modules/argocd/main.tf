@@ -114,6 +114,23 @@ locals {
       }
     }
 
+    # The repo-server's health endpoint stalls past the chart-default 1s probe
+    # timeout while it is busy generating manifests on this box (observed 5s+
+    # responses → liveness kill → CrashLoopBackOff every few minutes for days;
+    # controllers then see "name resolver error: produced zero addresses"
+    # between restarts). Generous timeouts keep a busy-but-healthy repo-server
+    # alive without masking a truly wedged one.
+    repoServer = {
+      livenessProbe = {
+        timeoutSeconds   = 10
+        failureThreshold = 5
+      }
+      readinessProbe = {
+        timeoutSeconds   = 10
+        failureThreshold = 5
+      }
+    }
+
     # Deploy notifications (operator ruling 2026-07-06: Slack, not Telegram).
     # This block ALSO adopts config that previously drifted outside TF — the
     # app-deployed template/trigger were hand-applied to the live CM; from
