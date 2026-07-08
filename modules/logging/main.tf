@@ -486,7 +486,13 @@ resource "kubernetes_deployment_v1" "vmalert" {
 
           args = concat([
             "-rule=/etc/vmalert/log-alerts.yaml",
-            "-datasource.url=http://${local.vl_name}:9428",
+            # FQDN, not the bare `victorialogs` short name: vmalert's Go
+            # resolver expands a short name through the ndots:5 search list,
+            # and under CoreDNS pressure some of those lookups time out /
+            # NXDOMAIN, so the log-alert rules intermittently failed with
+            # "lookup victorialogs ... no such host" / "context deadline
+            # exceeded". A fully-qualified name resolves in one query.
+            "-datasource.url=http://${local.vl_name}.${var.namespace}.svc.cluster.local:9428",
             "-notifier.url=${var.alertmanager_url}",
             "-evaluationInterval=1m",
             ], var.vmalert_external_url != "" ? [
