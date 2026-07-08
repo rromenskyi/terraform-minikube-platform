@@ -261,6 +261,46 @@ resource "kubectl_manifest" "airllm_certificate" {
   })
 }
 
+# Plain-HTTP hits (e.g. a client configured with http://…/v1) otherwise fall
+# through to the cluster 404 fallback — redirect them to https instead.
+resource "kubectl_manifest" "airllm_redirect_middleware" {
+  for_each = { for k in local.airllm_instances : k => k if local.airllm.hostname != "" }
+
+  yaml_body = yamlencode({
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "airllm-https-redirect"
+      namespace = kubernetes_namespace_v1.airllm["enabled"].metadata[0].name
+    }
+    spec = {
+      redirectScheme = { scheme = "https", permanent = true }
+    }
+  })
+}
+
+resource "kubectl_manifest" "airllm_ingressroute_web" {
+  for_each = { for k in local.airllm_instances : k => k if local.airllm.hostname != "" }
+
+  yaml_body = yamlencode({
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "IngressRoute"
+    metadata = {
+      name      = "airllm-web-redirect"
+      namespace = kubernetes_namespace_v1.airllm["enabled"].metadata[0].name
+    }
+    spec = {
+      entryPoints = ["web"]
+      routes = [{
+        match       = "Host(`${local.airllm.hostname}`)"
+        kind        = "Rule"
+        middlewares = [{ name = "airllm-https-redirect" }]
+        services    = [{ name = "airllm", port = 8080 }] # unreachable past the redirect; Traefik requires a service
+      }]
+    }
+  })
+}
+
 resource "kubectl_manifest" "airllm_ingressroute" {
   for_each = { for k in local.airllm_instances : k => k if local.airllm.hostname != "" }
 
