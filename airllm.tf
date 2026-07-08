@@ -199,7 +199,15 @@ resource "kubectl_manifest" "airllm_application" {
               # 10001).
               securityContext = { runAsUser = 10001 }
             }
-            dlpBert = { enabled = false } # sidecar image is a separate opt-in (GHCR package still private)
+            dlpBert = {
+              enabled = true
+              image = {
+                repository = "ghcr.io/ipsupport-llc/ipsupport-airllm-dlp-bert"
+                tag        = local.airllm.image_tag # separate artifact — pin explicitly (chart guidance)
+              }
+              replicaCount = 1
+              autoscaling  = { kind = "none" } # single box — scale later via hpa/keda values
+            }
             metrics = {
               serviceMonitor = { enabled = true }
               dashboards     = { enabled = true }
