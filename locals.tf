@@ -304,6 +304,19 @@ locals {
         node_selector                   = {}
         tolerations                     = []
       }
+
+      # AirLLM — LLM gateway deployed from its public Helm chart (airllm.tf).
+      # Environment specifics (hostname, zone, VIP) come from the gitignored
+      # config/platform.yaml; these defaults keep the service off until then.
+      airllm = {
+        enabled            = false
+        namespace          = "airllm"
+        hostname           = ""
+        cloudflare_zone_id = ""
+        public_ip          = ""
+        chart_revision     = "v0.1.0"
+        image_tag          = "0.1.0"
+      }
     }
   }
   _platform_file = "${path.module}/config/platform.yaml"
@@ -338,6 +351,7 @@ locals {
       seafile          = merge(local._platform_defaults.services.seafile, try(local._platform_services.seafile, {}))
       security_scan    = merge(local._platform_defaults.services.security_scan, try(local._platform_services.security_scan, {}))
       traefik_public   = merge(local._platform_defaults.services.traefik_public, try(local._platform_services.traefik_public, {}))
+      airllm           = merge(local._platform_defaults.services.airllm, try(local._platform_services.airllm, {}))
     }
     # Operator-supplied monitoring extras (gitignored config). Generic engine
     # in prometheus_rules.tf renders whatever is under `monitoring.prometheus_rules`
