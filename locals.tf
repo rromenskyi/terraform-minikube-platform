@@ -314,8 +314,11 @@ locals {
         hostname           = ""
         cloudflare_zone_id = ""
         public_ip          = ""
-        chart_revision     = "v0.1.0"
-        image_tag          = "0.1.0"
+        # GitOps-latest: Argo CD tracks the chart on main; empty image_tag lets
+        # the chart default to its appVersion. A release = bump appVersion in
+        # the app repo — no TF touch. Pin a tag/version here to freeze.
+        chart_revision = "main"
+        image_tag      = ""
       }
     }
   }
