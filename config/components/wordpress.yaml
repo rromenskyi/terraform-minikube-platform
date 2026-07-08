@@ -80,3 +80,16 @@ config_files:
   /etc/apache2/conf-enabled/remoteip.conf: |
     RemoteIPHeader CF-Connecting-IP
     RemoteIPInternalProxy 100.64.0.0/10
+  # Origin IP block. mod_remoteip (above) has already rewritten the client
+  # address to the real visitor from CF-Connecting-IP, so `Require` matches the
+  # true source. Deny listed abusers globally — Apache 403s before any PHP runs
+  # (cheap, and it stops the memory-heavy WordPress path that OOM'd jagdterrier
+  # on 2026-07-06). Add/remove IPs here; edge-side blocking (Cloudflare IP Access
+  # Rules) is the first line, this is the in-cluster backstop.
+  /etc/apache2/conf-enabled/ip-blocklist.conf: |
+    <Location />
+      <RequireAll>
+        Require all granted
+        Require not ip 152.32.186.32
+      </RequireAll>
+    </Location>
