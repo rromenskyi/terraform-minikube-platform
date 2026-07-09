@@ -247,3 +247,9 @@ variable "tolerations" {
   }))
   default = []
 }
+
+variable "allowed_networks" {
+  description = "IP networks (CIDR) exempt from Stalwart's automatic fail2ban blocking. On Kubernetes, cluster-internal ranges MUST be listed: kubelet probes and SNAT'd client traffic reach Stalwart from shared internal addresses, and the port-scan heuristic otherwise bans them — silently locking every IMAP/SMTP client out at once. Applied as create-only AllowedIp objects."
+  type        = list(string)
+  default     = []
+}
