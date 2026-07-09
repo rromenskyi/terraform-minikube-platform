@@ -275,6 +275,28 @@ locals {
       }),
     ],
 
+    # ── Auto-ban exemptions ───────────────────────────────────────
+    # Kubernetes probes and SNAT'd client traffic reach Stalwart from
+    # cluster-internal addresses; the fail2ban heuristic reads probe
+    # bursts as "port scanning" and bans the shared SNAT source, which
+    # silently locks EVERY IMAP/SMTP client out (2026-07-09 outage:
+    # 100.72.0.1 banned indefinitely, every client dropped without a
+    # banner). AllowedIp entries are exempt from auto-ban. Create-only
+    # like Domain — the duplicate create on re-apply fails with
+    # primaryKeyViolation, which --continue-on-error swallows.
+    [
+      for i, cidr in var.allowed_networks : jsonencode({
+        "@type" = "create"
+        object  = "AllowedIp"
+        value = {
+          ("allow-net-${i}") = {
+            address = cidr
+            reason  = "cluster-internal network — kube probes/SNAT sources must never be auto-banned (managed by terraform-minikube-platform)"
+          }
+        }
+      })
+    ],
+
     # ── OIDC bits — only when zitadel is wired in ─────────────────
     local.oidc_enabled ? [
       # External IdP for end-user authentication. Stalwart validates

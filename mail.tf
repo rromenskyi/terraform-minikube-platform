@@ -119,6 +119,12 @@ module "stalwart" {
   hostname           = try(local.mail.hostname, "")
   cloudflare_zone_id = try(local.mail.cloudflare_zone_id, "")
 
+  # Cluster-internal ranges (services 100.64.0.0/13 + pods 100.72.0.0/13 =
+  # 100.64.0.0/12) exempt from Stalwart's fail2ban — kube probes and SNAT'd
+  # client traffic otherwise get banned as "port scanners", which locks every
+  # IMAP/SMTP client out at once (2026-07-09 outage).
+  allowed_networks = ["100.64.0.0/12"]
+
   # Additional submission-only domains. Module emits one Stalwart
   # Domain + DkimSignature per entry into the apply plan; DNS records
   # for each (MX/SPF/DKIM/DMARC) are emitted from this file using the
