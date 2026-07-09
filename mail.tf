@@ -91,7 +91,7 @@ locals {
   # (`mail.ingest_forward`). Machine intake of a mailbox's inbound
   # traffic (campaign bounce/DSN ingest) without minting mailbox
   # credentials — see `modules/stalwart` `ingest_forwards`.
-  _mail_ingest_forwards = local.mail == null ? {} : {
+  _mail_ingest_forwards_raw = local.mail == null ? {} : {
     for name, cfg in local._domain_configs :
     cfg.slug => {
       addresses        = cfg.mail.ingest_forward.addresses
@@ -100,6 +100,39 @@ locals {
       smtp_port        = try(cfg.mail.ingest_forward.smtp_port, 25)
     }
     if length(try(cfg.mail.ingest_forward.addresses, [])) > 0
+  }
+
+  # Stalwart 0.16.11's validating resolver classifies answers from the
+  # UNSIGNED cluster.local zone as DNSSEC-Bogus (no toggle exists), so a
+  # `*.svc.cluster.local` relay target loops in queue retries forever
+  # (2026-07-09 campaign-ingest outage). Resolve such hostnames to the
+  # Service ClusterIP at plan time instead — the yaml stays semantic, the
+  # rendered route carries a literal IP (same shape as the smarthost route),
+  # and a Service recreation self-heals on the next apply.
+  _mail_ingest_cluster_svcs = {
+    for slug, f in local._mail_ingest_forwards_raw :
+    slug => {
+      # <svc>.<namespace>.svc.cluster.local → { name, namespace }
+      name      = split(".", f.smtp_host)[0]
+      namespace = split(".", f.smtp_host)[1]
+    }
+    if endswith(f.smtp_host, ".svc.cluster.local")
+  }
+
+  _mail_ingest_forwards = {
+    for slug, f in local._mail_ingest_forwards_raw :
+    slug => merge(f, {
+      smtp_host = contains(keys(local._mail_ingest_cluster_svcs), slug) ? data.kubernetes_service_v1.mail_ingest_target[slug].spec[0].cluster_ip : f.smtp_host
+    })
+  }
+}
+
+data "kubernetes_service_v1" "mail_ingest_target" {
+  for_each = local._mail_ingest_cluster_svcs
+
+  metadata {
+    name      = each.value.name
+    namespace = each.value.namespace
   }
 }
 
