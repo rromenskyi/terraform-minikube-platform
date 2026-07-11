@@ -5,9 +5,13 @@ locals {
   # lives in the query's `_time:` filter, the threshold in `| filter`.
   _default_alert_rules = {
     critical-log-pattern = {
-      query   = "_time:10m (panic OR fatal OR segfault OR \"OOMKilled\" OR \"out of memory\") | stats count() as hits | filter hits:>0"
+      # Grouped by source namespace/pod so the alert email names the offender
+      # (a bare cluster-wide count() forced a manual log hunt every time).
+      # `rename` gives the fields dot-free names Prometheus-model consumers
+      # accept; one alert fires per offending pod.
+      query   = "_time:10m (panic OR fatal OR segfault OR \"OOMKilled\" OR \"out of memory\") | rename kubernetes.pod_namespace as src_namespace, kubernetes.pod_name as src_pod | stats by (src_namespace, src_pod) count() as hits | filter hits:>0"
       for     = "1m"
-      summary = "{{ $value }} critical log line(s) (panic/fatal/OOM) cluster-wide in 10m"
+      summary = "{{ $value }} critical log line(s) (panic/fatal/OOM) from {{ $labels.src_namespace }}/{{ $labels.src_pod }} in 10m"
     }
   }
 }
