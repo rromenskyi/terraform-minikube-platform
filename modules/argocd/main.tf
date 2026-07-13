@@ -159,7 +159,7 @@ locals {
               method: POST
               body: |
                 {{- $line := printf "revision: %s" .app.status.sync.revision -}}
-                {{- if has .app.metadata.name (list "lineoneagent-frontend-dev" "lineoneagent-backend-dev") -}}
+                {{- if has .app.metadata.name (list "lineoneagent-frontend-dev" "lineoneagent-backend-dev" "lineoneagent-sipmesh-dev") -}}
                   {{- $bump := call .repo.GetCommitMetadata .app.status.sync.revision -}}
                   {{- $sha := regexFind "built-from=[0-9a-f]{7,40}" $bump.Message | trimPrefix "built-from=" -}}
                   {{- if $sha -}}
@@ -174,7 +174,7 @@ locals {
         "trigger.on-deployed" = <<-EOT
           - description: Application is synced and healthy. Triggered once per commit.
             oncePer: app.status.sync.revision
-            when: app.status.operationState.phase in ['Succeeded'] and app.status.health.status == 'Healthy' and (app.metadata.name not in ['lineoneagent-frontend-dev','lineoneagent-backend-dev'] or repo.GetCommitMetadata(app.status.sync.revision).Message matches 'built-from=')
+            when: app.status.operationState.phase in ['Succeeded'] and app.status.health.status == 'Healthy' and (app.metadata.name not in ['lineoneagent-frontend-dev','lineoneagent-backend-dev','lineoneagent-sipmesh-dev'] or repo.GetCommitMetadata(app.status.sync.revision).Message matches 'built-from=')
             send:
               - app-deployed
         EOT
