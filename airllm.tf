@@ -18,6 +18,25 @@ locals {
 
   airllm_instances = local.airllm.enabled ? toset(["enabled"]) : toset([])
   airllm_db        = "airllm"
+
+  # ── GCP Workload Identity Federation ──────────────────────────────────────
+  # The chart wants the pool coordinates as three separate values; the platform
+  # already carries them as the one audience string every other WIF consumer on
+  # this cluster uses. Derive them instead of re-declaring them: the audience is
+  # rendered into both the projected token and the credential config, and a
+  # mismatch is rejected only by STS at the first token refresh — hours after a
+  # rollout that looked clean.
+  airllm_wif_enabled = local.airllm.google_service_account != ""
+
+  # //iam.googleapis.com/projects/<NUMBER>/locations/global/workloadIdentityPools/<POOL>/providers/<PROVIDER>
+  _airllm_wif_pattern = "^//iam\\.googleapis\\.com/projects/(?P<project_number>[0-9]+)/locations/global/workloadIdentityPools/(?P<pool_id>[^/]+)/providers/(?P<provider_id>[^/]+)$"
+  # A non-match must reach the precondition below with an actionable message
+  # rather than dying inside `regex()`, hence `try` over a bare call.
+  _airllm_wif_unparsed = { project_number = "", pool_id = "", provider_id = "" }
+  airllm_wif = local.airllm_wif_enabled ? try(
+    regex(local._airllm_wif_pattern, local.platform.services.gcp_wif.pool_provider_audience),
+    local._airllm_wif_unparsed,
+  ) : local._airllm_wif_unparsed
 }
 
 # ── Namespace ────────────────────────────────────────────────────────────────
@@ -212,6 +231,18 @@ resource "kubectl_manifest" "airllm_application" {
               serviceMonitor = { enabled = true }
               dashboards     = { enabled = true }
             }
+            # Off unless an SA to impersonate is configured, and then the only
+            # thing it changes is that the pod gains a cloud identity — the
+            # chart renders nothing here when disabled. projectNumber is a
+            # STRING on purpose: as a number, YAML round-trips it into
+            # scientific notation and the audience STS sees is garbage.
+            googleWorkloadIdentity = {
+              enabled        = local.airllm_wif_enabled
+              projectNumber  = local.airllm_wif.project_number
+              poolId         = local.airllm_wif.pool_id
+              providerId     = local.airllm_wif.provider_id
+              serviceAccount = local.airllm.google_service_account
+            }
           }
         }
       }
@@ -227,6 +258,13 @@ resource "kubectl_manifest" "airllm_application" {
       }
     }
   })
+
+  lifecycle {
+    precondition {
+      condition     = !local.airllm_wif_enabled || local.airllm_wif.project_number != ""
+      error_message = "services.airllm.google_service_account is set (${local.airllm.google_service_account}) but services.gcp_wif.pool_provider_audience is empty or malformed in config/platform.yaml. It must read //iam.googleapis.com/projects/<NUMBER>/locations/global/workloadIdentityPools/<POOL>/providers/<PROVIDER> — the chart derives the pool coordinates from it. Either set it or drop google_service_account."
+    }
+  }
 }
 
 # ── Direct exposure: unproxied A record + LE cert + IngressRoute ─────────────
