@@ -319,6 +319,12 @@ locals {
         # the app repo — no TF touch. Pin a tag/version here to freeze.
         chart_revision = "main"
         image_tag      = ""
+        # GCP Workload Identity Federation: the SA the pod impersonates so the
+        # gateway's `vertex` provider mints OAuth2 tokens as its own cloud
+        # identity, with no service-account key stored anywhere. Empty (default)
+        # leaves the chart's block off. The pool coordinates are NOT repeated
+        # here — airllm.tf derives them from `services.gcp_wif`.
+        google_service_account = ""
       }
     }
   }
