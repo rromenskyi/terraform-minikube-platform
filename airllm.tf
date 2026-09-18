@@ -217,6 +217,13 @@ resource "kubectl_manifest" "airllm_application" {
               # the image is built for (Dockerfile chowns /var/lib/airllm to
               # 10001).
               securityContext = { runAsUser = 10001 }
+              # Chart default (128Mi/512Mi) is tight for a gateway proxying
+              # streaming completion bodies under real concurrent load —
+              # bumped 2026-08-19 at the operator's request.
+              resources = {
+                requests = { cpu = "100m", memory = "256Mi" }
+                limits   = { cpu = "1", memory = "2Gi" }
+              }
             }
             dlpBert = {
               enabled = true
