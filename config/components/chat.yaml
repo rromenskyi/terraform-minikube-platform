@@ -88,7 +88,14 @@ env_static:
   # stay visible so the user can A/B them side-by-side. Tiny qwen3.5
   # variants (0.8b + 2b) ride along for snappy single-shot prompts where
   # the bigger 4b/9b/14b round-trip latency feels heavy.
-  DEFAULT_MODELS: gemma4:12b-it-qat
+  #
+  # gemma4:12b-it-qat retired 2026-08-19 — replaced by gemma4:26b-a4b-q3km
+  # (MoE, 8-of-128 experts active, ~13.5GB). Not in the ollama module's
+  # `models:` pull-list (see platform.yaml comment) since it's a hand-
+  # registered local model, not a registry tag; it still resolves here
+  # because Open WebUI reads the live model list from Ollama's /api/tags,
+  # not from anything declared in this repo.
+  DEFAULT_MODELS: gemma4:26b-a4b-q3km
   # NOTE: `ENABLE_MODEL_FILTER` + `MODEL_FILTER_LIST` are no-ops in
   # Open WebUI v0.9.x — model visibility is purely per-model ACL
   # in the local SQLite (`model.access_control` + AccessGrants).
