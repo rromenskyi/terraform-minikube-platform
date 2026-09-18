@@ -56,3 +56,8 @@ CLAUDE.md
 # ships `config/.scrub-list.example` template; the live file with
 # operator's actual tenant slugs / IPs / node names stays gitignored.
 config/.scrub-list
+
+# Python bytecode cache — created by ad hoc `python3 -m py_compile`
+# syntax checks against scripts/*.py, never meant to be tracked.
+__pycache__/
+*.pyc
