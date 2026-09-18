@@ -87,6 +87,26 @@ locals {
     if try(cfg.mail.submission_only, false)
   }
 
+  # Inbound-forwarding aliases declared by domain yamls (`mail.aliases`).
+  # Only meaningful on a domain that also sets `mail.submission_only:
+  # true` (that's what creates its Stalwart Domain in the first place —
+  # see `_additional_mail_domains` above); silently produces no entries
+  # for any alias declared on a domain that isn't also an additional
+  # mail domain, same fail-safe shape as `_mail_ingest_forwards_raw`
+  # below. Keyed by `<domain-slug>-<alias-name>` for a stable for_each.
+  _mail_aliases = local.mail == null ? {} : merge([
+    for name, cfg in local._domain_configs : {
+      for a in try(cfg.mail.aliases, []) :
+      "${cfg.slug}-${a.name}" => {
+        name        = a.name
+        domain_slug = cfg.slug
+        recipients  = a.recipients
+        description = try(a.description, "")
+      }
+      if try(cfg.mail.submission_only, false)
+    }
+  ]...)
+
   # SMTP-push ingest forwards declared by domain yamls
   # (`mail.ingest_forward`). Machine intake of a mailbox's inbound
   # traffic (campaign bounce/DSN ingest) without minting mailbox
@@ -170,6 +190,9 @@ module "stalwart" {
       dmarc_policy  = cfg.dmarc_policy
     }
   }
+
+  # Inbound-forwarding aliases (plain forward, no dedicated account).
+  mail_aliases = local._mail_aliases
 
   # SMTP-push ingest forwards (machine intake of mailbox traffic).
   ingest_forwards = local._mail_ingest_forwards

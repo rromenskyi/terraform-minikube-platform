@@ -132,6 +132,24 @@ locals {
     slug => "v=DKIM1; k=rsa; p=${body}"
   }
 
+  # Pre-rendered `update MailingList` line per `var.mail_aliases` entry,
+  # `id` left as a literal placeholder the applier splices in at
+  # runtime once it has looked up the existing object's real id (see
+  # the mail-alias idempotency step below) — Terraform already knows
+  # every other field statically, so only the id needs a runtime value.
+  mail_alias_update_lines = {
+    for slug, a in(var.enabled ? var.mail_aliases : {}) :
+    slug => jsonencode({
+      "@type" = "update"
+      object  = "MailingList"
+      id      = "__MAIL_ALIAS_ID__"
+      value = {
+        description = a.description != "" ? a.description : "Mail alias (managed by terraform-minikube-platform)."
+        recipients  = { for r in a.recipients : r => true }
+      }
+    })
+  }
+
   spf_dns_value   = var.enabled && var.spf_authorized_ip != "" ? "v=spf1 ip4:${var.spf_authorized_ip} -all" : ""
   dmarc_dns_value = var.enabled && var.primary_domain != "" ? "v=DMARC1; p=${var.dmarc_policy}; rua=mailto:postmaster@${var.primary_domain}" : ""
 
@@ -613,6 +631,36 @@ locals {
               "@type" = "Value"
               value   = tls_private_key.dkim_additional[slug].private_key_pem
             }
+          }
+        }
+      })
+    ] : [],
+
+    # ── Inbound mail aliases ────────────────────────────────────────
+    # One MailingList per `var.mail_aliases` entry — Stalwart's own
+    # idiom for a plain forward-only alias (a list with real recipients
+    # but no subscribers), used instead of a dedicated Account so the
+    # alias needs no login/credentials of its own. `recipients` accepts
+    # any valid address, local or external. Friendly id `list-<slug>`.
+    # Never destroyed (same reasoning as Domain above — nothing to
+    # objectIsLinked on yet, but wiping-and-recreating on every apply
+    # would also nuke any MailingList the operator created by hand,
+    # e.g. the existing hello@/corp@ distribution lists on this
+    # server). The applier's idempotency pass converts a `create` whose
+    # target address already exists into an `update` instead, so
+    # `recipients` changes on a later apply actually take effect —
+    # unlike Domain's static name/description, an alias's recipient
+    # list is expected to change over time.
+    var.enabled ? [
+      for slug, a in var.mail_aliases : jsonencode({
+        "@type" = "create"
+        object  = "MailingList"
+        value = {
+          "list-${slug}" = {
+            name        = a.name
+            domainId    = "#dom-add-${a.domain_slug}"
+            description = a.description != "" ? a.description : "Mail alias (managed by terraform-minikube-platform)."
+            recipients  = { for r in a.recipients : r => true }
           }
         }
       })
@@ -1433,6 +1481,19 @@ resource "kubernetes_deployment_v1" "stalwart" {
             name  = "INGEST_RELOAD"
             value = length(var.ingest_forwards) > 0 ? "1" : ""
           }
+          env {
+            # One `<friendly-id>|<target email>|<base64 update-line>`
+            # entry per mail alias, space-joined — the applier looks up
+            # each target email's live MailingList id and, if found,
+            # drops the matching `create` and appends the decoded
+            # update line with the id spliced in. Base64 avoids any
+            # need to escape the JSON payload for shell/space-splitting.
+            name = "MAIL_ALIAS_ENTRIES"
+            value = join(" ", [
+              for slug, a in var.mail_aliases :
+              "list-${slug}|${a.name}@${var.additional_domains[a.domain_slug].name}|${base64encode(local.mail_alias_update_lines[slug])}"
+            ])
+          }
 
           command = ["bash", "-eu", "-c", <<-EOT
             for i in $(seq 1 180); do
@@ -1544,6 +1605,27 @@ resource "kubernetes_deployment_v1" "stalwart" {
               sed -i '/"@type":"create","object":"Directory","value":{"dir-zitadel"/d' /tmp/plan.ndjson
               sed -i "s/#dir-zitadel/$DIR_ID/g" /tmp/plan.ndjson
             fi
+
+            # MailingList idempotency. Unlike Domain (static name/
+            # description, safe to skip-and-resolve forever), an
+            # alias's `recipients` is expected to change on a later
+            # apply — so instead of just skipping the stale create,
+            # drop it and append the pre-rendered update line (see
+            # `mail_alias_update_lines`) with the live id spliced in,
+            # so recipient changes actually converge.
+            for entry in $${MAIL_ALIAS_ENTRIES:-}; do
+              fid="$${entry%%|*}"
+              rest="$${entry#*|}"
+              email="$${rest%%|*}"
+              b64="$${rest#*|}"
+              lid=$(/shared/bin/stalwart-cli query MailingList 2>/dev/null \
+                | awk -v e="$email" '$2==e {print $1; exit}') || true
+              if [ -n "$${lid:-}" ]; then
+                echo "[applier] MailingList '$email' already exists as id '$lid' — replacing create '$fid' with an update"
+                sed -i "/\"object\":\"MailingList\",\"value\":{\"$fid\"/d" /tmp/plan.ndjson
+                printf '%s' "$b64" | base64 -d | sed "s/__MAIL_ALIAS_ID__/$lid/" >> /tmp/plan.ndjson
+              fi
+            done
 
             # `--continue-on-error` so a JMAP filter rejection on
             # one destroy doesn't block the rest of the plan.

@@ -98,6 +98,17 @@ variable "additional_domains" {
   default = {}
 }
 
+variable "mail_aliases" {
+  description = "Inbound-forwarding aliases keyed by a stable slug. Each entry declares `<name>@<additional_domains[domain_slug].name>` and forwards it to `recipients` (one or more existing, deliverable addresses — local or external) without provisioning a dedicated account. Modelled as a Stalwart MailingList with recipients but no real subscribers — Stalwart's own idiom for a plain alias — rather than a Sieve redirect, so it needs no DATA-stage script binding or reload. `domain_slug` must be a key already present in `additional_domains`; that map only creates the Domain + DKIM signing key, so the domain also needs its own MX record (via the generic per-domain `dns:` list in its yaml) pointed at this Stalwart's relay for inbound mail to arrive at all."
+  type = map(object({
+    name        = string
+    domain_slug = string
+    recipients  = list(string)
+    description = optional(string, "")
+  }))
+  default = {}
+}
+
 variable "zitadel_org_id" {
   description = "Zitadel organisation ID the OIDC application + role land in. Pulled from the parent module's data \"zitadel_orgs\" lookup."
   type        = string

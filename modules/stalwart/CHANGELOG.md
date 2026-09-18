@@ -8,6 +8,18 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **`mail_aliases` — inbound-forwarding aliases without a dedicated account.**
+  New map variable (default `{}`). Each entry declares
+  `<name>@<additional_domains[domain_slug].name>` and forwards it to one or
+  more `recipients` (local or external addresses), modelled as a Stalwart
+  `MailingList` with real recipients but no subscribers — Stalwart's own
+  idiom for a plain alias, so it needs no Sieve script or DATA-stage reload.
+  Requires the target domain to already have an MX record pointed at this
+  Stalwart's relay (via the generic per-domain `dns:` list — `additional_domains`
+  alone only creates the Domain + DKIM key, not inbound routing). The applier's
+  idempotency pass converts a `create` whose target address already exists into
+  an `update` instead of skipping it, so `recipients` changes on a later apply
+  actually take effect.
 - **`internal_trusted_ip_patterns` — skip the spam filter for trusted
   in-cluster senders.** New list variable (default `[]`, a no-op). When
   set, the DATA-stage `enableSpamFilter` expression keeps Stalwart's
