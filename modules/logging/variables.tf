@@ -128,6 +128,12 @@ variable "vmalert_external_url" {
   default     = ""
 }
 
+variable "ai_enrichment_webhook_url" {
+  description = "Webhook URL added ALONGSIDE (not instead of) the existing plain-text email receiver — Alertmanager POSTs the firing alert to both integrations on the same receiver, so a failure in the webhook consumer never drops the underlying email notification. Empty (default) omits `webhookConfigs` entirely. Intended for an operator-supplied service that enriches the alert (e.g. with an LLM-generated diagnosis) and sends its own follow-up email; the module has no opinion on what's behind this URL."
+  type        = string
+  default     = ""
+}
+
 variable "alert_rules" {
   description = "Log alert rules the module renders into a vmalert `type: vlogs` rule group. Each: `query` is a LogsQL stats query ending in `stats count() as <name> | filter <name>:>N` (the time window lives in the query's `_time:` filter, the threshold in `| filter`); `for` is the sustain duration; `summary` is the notification text. The caller supplies these — the root wires a generic default set (panic/fatal/OOM) merged with the operator's `services.logging.alert_rules`."
   type = map(object({

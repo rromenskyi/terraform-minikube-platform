@@ -9,7 +9,17 @@ locals {
       # (a bare cluster-wide count() forced a manual log hunt every time).
       # `rename` gives the fields dot-free names Prometheus-model consumers
       # accept; one alert fires per offending pod.
-      query   = "_time:10m (panic OR fatal OR segfault OR \"OOMKilled\" OR \"out of memory\") | rename kubernetes.pod_namespace as src_namespace, kubernetes.pod_name as src_pod | stats by (src_namespace, src_pod) count() as hits | filter hits:>0"
+      #
+      # Excludes vmalert's own container: when vmalert itself fails to run
+      # THIS query (e.g. a transient DNS/network hiccup reaching
+      # VictoriaLogs), it logs the error with the full failed query text
+      # embedded — which necessarily contains "OOMKilled"/"out of memory"
+      # literally, since those are this rule's own keywords. Without the
+      # exclusion, that error log then matches on the next evaluation cycle,
+      # firing a false "critical-log-pattern" alert about vmalert itself.
+      # Confirmed live: 7 such self-matches since 2026-08-17, none of them
+      # real crashes.
+      query   = "_time:10m (panic OR fatal OR segfault OR \"OOMKilled\" OR \"out of memory\") AND NOT kubernetes.container_name:\"vmalert\" | rename kubernetes.pod_namespace as src_namespace, kubernetes.pod_name as src_pod | stats by (src_namespace, src_pod) count() as hits | filter hits:>0"
       for     = "1m"
       summary = "{{ $value }} critical log line(s) (panic/fatal/OOM) from {{ $labels.src_namespace }}/{{ $labels.src_pod }} in 10m"
     }
@@ -47,4 +57,12 @@ module "logging" {
   # from the `monitoring:` config block alongside the alertmanager/prometheus
   # external URLs). Empty => vmalert keeps its in-cluster pod-address default.
   vmalert_external_url = try(local.platform.monitoring.vmalert_external_url, "")
+
+  # Second integration on the existing email receiver (see alert_llm_enricher.tf)
+  # — empty when that service is disabled, so this stays a no-op by default.
+  ai_enrichment_webhook_url = (
+    length(local.alert_llm_enrichment_instances) > 0
+    ? "http://${local.alert_llm_enricher_name}.${local.platform.services.logging.namespace}.svc.cluster.local:8080/webhook"
+    : ""
+  )
 }

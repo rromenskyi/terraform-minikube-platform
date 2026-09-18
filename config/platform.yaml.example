@@ -91,6 +91,31 @@ services:
     #     GGML_VK_VISIBLE_DEVICES: "1"     # pick non-iGPU index
     #     MESA_VK_DEVICE_SELECT: "8086:e212"  # Mesa device picker (PCI vendor:device)
 
+  # Speaches — self-hosted OpenAI-compatible STT/TTS server
+  # (github.com/speaches-ai/speaches, ex faster-whisper-server). CPU-only:
+  # upstream only ships CPU/CUDA image variants, no Intel GPU/Vulkan
+  # backend, so it doesn't compete with Ollama for a shared GPU. Internal
+  # -only by default (no hostname) — reached in-cluster via the
+  # `speaches.platform.svc.cluster.local:8000` Service as an OpenAI-
+  # compatible audio provider target (e.g. wired into AirLLM as a
+  # transcription/speech provider the same way any other OpenAI-compatible
+  # upstream is). Whisper/TTS models download on first request into the
+  # hostPath-backed model-cache volume below and persist across restarts.
+  speaches:
+    enabled: false
+    storage_size:   20Gi
+    cpu_request:    200m
+    cpu_limit:      "2"
+    # 4Gi OOMKilled loading faster-whisper-large-v3 for real inference on
+    # CPU (confirmed live) — the ~3GB model plus CTranslate2/ONNX runtime
+    # overhead needs real headroom beyond the on-disk model size. Smaller
+    # models (medium/small) would fit a lower limit if large-v3's accuracy
+    # isn't needed.
+    memory_request: 1Gi
+    memory_limit:   8Gi
+    node_selector:
+      workload-tier: general
+
   # Zitadel — shared OIDC/SAML IdP for every project (and the
   # platform-admin surface itself). Stores state in the shared Postgres
   # (db `platform_zitadel`, role `platform_zitadel`, provisioned by
@@ -189,6 +214,19 @@ services:
     #     for: 1m                  # window lives in the query's _time:; the
     #     severity: warning        # threshold in | filter. Scope to a namespace
     #     summary: "{{ $value }} hits in 5m"   # to avoid alerting on dev/test.
+
+  # AI alert enrichment (alert_llm_enricher.tf) — for each firing log alert
+  # above, asks the local Ollama model for a diagnosis + action plan and
+  # emails it too. This is a SECOND integration on the same Alertmanager
+  # receiver, not a replacement — the plain-text alert email keeps sending
+  # even if this (or Ollama, or VictoriaLogs) is down. No-op unless
+  # `logging.alert_email` is also set.
+  alert_llm_enrichment:
+    enabled: false
+    # ollama_model: gemma4:26b-a4b-q3km   # must already be pulled/registered
+    # cpu_request/cpu_limit/memory_request/memory_limit: tiny — the script
+    # itself is a thin webhook->VictoriaLogs->Ollama->SMTP relay, no local
+    # inference.
 
   # Longhorn — distributed block storage. Provides a `longhorn`
   # StorageClass that PVCs can use instead of the per-node

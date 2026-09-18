@@ -67,7 +67,11 @@ locals {
             # email route matches ONLY these.
             alert_source = "log"
           }
-          annotations = { summary = r.summary }
+          # `logsql_query` (the raw query, unaltered) lets a webhook consumer
+          # re-run it — stripped of its trailing `| stats ... | filter ...`
+          # aggregation tail — to fetch the actual matching log lines for
+          # context. `summary` alone only carries the pre-aggregated count.
+          annotations = { summary = r.summary, logsql_query = r.query }
         }
       ]
     }]
@@ -568,19 +572,36 @@ resource "kubectl_manifest" "alertmanager_email" {
           matchType = "="
         }]
       }
-      receivers = [{
-        name = "email"
-        emailConfigs = [{
-          to   = var.alert_email
-          from = var.smtp_from
-          # EHLO hostname — must be a valid FQDN or Stalwart rejects the
-          # session with "550 Invalid EHLO domain" (the pod hostname isn't).
-          hello        = var.smtp_hello
-          smarthost    = var.smtp_smarthost
-          requireTLS   = false
-          sendResolved = true
-        }]
-      }]
+      receivers = [merge(
+        {
+          name = "email"
+          emailConfigs = [{
+            to   = var.alert_email
+            from = var.smtp_from
+            # EHLO hostname — must be a valid FQDN or Stalwart rejects the
+            # session with "550 Invalid EHLO domain" (the pod hostname isn't).
+            hello        = var.smtp_hello
+            smarthost    = var.smtp_smarthost
+            requireTLS   = false
+            sendResolved = true
+          }]
+        },
+        # Same receiver, not a separate route — Alertmanager fires every
+        # integration on a matched receiver, so adding webhookConfigs here
+        # can't ever suppress the emailConfigs above. A sibling
+        # AlertmanagerConfig with its own matching route was considered and
+        # rejected: cluster-wide AlertmanagerConfig selection merges configs
+        # as sibling routes, and without `continue: true` (which isn't set
+        # here) only the first one Alertmanager evaluates would actually
+        # fire — an operator adding a second config with an overlapping
+        # matcher risks silently replacing this email receiver instead of
+        # adding to it.
+        var.ai_enrichment_webhook_url != "" ? {
+          webhookConfigs = [{
+            url = var.ai_enrichment_webhook_url
+          }]
+        } : {}
+      )]
     }
   })
 }

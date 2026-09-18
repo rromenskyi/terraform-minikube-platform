@@ -8,6 +8,16 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **`ai_enrichment_webhook_url` — optional second integration on the
+  existing email receiver.** When set, Alertmanager also POSTs each firing
+  alert to this URL alongside the plain-text email (same receiver, not a
+  separate route, so the email can never be silently dropped by a
+  misbehaving webhook consumer). Each vmalert rule's `annotations` now
+  also carries `logsql_query` (the raw, unaggregated query) so a webhook
+  consumer can re-run it for the actual matching log lines — `summary`
+  alone only carries the pre-aggregated count.
+
+### Added
 - **`vmalert_external_url` + a vmalert `Service`.** vmalert had no Service, so
   the `Source`/generator links it stamps on alerts fell back to the raw pod
   address (`vmalert-<hash>:8880`) — unreachable from a browser, the dead

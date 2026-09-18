@@ -326,6 +326,48 @@ locals {
         # here — airllm.tf derives them from `services.gcp_wif`.
         google_service_account = ""
       }
+
+      # Speaches — self-hosted OpenAI-compatible STT/TTS server
+      # (github.com/speaches-ai/speaches). CPU-only: upstream only ships
+      # CPU/CUDA variants, no Intel GPU/Vulkan backend, so this doesn't
+      # compete with Ollama for the Arc B50. Internal-only by default (no
+      # hostname) — reached in-cluster as an OpenAI-compatible audio
+      # provider target, e.g. by AirLLM.
+      speaches = {
+        enabled = false
+        # NOT a k8s Namespace — the actual k8s namespace is hardcoded to
+        # the shared `platform` one (speaches.tf uses
+        # kubernetes_namespace_v1.platform directly, same as ollama/
+        # airllm's postgres-setup Job). This only names the hostPath
+        # subdirectory under host_volume_path for the model-cache PV.
+        namespace     = "speaches"
+        image         = "ghcr.io/speaches-ai/speaches:latest-cpu"
+        storage_size  = "20Gi"
+        node_selector = { "workload-tier" = "general" }
+        cpu_request   = "200m"
+        cpu_limit     = "2"
+        # 4Gi OOMKilled (exit 137) loading faster-whisper-large-v3 for real
+        # inference on CPU (confirmed live, 2026-08-30) — the ~3GB model
+        # plus CTranslate2/ONNX runtime overhead needs real headroom beyond
+        # just the on-disk model size.
+        memory_request = "1Gi"
+        memory_limit   = "8Gi"
+      }
+
+      # AI alert enrichment (alert_llm_enricher.tf) — adds an LLM-generated
+      # diagnosis + action plan email alongside (never instead of) the
+      # existing plain-text log-alert email. No-op unless
+      # services.logging.alert_email is also set (nothing to attach a
+      # webhook to otherwise). A tiny stdlib-only Python script, not a
+      # built image — see scripts/alert-llm-enricher.py.
+      alert_llm_enrichment = {
+        enabled        = false
+        ollama_model   = "gemma4:26b-a4b-q3km"
+        cpu_request    = "50m"
+        cpu_limit      = "500m"
+        memory_request = "64Mi"
+        memory_limit   = "256Mi"
+      }
     }
   }
   _platform_file = "${path.module}/config/platform.yaml"
@@ -336,31 +378,33 @@ locals {
   _platform_services = try(local._platform_raw.services, {})
   platform = {
     services = {
-      mysql            = merge(local._platform_defaults.services.mysql, try(local._platform_services.mysql, {}))
-      postgres         = merge(local._platform_defaults.services.postgres, try(local._platform_services.postgres, {}))
-      redis            = merge(local._platform_defaults.services.redis, try(local._platform_services.redis, {}))
-      ollama           = merge(local._platform_defaults.services.ollama, try(local._platform_services.ollama, {}))
-      zitadel          = merge(local._platform_defaults.services.zitadel, try(local._platform_services.zitadel, {}))
-      vault            = merge(local._platform_defaults.services.vault, try(local._platform_services.vault, {}))
-      argocd           = merge(local._platform_defaults.services.argocd, try(local._platform_services.argocd, {}))
-      kured            = merge(local._platform_defaults.services.kured, try(local._platform_services.kured, {}))
-      logging          = merge(local._platform_defaults.services.logging, try(local._platform_services.logging, {}))
-      dns01_cloudflare = merge(local._platform_defaults.services.dns01_cloudflare, try(local._platform_services.dns01_cloudflare, {}))
-      longhorn         = merge(local._platform_defaults.services.longhorn, try(local._platform_services.longhorn, {}))
-      metallb          = merge(local._platform_defaults.services.metallb, try(local._platform_services.metallb, {}))
-      minio            = merge(local._platform_defaults.services.minio, try(local._platform_services.minio, {}))
-      github_runners   = merge(local._platform_defaults.services.github_runners, try(local._platform_services.github_runners, {}))
-      backup           = merge(local._platform_defaults.services.backup, try(local._platform_services.backup, {}))
-      platform_dash    = merge(local._platform_defaults.services.platform_dash, try(local._platform_services.platform_dash, {}))
-      addons           = merge(local._platform_defaults.services.addons, try(local._platform_services.addons, {}))
-      buildkitd        = merge(local._platform_defaults.services.buildkitd, try(local._platform_services.buildkitd, {}))
-      coredns          = merge(local._platform_defaults.services.coredns, try(local._platform_services.coredns, {}))
-      cluster_oidc     = merge(local._platform_defaults.services.cluster_oidc, try(local._platform_services.cluster_oidc, {}))
-      gcp_wif          = merge(local._platform_defaults.services.gcp_wif, try(local._platform_services.gcp_wif, {}))
-      seafile          = merge(local._platform_defaults.services.seafile, try(local._platform_services.seafile, {}))
-      security_scan    = merge(local._platform_defaults.services.security_scan, try(local._platform_services.security_scan, {}))
-      traefik_public   = merge(local._platform_defaults.services.traefik_public, try(local._platform_services.traefik_public, {}))
-      airllm           = merge(local._platform_defaults.services.airllm, try(local._platform_services.airllm, {}))
+      mysql                = merge(local._platform_defaults.services.mysql, try(local._platform_services.mysql, {}))
+      postgres             = merge(local._platform_defaults.services.postgres, try(local._platform_services.postgres, {}))
+      redis                = merge(local._platform_defaults.services.redis, try(local._platform_services.redis, {}))
+      ollama               = merge(local._platform_defaults.services.ollama, try(local._platform_services.ollama, {}))
+      zitadel              = merge(local._platform_defaults.services.zitadel, try(local._platform_services.zitadel, {}))
+      vault                = merge(local._platform_defaults.services.vault, try(local._platform_services.vault, {}))
+      argocd               = merge(local._platform_defaults.services.argocd, try(local._platform_services.argocd, {}))
+      kured                = merge(local._platform_defaults.services.kured, try(local._platform_services.kured, {}))
+      logging              = merge(local._platform_defaults.services.logging, try(local._platform_services.logging, {}))
+      dns01_cloudflare     = merge(local._platform_defaults.services.dns01_cloudflare, try(local._platform_services.dns01_cloudflare, {}))
+      longhorn             = merge(local._platform_defaults.services.longhorn, try(local._platform_services.longhorn, {}))
+      metallb              = merge(local._platform_defaults.services.metallb, try(local._platform_services.metallb, {}))
+      minio                = merge(local._platform_defaults.services.minio, try(local._platform_services.minio, {}))
+      github_runners       = merge(local._platform_defaults.services.github_runners, try(local._platform_services.github_runners, {}))
+      backup               = merge(local._platform_defaults.services.backup, try(local._platform_services.backup, {}))
+      platform_dash        = merge(local._platform_defaults.services.platform_dash, try(local._platform_services.platform_dash, {}))
+      addons               = merge(local._platform_defaults.services.addons, try(local._platform_services.addons, {}))
+      buildkitd            = merge(local._platform_defaults.services.buildkitd, try(local._platform_services.buildkitd, {}))
+      coredns              = merge(local._platform_defaults.services.coredns, try(local._platform_services.coredns, {}))
+      cluster_oidc         = merge(local._platform_defaults.services.cluster_oidc, try(local._platform_services.cluster_oidc, {}))
+      gcp_wif              = merge(local._platform_defaults.services.gcp_wif, try(local._platform_services.gcp_wif, {}))
+      seafile              = merge(local._platform_defaults.services.seafile, try(local._platform_services.seafile, {}))
+      security_scan        = merge(local._platform_defaults.services.security_scan, try(local._platform_services.security_scan, {}))
+      traefik_public       = merge(local._platform_defaults.services.traefik_public, try(local._platform_services.traefik_public, {}))
+      airllm               = merge(local._platform_defaults.services.airllm, try(local._platform_services.airllm, {}))
+      speaches             = merge(local._platform_defaults.services.speaches, try(local._platform_services.speaches, {}))
+      alert_llm_enrichment = merge(local._platform_defaults.services.alert_llm_enrichment, try(local._platform_services.alert_llm_enrichment, {}))
     }
     # Operator-supplied monitoring extras (gitignored config). Generic engine
     # in prometheus_rules.tf renders whatever is under `monitoring.prometheus_rules`
