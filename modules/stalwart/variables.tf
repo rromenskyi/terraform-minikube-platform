@@ -200,7 +200,13 @@ variable "dmarc_policy" {
 }
 
 variable "internal_trusted_ip_patterns" {
-  description = "Regex patterns matched against the connecting IP (`remote_ip`); matching inbound SMTP connections are trusted and bypass the DATA-stage spam filter. Intended for in-cluster senders that deliver straight to Stalwart's :25 (e.g. Alertmanager → mail) — their mail comes from a pod IP, fails public SPF/DMARC, and would otherwise be scored as spam and filed to Junk. Regex (not CIDR) because Stalwart 0.16.x has no CIDR expression function; e.g. `^100\\.(6[4-9]|7[0-9])\\.` matches the k3s 100.64.0.0/12 range. Empty list (default) leaves Stalwart's stock `enableSpamFilter` (filter every unauthenticated session) untouched, so this is a no-op unless an operator opts in."
+  description = "Regex patterns matched against the connecting IP (`remote_ip`); matching inbound SMTP connections are trusted and bypass the DATA-stage spam filter. Intended for in-cluster senders that deliver straight to Stalwart's :25 (e.g. Alertmanager → mail) — their mail comes from a pod IP, fails public SPF/DMARC, and would otherwise be scored as spam and filed to Junk. Regex (not CIDR) because Stalwart 0.16.x has no CIDR expression function; e.g. `^100\\.(6[4-9]|7[0-9])\\.` matches the k3s 100.64.0.0/12 range. Do NOT use this when public inbound mail also reaches Stalwart through an in-cluster hop (e.g. the smtp-relay forwarder): that traffic arrives SNATed from a pod-range address too, so an IP trust disables spam filtering for ALL inbound mail — use `internal_trusted_helo_domains` instead. Empty list (default) leaves Stalwart's stock `enableSpamFilter` (filter every unauthenticated session) untouched, so this is a no-op unless an operator opts in."
+  type        = list(string)
+  default     = []
+}
+
+variable "internal_trusted_helo_domains" {
+  description = "EHLO hostnames whose inbound SMTP sessions are trusted and bypass the DATA-stage spam filter (exact match on `helo_domain`). The IP-independent way to trust in-cluster senders: public mail that reaches Stalwart through an in-cluster relay hop always presents the relay's own EHLO, so an external sender cannot claim one of these names, while it arrives from the same pod-range address as a real in-cluster sender would. Set each in-cluster sender's SMTP hello to a distinct name (e.g. Alertmanager's `smtp_hello`) and list it here. Empty list (default) adds no exclusion."
   type        = list(string)
   default     = []
 }

@@ -7,7 +7,26 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **Mail-alias idempotency pass broke the whole boot-time plan apply.** The
+  rendered plan has no trailing newline (`join("\n")`), so the `update
+  MailingList` line the applier appends for an already-existing alias was
+  glued onto the plan's last line and `stalwart-cli apply` rejected the entire
+  file (`invalid plan NDJSON ... trailing characters`) on every pod start once
+  any alias existed. Config survived in the database, so it went unnoticed
+  until a later plan change failed to land. The applier now adds the missing
+  newline before appending.
+
 ### Added
+- **`internal_trusted_helo_domains` — trust in-cluster senders by EHLO name.**
+  New list variable (default `[]`). Each entry ANDs a `helo_domain != '<name>'`
+  exclusion into the DATA-stage `enableSpamFilter` expression, alongside any
+  `internal_trusted_ip_patterns`. Use this instead of an IP trust whenever
+  public inbound mail reaches Stalwart through an in-cluster hop (the
+  smtp-relay forwarder): that traffic arrives SNATed from a pod-range address,
+  so trusting the pod range silently disabled spam filtering for ALL inbound
+  mail. Public mail always carries the relay's own EHLO, so an external sender
+  can't claim a trusted name.
 - **`mail_aliases` — inbound-forwarding aliases without a dedicated account.**
   New map variable (default `{}`). Each entry declares
   `<name>@<additional_domains[domain_slug].name>` and forwards it to one or

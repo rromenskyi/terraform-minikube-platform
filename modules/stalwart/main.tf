@@ -517,24 +517,28 @@ locals {
       }),
     ] : [],
 
-    # Trust in-cluster senders: exclude IPs matching operator-listed regex
-    # patterns from the DATA-stage spam filter. Mail delivered straight to
-    # :25 from a pod (e.g. Alertmanager) fails public SPF/DMARC and would
-    # otherwise be scored as spam and filed to Junk. `matches(regex, value)`
-    # (pattern FIRST per Stalwart's signature) rather than a CIDR builtin —
-    # 0.16.x has no CIDR expression function (`is_ip_in_cidr` only landed
-    # post-0.16.3). JMAP `update` is a per-property PATCH, so this coexists
-    # with the `script` update above. Keeps the stock default
-    # (`is_empty(authenticated_as)` = filter unauthenticated sessions) and
-    # ANDs in a `!matches` exclusion per pattern.
-    length(var.internal_trusted_ip_patterns) > 0 ? [
+    # Trust in-cluster senders: exclude connections matching operator-listed
+    # IP regexes or EHLO hostnames from the DATA-stage spam filter. Mail
+    # delivered straight to :25 from a pod (e.g. Alertmanager) fails public
+    # SPF/DMARC and would otherwise be scored as spam and filed to Junk.
+    # `matches(regex, value)` (pattern FIRST per Stalwart's signature) rather
+    # than a CIDR builtin — 0.16.x has no CIDR expression function
+    # (`is_ip_in_cidr` only landed post-0.16.3). JMAP `update` is a
+    # per-property PATCH, so this coexists with the `script` update above.
+    # Keeps the stock default (`is_empty(authenticated_as)` = filter
+    # unauthenticated sessions) and ANDs in one exclusion per entry.
+    length(var.internal_trusted_ip_patterns) + length(var.internal_trusted_helo_domains) > 0 ? [
       jsonencode({
         "@type" = "update"
         object  = "MtaStageData"
         value = {
           enableSpamFilter = {
             match = {}
-            else  = "is_empty(authenticated_as)${join("", [for p in var.internal_trusted_ip_patterns : " && !matches('${p}', remote_ip)"])}"
+            else = join("", concat(
+              ["is_empty(authenticated_as)"],
+              [for p in var.internal_trusted_ip_patterns : " && !matches('${p}', remote_ip)"],
+              [for h in var.internal_trusted_helo_domains : " && helo_domain != '${h}'"],
+            ))
           }
         }
       }),
@@ -1623,6 +1627,10 @@ resource "kubernetes_deployment_v1" "stalwart" {
               if [ -n "$${lid:-}" ]; then
                 echo "[applier] MailingList '$email' already exists as id '$lid' — replacing create '$fid' with an update"
                 sed -i "/\"object\":\"MailingList\",\"value\":{\"$fid\"/d" /tmp/plan.ndjson
+                # The rendered plan has no trailing newline (join("\n")) —
+                # without this the appended line glues onto the last one and
+                # the whole plan fails to parse ("trailing characters").
+                [ -n "$(tail -c 1 /tmp/plan.ndjson)" ] && printf '\n' >> /tmp/plan.ndjson
                 printf '%s' "$b64" | base64 -d | sed "s/__MAIL_ALIAS_ID__/$lid/" >> /tmp/plan.ndjson
               fi
             done

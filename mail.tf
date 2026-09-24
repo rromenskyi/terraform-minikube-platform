@@ -208,6 +208,14 @@ module "stalwart" {
   # empty = stock filter.
   internal_trusted_ip_patterns = try(local.mail.trusted_ip_patterns, [])
 
+  # EHLO names of in-cluster senders (Alertmanager, alert-llm-enricher)
+  # that skip the spam filter. Preferred over trusted_ip_patterns here:
+  # public inbound mail reaches Stalwart through the smtp-relay forwarder
+  # SNATed from a pod-range address, so an IP trust would disable filtering
+  # for ALL inbound mail. From the primary domain's
+  # `mail.trusted_helo_domains` yaml; empty = no exclusion.
+  internal_trusted_helo_domains = try(local.mail.trusted_helo_domains, [])
+
   # SMTP inbound forwarder bind IP — typically the WireGuard interface
   # address on the home node so the public relay's outbound tunnel can
   # reach it without exposing :25 on the LAN.
