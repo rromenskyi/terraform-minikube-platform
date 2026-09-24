@@ -89,13 +89,19 @@ env_static:
   # variants (0.8b + 2b) ride along for snappy single-shot prompts where
   # the bigger 4b/9b/14b round-trip latency feels heavy.
   #
-  # gemma4:12b-it-qat retired 2026-08-19 — replaced by gemma4:26b-a4b-q3km
-  # (MoE, 8-of-128 experts active, ~13.5GB). Not in the ollama module's
-  # `models:` pull-list (see platform.yaml comment) since it's a hand-
-  # registered local model, not a registry tag; it still resolves here
-  # because Open WebUI reads the live model list from Ollama's /api/tags,
-  # not from anything declared in this repo.
-  DEFAULT_MODELS: gemma4:26b-a4b-q3km
+  # gemma4:12b-it-qat retired 2026-08-19 — replaced by gemma4:26b-a4b-q3km,
+  # itself retired 2026-09-23 in favor of gemma4:26b-a4b-jang-iq3s (MoE,
+  # 8-of-128 experts active, imatrix + mixed-precision quant — attention
+  # Q5_K, experts IQ3_S; source recorded in the gitignored platform.yaml
+  # `models:` comment). Benchmarked live on prod hardware: ~18-19
+  # t/s decode vs q3km's ~15-16 t/s, smaller on disk (12.5GB vs 12.7GB),
+  # same Vulkan backend/settings. Not in the ollama module's `models:`
+  # pull-list (see platform.yaml comment) since it's a hand-registered
+  # local model, not a registry tag; it still resolves here because Open
+  # WebUI reads the live model list from Ollama's /api/tags, not from
+  # anything declared in this repo. gemma4:26b-a4b-q3km stays registered
+  # on the ollama-0 PVC as a fallback, just no longer the chat default.
+  DEFAULT_MODELS: gemma4:26b-a4b-jang-iq3s
   # NOTE: `ENABLE_MODEL_FILTER` + `MODEL_FILTER_LIST` are no-ops in
   # Open WebUI v0.9.x — model visibility is purely per-model ACL
   # in the local SQLite (`model.access_control` + AccessGrants).

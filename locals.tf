@@ -361,8 +361,11 @@ locals {
       # webhook to otherwise). A tiny stdlib-only Python script, not a
       # built image — see scripts/alert-llm-enricher.py.
       alert_llm_enrichment = {
-        enabled        = false
-        ollama_model   = "gemma4:26b-a4b-q3km"
+        enabled = false
+        # Must match the chat default (config/components/chat.yaml
+        # DEFAULT_MODELS): OLLAMA_MAX_LOADED_MODELS=1, so a different model
+        # here evicts the chat model from VRAM on every alert.
+        ollama_model   = "gemma4:26b-a4b-jang-iq3s"
         cpu_request    = "50m"
         cpu_limit      = "500m"
         memory_request = "64Mi"
