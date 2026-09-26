@@ -83,7 +83,7 @@ check "k3s_ssh_vars_set" {
 # Layer 2: Platform add-ons (Traefik, cert-manager, monitoring, namespaces).
 # -----------------------------------------------------------------------------
 module "addons" {
-  source = "git::https://github.com/rromenskyi/terraform-k8s-addons.git?ref=v2.4.2"
+  source = "git::https://github.com/rromenskyi/terraform-k8s-addons.git?ref=v2.5.0"
 
   kubeconfig_path      = module.k8s.kubeconfig_path
   cluster_name         = module.k8s.cluster_name
@@ -120,7 +120,15 @@ module "addons" {
   # needs a reboot). Default OFF — operators flip on via
   # `services.kured.enabled: true` in their gitignored
   # `config/platform.yaml`.
-  enable_kured = local.platform.services.kured.enabled
+  enable_kured      = local.platform.services.kured.enabled
+  kured_time_zone   = local.platform.services.kured.time_zone
+  kured_start_time  = local.platform.services.kured.start_time
+  kured_end_time    = local.platform.services.kured.end_time
+  kured_reboot_days = local.platform.services.kured.reboot_days
+  # A reboot daemon has to run on every node: a taint kured doesn't
+  # tolerate (e.g. a custom `node-role.kubernetes.io/edge`) exempts that
+  # node from drain + lock coordinated reboots entirely.
+  kured_tolerations = [{ operator = "Exists" }]
 
   # Traefik's chart-side dashboard IngressRoute at `traefik.<base_domain>`
   # stays off — this platform owns dashboard routing through the tenant

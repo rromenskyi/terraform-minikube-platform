@@ -58,8 +58,16 @@ locals {
         node_selector = {}
         tolerations   = []
       }
+      # Maintenance window defaults = the addons module's (reboot any time,
+      # any day, UTC). Operators narrow it in config/platform.yaml —
+      # `time_zone` makes the window wall-clock regardless of each node's
+      # own OS timezone.
       kured = {
-        enabled = false
+        enabled     = false
+        time_zone   = "UTC"
+        start_time  = "00:00"
+        end_time    = "23:59"
+        reboot_days = ["su", "mo", "tu", "we", "th", "fr", "sa"]
       }
       # Cluster log aggregation — VictoriaLogs store + Vector collector +
       # Grafana datasource (see modules/logging). Time-retained, searchable
