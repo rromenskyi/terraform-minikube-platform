@@ -132,6 +132,14 @@ locals {
     slug => "v=DKIM1; k=rsa; p=${body}"
   }
 
+  # Domain FQDN -> plan friendly-id ref, for `var.mail_aliases[*].domain`.
+  # Indexing this with an unmanaged domain errors at plan time, which is the
+  # intended fail-fast for a typo'd alias domain.
+  mail_alias_domain_refs = merge(
+    { (var.primary_domain) = "#dom-primary" },
+    { for slug, cfg in var.additional_domains : cfg.name => "#dom-add-${slug}" },
+  )
+
   # Pre-rendered `update MailingList` line per `var.mail_aliases` entry,
   # `id` left as a literal placeholder the applier splices in at
   # runtime once it has looked up the existing object's real id (see
@@ -662,7 +670,7 @@ locals {
         value = {
           "list-${slug}" = {
             name        = a.name
-            domainId    = "#dom-add-${a.domain_slug}"
+            domainId    = local.mail_alias_domain_refs[a.domain]
             description = a.description != "" ? a.description : "Mail alias (managed by terraform-minikube-platform)."
             recipients  = { for r in a.recipients : r => true }
           }
@@ -1495,7 +1503,7 @@ resource "kubernetes_deployment_v1" "stalwart" {
             name = "MAIL_ALIAS_ENTRIES"
             value = join(" ", [
               for slug, a in var.mail_aliases :
-              "list-${slug}|${a.name}@${var.additional_domains[a.domain_slug].name}|${base64encode(local.mail_alias_update_lines[slug])}"
+              "list-${slug}|${a.name}@${a.domain}|${base64encode(local.mail_alias_update_lines[slug])}"
             ])
           }
 

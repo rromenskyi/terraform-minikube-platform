@@ -28,9 +28,10 @@ the project itself follows [Semantic Versioning](https://semver.org/).
   mail. Public mail always carries the relay's own EHLO, so an external sender
   can't claim a trusted name.
 - **`mail_aliases` — inbound-forwarding aliases without a dedicated account.**
-  New map variable (default `{}`). Each entry declares
-  `<name>@<additional_domains[domain_slug].name>` and forwards it to one or
-  more `recipients` (local or external addresses), modelled as a Stalwart
+  New map variable (default `{}`). Each entry declares `<name>@<domain>` —
+  `domain` being `primary_domain` or an `additional_domains` entry's name, any
+  other domain fails at plan time — and forwards it to one or more
+  `recipients` (local or external addresses), modelled as a Stalwart
   `MailingList` with real recipients but no subscribers — Stalwart's own
   idiom for a plain alias, so it needs no Sieve script or DATA-stage reload.
   Requires the target domain to already have an MX record pointed at this

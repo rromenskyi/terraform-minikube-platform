@@ -99,10 +99,10 @@ variable "additional_domains" {
 }
 
 variable "mail_aliases" {
-  description = "Inbound-forwarding aliases keyed by a stable slug. Each entry declares `<name>@<additional_domains[domain_slug].name>` and forwards it to `recipients` (one or more existing, deliverable addresses — local or external) without provisioning a dedicated account. Modelled as a Stalwart MailingList with recipients but no real subscribers — Stalwart's own idiom for a plain alias — rather than a Sieve redirect, so it needs no DATA-stage script binding or reload. `domain_slug` must be a key already present in `additional_domains`; that map only creates the Domain + DKIM signing key, so the domain also needs its own MX record (via the generic per-domain `dns:` list in its yaml) pointed at this Stalwart's relay for inbound mail to arrive at all."
+  description = "Inbound-forwarding aliases keyed by a stable slug. Each entry declares `<name>@<domain>` and forwards it to `recipients` (one or more existing, deliverable addresses — local or external) without provisioning a dedicated account. Modelled as a Stalwart MailingList with recipients but no real subscribers — Stalwart's own idiom for a plain alias — rather than a Sieve redirect, so it needs no DATA-stage script binding or reload. `domain` must be a domain this module manages: `primary_domain` or the `name` of an `additional_domains` entry — anything else fails at plan time. An additional domain only gets a Domain + DKIM signing key from this module, so it also needs its own MX record (via the generic per-domain `dns:` list in its yaml) pointed at this Stalwart's relay for inbound mail to arrive at all."
   type = map(object({
     name        = string
-    domain_slug = string
+    domain      = string
     recipients  = list(string)
     description = optional(string, "")
   }))

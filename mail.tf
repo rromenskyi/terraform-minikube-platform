@@ -88,22 +88,22 @@ locals {
   }
 
   # Inbound-forwarding aliases declared by domain yamls (`mail.aliases`).
-  # Only meaningful on a domain that also sets `mail.submission_only:
-  # true` (that's what creates its Stalwart Domain in the first place —
-  # see `_additional_mail_domains` above); silently produces no entries
-  # for any alias declared on a domain that isn't also an additional
-  # mail domain, same fail-safe shape as `_mail_ingest_forwards_raw`
-  # below. Keyed by `<domain-slug>-<alias-name>` for a stable for_each.
+  # Only meaningful on a domain Stalwart hosts: the primary
+  # (`mail.primary: true`) or an additional one (`mail.submission_only:
+  # true`, see `_additional_mail_domains` above); aliases declared on any
+  # other domain yaml produce no entries, same fail-safe shape as
+  # `_mail_ingest_forwards_raw` below. Keyed by `<domain-slug>-<alias-name>`
+  # for a stable for_each.
   _mail_aliases = local.mail == null ? {} : merge([
     for name, cfg in local._domain_configs : {
       for a in try(cfg.mail.aliases, []) :
       "${cfg.slug}-${a.name}" => {
         name        = a.name
-        domain_slug = cfg.slug
+        domain      = cfg.name
         recipients  = a.recipients
         description = try(a.description, "")
       }
-      if try(cfg.mail.submission_only, false)
+      if try(cfg.mail.primary, false) || try(cfg.mail.submission_only, false)
     }
   ]...)
 
