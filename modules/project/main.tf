@@ -33,7 +33,21 @@ locals {
   namespace = var.project_config.namespace       # e.g. "phost-paseka-co-prod"
   domain    = var.project_config.name            # e.g. "paseka.co"
   env       = var.project_config.env             # e.g. "prod"
-  routes    = try(var.project_config.routes, {}) # { "": whoami, www: whoami, api: whoami2 }
+  routes    = try(var.project_config.routes, {}) # { "": web, www: web, api: whoami2, "/api": api }
+
+  # A route key is `<host-prefix>` (the whole host) or
+  # `<host-prefix>/<path>` (only that path subtree of the host):
+  # `"/api"` = <domain>/api/*, `"www/api"` = www.<domain>/api/*. Keys
+  # without a `/` parse exactly as before. The path is normalised to a
+  # leading `/` and no trailing `/`, and is NOT stripped before the
+  # request reaches the workload — the service owns its full URL space.
+  route_entries = [
+    for key, target in local.routes : {
+      component = target
+      host      = split("/", key)[0] == "" ? local.domain : "${split("/", key)[0]}.${local.domain}"
+      path      = strcontains(key, "/") ? trimsuffix("/${join("/", slice(split("/", key), 1, length(split("/", key))))}", "/") : null
+    }
+  ]
 
   # Components to deploy = every distinct value referenced by the routes
   # map. Hostnames and components are decoupled: the same component can
@@ -132,13 +146,20 @@ locals {
   # = apex domain; every other key produces `{prefix}.{domain}`. If two
   # envs of the same domain need distinct hostnames, the operator writes
   # them explicitly (e.g. `whoami.dev: whoami` under `envs.dev.routes`).
+  #
+  # Whole-host routes only; path-scoped routes live in
+  # `path_routes_by_component`, and `hosts_by_component` is the union.
   routes_by_component = {
     for component in local._component_names :
-    component => [
-      for host_prefix, target in local.routes :
-      host_prefix == "" ? local.domain : "${host_prefix}.${local.domain}"
-      if target == component
-    ]
+    component => [for r in local.route_entries : r.host if r.component == component && r.path == null]
+  }
+  path_routes_by_component = {
+    for component in local._component_names :
+    component => [for r in local.route_entries : r if r.component == component && r.path != null]
+  }
+  hosts_by_component = {
+    for component in local._component_names :
+    component => distinct([for r in local.route_entries : r.host if r.component == component])
   }
 
   # IngressRoute `services[]` entries per component.
@@ -183,6 +204,25 @@ locals {
     name => try(c.entry_points, ["web"])
   }
 
+  # Middleware chain per component, shared by its whole-host and its
+  # path-scoped IngressRoute rules. Three sources:
+  #   - `basic_auth: true` (per-component, in-namespace middleware)
+  #   - `auth: zitadel` (cross-namespace forward-auth → oauth2-proxy in
+  #     `ingress-controller`)
+  #   - the platform-wide `errors` middleware that swaps Traefik's default
+  #     `no available server` body for the branded fallback page when a
+  #     backend has zero ready endpoints. Always last so it only fires for
+  #     upstream errors after auth has run.
+  # Order matters — Traefik applies middlewares head-first.
+  ir_middlewares = {
+    for name, _ in local.normalized_components :
+    name => concat(
+      contains(keys(local.basic_auth_components), name) ? [{ name = "${name}-basic-auth" }] : [],
+      contains(keys(local.zitadel_auth_components), name) ? var.oauth2_proxy_middlewares : [],
+      var.fallback_errors_middleware == null ? [] : [var.fallback_errors_middleware],
+    )
+  }
+
   # URL cloudflared forwards this route's requests to.
   #
   # Single uniform target: Traefik's in-cluster Service. Traefik then
@@ -195,6 +235,17 @@ locals {
   component_service_urls = {
     for name, _ in local.normalized_components :
     name => "http://traefik.ingress-controller.svc.cluster.local:80"
+  }
+
+  # Per-component tunnel/DNS attributes for `output.hostnames`.
+  hostname_targets = {
+    for name, c in local.normalized_components :
+    name => {
+      component    = name
+      service      = local.component_service_urls[name]
+      zone_id      = try(var.project_config.cloudflare_zone_id, null)
+      http2_origin = try(c.http2_origin, false)
+    }
   }
 
   # Components that opted into HTTP BasicAuth (set `basic_auth: true` in
@@ -1498,14 +1549,14 @@ module "zitadel_app" {
   # — wire those by hand on a separate dev-mode application in the
   # Zitadel UI when iterating locally.
   redirect_uris = flatten([
-    for host in local.routes_by_component[each.key] : [
+    for host in local.hosts_by_component[each.key] : [
       for path in try(each.value.oidc.redirect_paths, ["/auth/callback/zitadel"]) :
       "https://${host}${path}"
     ]
   ])
 
   post_logout_uris = flatten([
-    for host in local.routes_by_component[each.key] : [
+    for host in local.hosts_by_component[each.key] : [
       for path in try(each.value.oidc.post_logout_paths, ["/"]) :
       "https://${host}${path}"
     ]
@@ -1911,16 +1962,31 @@ resource "kubectl_manifest" "argocd_bootstrap" {
 
 # ── IngressRoutes ─────────────────────────────────────────────────────────────
 #
-# One IngressRoute per component, carrying every route that points at it.
-# Components without any route (`routes_by_component[name]` empty) get no
-# IngressRoute — but the current model has none: a component is deployed
-# only because at least one route targets it, so the list is always
-# non-empty here.
+# One IngressRoute per component, carrying every route that points at it:
+# one rule for all of its whole-host routes, plus one rule per path-scoped
+# route. A component is deployed only because at least one route targets
+# it, so every IngressRoute has at least one rule.
+#
+# Path-scoped rules carry an explicit priority above any whole-host rule
+# (Traefik's default priority is the rule's string length, which proved
+# unreliable for carve-outs — see redirect_domains.tf), and a longer path
+# outranks a shorter one on the same host. `Path || PathPrefix(<p>/)`
+# matches on segment boundaries, so `/api` does not also catch `/apix`.
 
 resource "kubectl_manifest" "ingressroute" {
   for_each = local.routes_by_component
 
   depends_on = [module.component, kubectl_manifest.basic_auth_middleware]
+
+  lifecycle {
+    precondition {
+      condition = alltrue([
+        for r in local.path_routes_by_component[each.key] :
+        can(regex("^(/[A-Za-z0-9._~-]+)+$", r.path))
+      ])
+      error_message = "component '${each.key}' in project '${local.namespace}' has a path-scoped route with an invalid path: ${jsonencode([for r in local.path_routes_by_component[each.key] : r.path])}. Use `<host-prefix>/<segment>[/<segment>...]` route keys (e.g. \"/api\" or \"www/api/v1\") — non-empty segments of [A-Za-z0-9._~-]."
+    }
+  }
 
   yaml_body = yamlencode({
     apiVersion = "traefik.io/v1alpha1"
@@ -1933,36 +1999,27 @@ resource "kubectl_manifest" "ingressroute" {
     spec = merge(
       {
         entryPoints = local.ir_entry_points[each.key]
-        routes = [merge(
-          {
-            match    = join(" || ", [for d in each.value : "Host(`${d}`)"])
-            kind     = "Rule"
-            services = [local.ir_service_refs[each.key]]
-          },
-          # Compose the middleware list from three sources:
-          #   - `basic_auth: true` (per-component, in-namespace middleware)
-          #   - `auth: zitadel` (cross-namespace forward-auth → oauth2-
-          #     proxy in `ingress-controller`)
-          #   - the platform-wide `errors` middleware that swaps
-          #     Traefik's default `no available server` body for the
-          #     branded fallback page when an IngressRoute's backend
-          #     has zero ready endpoints. Always last in the chain so
-          #     it only fires for upstream errors after auth has run.
-          # Order matters — Traefik applies middlewares head-first.
-          length(concat(
-            contains(keys(local.basic_auth_components), each.key) ? [{ name = "${each.key}-basic-auth" }] : [],
-            contains(keys(local.zitadel_auth_components), each.key) ? var.oauth2_proxy_middlewares : [],
-            var.fallback_errors_middleware == null ? [] : [var.fallback_errors_middleware],
-          )) > 0
-          ? {
-            middlewares = concat(
-              contains(keys(local.basic_auth_components), each.key) ? [{ name = "${each.key}-basic-auth" }] : [],
-              contains(keys(local.zitadel_auth_components), each.key) ? var.oauth2_proxy_middlewares : [],
-              var.fallback_errors_middleware == null ? [] : [var.fallback_errors_middleware],
+        routes = concat(
+          length(each.value) > 0 ? [merge(
+            {
+              match    = join(" || ", [for d in each.value : "Host(`${d}`)"])
+              kind     = "Rule"
+              services = [local.ir_service_refs[each.key]]
+            },
+            length(local.ir_middlewares[each.key]) > 0 ? { middlewares = local.ir_middlewares[each.key] } : {},
+          )] : [],
+          [
+            for r in local.path_routes_by_component[each.key] : merge(
+              {
+                match    = "Host(`${r.host}`) && (Path(`${r.path}`) || PathPrefix(`${r.path}/`))"
+                kind     = "Rule"
+                priority = 10000 + length(r.path)
+                services = [local.ir_service_refs[each.key]]
+              },
+              length(local.ir_middlewares[each.key]) > 0 ? { middlewares = local.ir_middlewares[each.key] } : {},
             )
-          }
-          : {}
-        )]
+          ],
+        )
       },
       # `tls` only applies on the `websecure` entrypoint; omitting the
       # block on `web` keeps the CRD valid and avoids Traefik rejecting the

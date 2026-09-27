@@ -18,17 +18,17 @@ output "env" {
 # to the cloudflared route's `origin_request.http2_origin`, which is
 # what flips cloudflared from HTTP/1.1 to HTTP/2 upstream — required
 # end-to-end for any service that exposes gRPC alongside HTTP (Zitadel).
+#
+# A host shared by a whole-host route and path-scoped routes appears
+# once, attributed to the whole-host component (its `http2_origin` wins);
+# a host reached only through path-scoped routes is attributed to one of
+# those. Path routes never mint a hostname of their own. The tunnel
+# always forwards to Traefik, which does the path split.
 output "hostnames" {
-  value = merge([
-    for component, hosts in local.routes_by_component : {
-      for host in hosts : host => {
-        component    = component
-        service      = local.component_service_urls[component]
-        zone_id      = try(var.project_config.cloudflare_zone_id, null)
-        http2_origin = try(local.normalized_components[component].http2_origin, false)
-      }
-    }
-  ]...)
+  value = merge(concat(
+    [for r in local.route_entries : { (r.host) = local.hostname_targets[r.component] } if r.path != null],
+    [for r in local.route_entries : { (r.host) = local.hostname_targets[r.component] } if r.path == null],
+  )...)
 }
 
 output "components" {

@@ -61,7 +61,7 @@ Internet
 
 Every hostname is declared inside `config/domains/<domain>.yaml`. Two flavours:
 
-- **`envs.<env>.routes`** — engine-owned IngressRoute. Map key is the host prefix, value is a component name resolved from `config/components/`. Same component can back multiple hosts; `kind: external` skips the Deployment and routes at a pre-existing Service.
+- **`envs.<env>.routes`** — engine-owned IngressRoute. Map key is the host prefix (optionally `<host-prefix>/<path>` to route just a path subtree), value is a component name resolved from `config/components/`. Same component can back multiple hosts; `kind: external` skips the Deployment and routes at a pre-existing Service.
 - **`envs.<env>.argocd_hostnames`** — chart-owned IngressRoute (the chart lives in a tenant's deploy repo, synced by Argo CD). Engine only plumbs DNS + tunnel ingress rule; the IngressRoute itself ships in the chart. Each entry picks tunnel (`cf_tunnel: true`, default — backend defaults to Traefik) or direct-IP (`cf_tunnel: false` + `node_ip:` — for the MetalLB-announced L4 case).
 
 ### Three-layer stack
@@ -389,6 +389,8 @@ dns:                                          # (Optional) manual DNS records, d
 
 **Hostname generation:** the host prefix from the route map key is used literally. Empty string = apex. No env is injected into the hostname — if two envs of the same domain need distinct URLs, spell out the subdomain in the key (`api.dev: whoami` → `api.dev.example.com`).
 
+**Path-scoped routes:** a key of the form `<host-prefix>/<path>` routes only that path subtree of the host — `"/api": api` sends `example.com/api` and `example.com/api/*` to `api` while `"": web` keeps serving the rest of `example.com`; `"www/api": api` does the same on `www.example.com`. The match is on segment boundaries (`/api` does not catch `/apix`), the prefix is not stripped (the workload sees the full path), and a path rule always outranks a whole-host rule on the same host (longer paths outrank shorter ones). Path routes add no DNS record or tunnel hostname of their own.
+
 **DNS records (`dns:`)** — manual records added on top of the auto-generated CNAMEs that every `routes:` entry produces (each routed hostname → the Cloudflare Tunnel CNAME). Use `dns:` for MX/SPF/DKIM/DMARC, `_sip._udp` SRV records (sipmesh deploy), apex A records when a host has a public WAN IP for non-HTTP traffic, third-party verification TXT, and so on. Domain-scoped, not env-scoped — these describe the zone, not a per-env routing decision. Supported fields: `name`, `type`, `content` OR `data` (SRV/CAA/LOC use the structured `data` block), `ttl` (default 1 = "Auto" on CF Free), `proxied` (only meaningful for A/AAAA/CNAME), `priority` (for MX), `comment`. The `for_each` key is content-hashed so re-ordering the YAML list does not churn the plan; editing a record's content rotates that one key (CF requires delete+create for value changes anyway). See `config/domains/example.com.yaml.example` for worked examples covering mail, SIP SRV, apex A, and verification TXT.
 
 **Decoupled routes + components:** a component is deployed iff at least one route targets it. The same component can back multiple hosts (bare + `www`); different hosts can back different components (api → `whoami2`, bare → `whoami`).
@@ -636,6 +638,8 @@ envs:
 Mode 3 (`vault: true`) is the default for new work. The engine emits a `VaultStaticSecret` CR pointing at the convention path; VSO syncs whatever's at that Vault path into a k8s Secret with the same name in the project namespace. Operator declares the entry in yaml; tenant uploads values to Vault via UI / CLI through the `tenant_<slug>` Zitadel role grant.
 
 ### Argo CD repo deploy keys
+
+End-to-end walkthrough for shipping an Argo CD-managed app (repo layout, chart, CI, platform yaml, rollout): [`docs/deploying-an-app.md`](docs/deploying-an-app.md).
 
 Each `argocd_bootstraps:` entry picks ONE credential mode (engine fails the plan-time check if both modes are set, or app-mode is missing the ID fields).
 

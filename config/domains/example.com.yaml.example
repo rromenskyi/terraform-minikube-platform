@@ -136,11 +136,17 @@ cloudflare_zone_id: "your-zone-id-from-cf"     # Cloudflare Zone ID for this dom
 # "" collapsing to the apex. The env name is NOT injected into the
 # hostname — if two envs need distinct URLs, spell out the subdomain
 # in the key (e.g. `api.dev: whoami` → api.dev.example.com).
+#
+# A key of the form "{host_prefix}/{path}" routes only that path
+# subtree of the host, on segment boundaries and without stripping the
+# prefix; it always outranks the whole-host route on the same host and
+# adds no DNS record of its own (e.g. "/api" below).
 envs:
   prod:
     routes:
       "":    web          # example.com              → web
       www:   web          # www.example.com          → web
+      "/api": my-app      # example.com/api, /api/*  → my-app (rest of example.com stays on web)
       api:   whoami       # api.example.com          → whoami
       debug: echo         # debug.example.com        → echo
       # First-party app — inline `kind: app` definition right here,

@@ -23,6 +23,18 @@ the project itself follows [Semantic Versioning](https://semver.org/).
   object-cache drop-in to selective SCAN+UNLINK-by-prefix flush.
 
 ### Added
+- **Path-scoped routes.** A route key may now be `<host-prefix>/<path>`:
+  `"/api": api` routes `<domain>/api` and `<domain>/api/*` to `api`,
+  `"www/api/v1": api` does the same for `www.<domain>/api/v1`. The
+  component's IngressRoute gains one rule per path —
+  `Host(h) && (Path(p) || PathPrefix(p/))`, segment-boundary match, no
+  prefix stripping — with an explicit priority (`10000 + len(path)`) so a
+  path always wins over a whole-host route on the same host and a longer
+  path over a shorter one. Path routes never create a hostname of their
+  own: `output.hostnames` lists the host once, attributed to its
+  whole-host component. Invalid paths fail at plan time (IngressRoute
+  precondition). Keys without a `/` behave exactly as before — existing
+  projects plan with no changes.
 - **`gcp_wif_service_accounts` — standalone WIF SA + credential-config for
   chart-managed workloads.** Per-env map of k8s SA name →
   `{ gcp_service_account }`. Engine emits a bare `ServiceAccount` plus a
