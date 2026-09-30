@@ -23,6 +23,11 @@ the project itself follows [Semantic Versioning](https://semver.org/).
   object-cache drop-in to selective SCAN+UNLINK-by-prefix flush.
 
 ### Added
+- **`fallback_errors: false` per component.** Drops the platform-wide
+  fallback-error middleware from that component's IngressRoute rules, so
+  its own 502/503/504 bodies reach the client instead of the branded HTML
+  page. Meant for APIs whose clients parse error bodies. Default `true`
+  keeps today's behaviour.
 - **Path-scoped routes.** A route key may now be `<host-prefix>/<path>`:
   `"/api": api` routes `<domain>/api` and `<domain>/api/*` to `api`,
   `"www/api/v1": api` does the same for `www.<domain>/api/v1`. The

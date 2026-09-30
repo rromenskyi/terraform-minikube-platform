@@ -226,9 +226,11 @@ in the `CF-Connecting-IP` header; the socket peer is the in-cluster proxy.
 Use that header for rate limiting or logging, and do not expose the Service
 any other way, or the header can be forged.
 
-The platform's fallback-error middleware replaces only 502/503/504
-responses with a branded page. Other status codes and bodies reach the
-client untouched.
+The platform's fallback-error middleware replaces 502/503/504 responses
+with a branded HTML page; other status codes and bodies reach the client
+untouched. For an API whose clients parse error bodies, set
+`fallback_errors: false` on its component so its own 502/503/504 bodies
+pass through too.
 
 ### Sending mail from the app (optional)
 

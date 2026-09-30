@@ -212,14 +212,16 @@ locals {
   #   - the platform-wide `errors` middleware that swaps Traefik's default
   #     `no available server` body for the branded fallback page when a
   #     backend has zero ready endpoints. Always last so it only fires for
-  #     upstream errors after auth has run.
+  #     upstream errors after auth has run. `fallback_errors: false` on a
+  #     component drops it — for APIs whose clients expect the upstream's
+  #     own 502/503/504 body (JSON), not an HTML page.
   # Order matters — Traefik applies middlewares head-first.
   ir_middlewares = {
-    for name, _ in local.normalized_components :
+    for name, c in local.normalized_components :
     name => concat(
       contains(keys(local.basic_auth_components), name) ? [{ name = "${name}-basic-auth" }] : [],
       contains(keys(local.zitadel_auth_components), name) ? var.oauth2_proxy_middlewares : [],
-      var.fallback_errors_middleware == null ? [] : [var.fallback_errors_middleware],
+      var.fallback_errors_middleware == null || !try(c.fallback_errors, true) ? [] : [var.fallback_errors_middleware],
     )
   }
 

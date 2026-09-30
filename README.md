@@ -540,6 +540,11 @@ service:
 # Optional BasicAuth gate at the ingress level
 basic_auth: true
 
+# Keep the upstream's own 502/503/504 bodies instead of the branded
+# fallback page (default true). Set false for APIs whose clients parse
+# error bodies, e.g. JSON.
+# fallback_errors: false
+
 # Optional IR-side service override for Traefik-internal services like api@internal
 # ingress_service:
 #   kind: TraefikService
