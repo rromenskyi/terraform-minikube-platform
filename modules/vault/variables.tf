@@ -159,7 +159,7 @@ variable "vso_enabled" {
 variable "vso_chart_version" {
   description = "Chart version for hashicorp/vault-secrets-operator. Pinned so apply-time is deterministic; bump deliberately."
   type        = string
-  default     = "0.10.0"
+  default     = "1.6.0"
 }
 
 variable "vso_namespace" {
