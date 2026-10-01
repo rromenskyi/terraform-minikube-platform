@@ -212,10 +212,17 @@ resource "kubernetes_deployment_v1" "zitadel" {
       match_labels = { app = "zitadel" }
     }
 
-    # Recreate strategy — the binary owns the schema and we don't want
-    # two versions racing migrations against the same DB.
+    # Rolling, one new pod at a time and never below one ready pod, so
+    # sign-in stays up during upgrades. Only the new pod runs setup
+    # (`start-from-init`); the old one keeps serving until the new one is
+    # ready, as in Zitadel's own Helm chart. Recreate took sign-in down
+    # for the whole rollout.
     strategy {
-      type = "Recreate"
+      type = "RollingUpdate"
+      rolling_update {
+        max_surge       = "1"
+        max_unavailable = "0"
+      }
     }
 
     template {
