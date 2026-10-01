@@ -630,7 +630,7 @@ resource "kubernetes_cron_job_v1" "vault" {
 
             container {
               name  = "snapshot"
-              image = "hashicorp/vault:1.18.4"
+              image = "hashicorp/vault:2.1.1"
 
               env_from {
                 secret_ref {

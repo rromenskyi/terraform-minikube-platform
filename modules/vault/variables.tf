@@ -25,7 +25,7 @@ variable "hostname" {
 variable "image" {
   description = "Vault container image. Pin a specific tag — `:latest` would silently pull schema changes between restarts. `hashicorp/vault` is the upstream repo (community edition)."
   type        = string
-  default     = "hashicorp/vault:1.18.4"
+  default     = "hashicorp/vault:2.1.1"
 }
 
 variable "volume_base_path" {
