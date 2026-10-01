@@ -184,9 +184,11 @@ resource "kubernetes_deployment_v1" "oauth2_proxy" {
             name  = "INSECURE_COOKIE"
             value = "false"
           }
+          # info, not debug: at debug the service dumps its whole config on
+          # startup, which older images printed with the client secret.
           env {
             name  = "LOG_LEVEL"
-            value = "debug"
+            value = "info"
           }
           # Allow any email — auth controlled by Zitadel-side roles
           # (operator can layer that in later via Zitadel's user mgmt).

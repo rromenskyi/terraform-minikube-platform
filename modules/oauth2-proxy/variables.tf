@@ -17,9 +17,9 @@ variable "namespace" {
 }
 
 variable "image" {
-  description = "Container image. Pinned tag so the OIDC config schema doesn't shift between restarts."
+  description = "Container image. Pinned by digest so the OIDC config schema doesn't shift between restarts. Default: the maintained fork of thomseddon/traefik-forward-auth (upstream no longer publishes images); same configuration and behaviour."
   type        = string
-  default     = "thomseddon/traefik-forward-auth:2.2.0"
+  default     = "ghcr.io/rromenskyi/traefik-forward-auth:2.4.1@sha256:2c1b5ed718858ea923d489ded6eafb7dba820a4fb243f36c329b63fb2b8b4d15"
 }
 
 variable "issuer_url" {
