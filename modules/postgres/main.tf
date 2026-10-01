@@ -171,7 +171,7 @@ resource "kubernetes_stateful_set_v1" "postgres" {
             limits   = { cpu = "50m", memory = "32Mi" }
           }
 
-          command = ["sh", "-c", "mkdir -p /var/lib/postgresql/data/pgdata && chown -R 999:999 /var/lib/postgresql/data"]
+          command = ["sh", "-c", "mkdir -p /var/lib/postgresql/data/pgdata18 && chown -R 999:999 /var/lib/postgresql/data"]
 
           volume_mount {
             name       = "data"
@@ -186,7 +186,7 @@ resource "kubernetes_stateful_set_v1" "postgres" {
 
         container {
           name  = "postgres"
-          image = "postgres:16-alpine"
+          image = "postgres:18.6-alpine"
 
           # Override the image's default `CMD ["postgres"]` to inject
           # `shared_preload_libraries=pg_stat_statements`. The
@@ -214,7 +214,7 @@ resource "kubernetes_stateful_set_v1" "postgres" {
 
           env {
             name  = "PGDATA"
-            value = "/var/lib/postgresql/data/pgdata"
+            value = "/var/lib/postgresql/data/pgdata18"
           }
 
           resources {
@@ -320,7 +320,7 @@ resource "kubernetes_job_v1" "pg_extensions" {
 
         container {
           name  = "psql"
-          image = "postgres:16-alpine"
+          image = "postgres:18.6-alpine"
 
           # `psql` reads `PGPASSWORD`, not `POSTGRES_PASSWORD` (which is
           # what the Postgres image's docker-entrypoint.sh consumes).
