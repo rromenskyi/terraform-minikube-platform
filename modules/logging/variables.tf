@@ -19,13 +19,13 @@ variable "namespace" {
 variable "victorialogs_image" {
   description = "VictoriaLogs container image. Single static binary; HTTP ingest + query API on :9428, data on a local path."
   type        = string
-  default     = "victoriametrics/victoria-logs:v1.51.0"
+  default     = "victoriametrics/victoria-logs:v1.52.0"
 }
 
 variable "vector_image" {
   description = "Vector collector image (the DaemonSet agent that tails every node's container logs and ships them to VictoriaLogs)."
   type        = string
-  default     = "timberio/vector:0.43.1-distroless-static"
+  default     = "timberio/vector:0.58.0-distroless-static"
 }
 
 variable "retention_period" {
@@ -113,7 +113,7 @@ variable "smtp_hello" {
 variable "vmalert_image" {
   description = "vmalert container image (VictoriaMetrics' alerting evaluator). Runs the LogsQL rule groups against VictoriaLogs and fires to Alertmanager."
   type        = string
-  default     = "victoriametrics/vmalert:v1.106.0"
+  default     = "victoriametrics/vmalert:v1.153.0"
 }
 
 variable "alertmanager_url" {
