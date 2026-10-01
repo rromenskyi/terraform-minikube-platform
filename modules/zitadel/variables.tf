@@ -19,7 +19,7 @@ variable "namespace" {
 variable "image" {
   description = "Zitadel main container image. v4 dropped the embedded Angular login form — the login UI now lives in the separate Next.js sidecar (`login_image`). Together with the FirstInstance machine-user PAT we bootstrap to disk, the chicken-and-egg of provisioning login-v2's service account vanishes."
   type        = string
-  default     = "ghcr.io/zitadel/zitadel:v4.14.0"
+  default     = "ghcr.io/zitadel/zitadel:v4.19.3"
 }
 
 variable "login_image" {
