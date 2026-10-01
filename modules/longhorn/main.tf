@@ -116,16 +116,25 @@ locals {
         # / package issues (`open-iscsi`, `nfs-common`) up front
         # rather than during the first volume mount.
         guaranteedInstanceManagerCPU = 12
+        # Upgrade volume engines automatically, one volume per node at a
+        # time, after a Longhorn upgrade. With 0 (manual) every engine
+        # stays on the old image, and a multi-step upgrade can leave
+        # engines older than the new manager supports.
+        concurrentAutomaticEngineUpgradePerNodeLimit = 1
         # Tolerations for dynamic Longhorn-managed pods (instance-
         # managers, share-managers, system-managed jobs). Same
         # taints as chart-level components — keep them in sync.
         taintToleration = local.taint_toleration_setting
       },
-      local.backup_configured ? {
-        backupTarget                 = local.backup_target_url
-        backupTargetCredentialSecret = "longhorn-backup-credentials"
-      } : {}
     )
+    # Longhorn 1.8+ keeps backup targets as BackupTarget objects and the
+    # chart configures the default one here; the former
+    # `defaultSettings.backupTarget` is ignored, which left the target
+    # empty and no volume ever backed up.
+    defaultBackupStore = local.backup_configured ? {
+      backupTarget                 = local.backup_target_url
+      backupTargetCredentialSecret = "longhorn-backup-credentials"
+    } : {}
   })
 }
 
