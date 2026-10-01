@@ -93,3 +93,10 @@ variable "trivy_operator_crds" {
   type        = list(string)
   default     = []
 }
+
+variable "node_selector" {
+  description = "Node selector for the trivy-operator Deployment and its scan Jobs. Scan Jobs pull every scanned image and the vulnerability DB, so a node with fast egress keeps scans short. Empty (default) lets the scheduler pick."
+  type        = map(string)
+  default     = {}
+}
+

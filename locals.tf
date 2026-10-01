@@ -180,6 +180,7 @@ locals {
         enabled                      = false
         trivy_operator_chart_version = "0.36.0"
         cache_node_hostname          = "roman-romenskyi-optiplex-7060"
+        node_selector                = {}
         trivy_cache_size             = "5Gi"
         service_monitor_enabled      = false
         snapshot_schedule            = "0 4 * * 0"

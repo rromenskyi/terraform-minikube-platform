@@ -14,6 +14,7 @@ module "security_scan" {
   enabled                      = local.platform.services.security_scan.enabled
   trivy_operator_chart_version = local.platform.services.security_scan.trivy_operator_chart_version
   trivy_operator_crds          = try(data.helm_template.trivy_operator_crds["enabled"].crds, [])
+  node_selector                = local.platform.services.security_scan.node_selector
   cache_node_hostname          = local.platform.services.security_scan.cache_node_hostname
   host_volume_path             = var.host_volume_path
   trivy_cache_size             = local.platform.services.security_scan.trivy_cache_size

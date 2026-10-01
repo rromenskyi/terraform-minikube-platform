@@ -255,6 +255,14 @@ resource "helm_release" "trivy_operator" {
     serviceMonitor = {
       enabled = var.service_monitor_enabled
     }
+
+    # Operator and scan jobs on the same nodes: the jobs pull every
+    # scanned image and the vulnerability DB, so place them where egress
+    # is fastest.
+    nodeSelector = var.node_selector
+    trivyOperator = {
+      scanJobNodeSelector = var.node_selector
+    }
   })]
 }
 
