@@ -91,6 +91,11 @@ variable "sentinel" {
     sentinel_image_tag  = optional(string, "latest")
     haproxy_image       = optional(string, "haproxytech/haproxy-alpine:3.0")
     haproxy_replicas    = optional(number, 2)
+    # Nodes whose Valkey pod may hold a copy and vote in the Sentinel
+    # quorum but must never be promoted to primary (`replica-priority 0`),
+    # e.g. a WAN-distant node used only as the quorum tie-breaker. HAProxy
+    # stays off these nodes too, so clients never take the WAN hop.
+    no_primary_nodes = optional(list(string), [])
   })
   default = {}
 }

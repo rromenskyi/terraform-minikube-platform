@@ -446,6 +446,15 @@ resource "helm_release" "valkey_sentinel" {
       # block REPLACES it wholesale (the chart's render path
       # resolves a single `affinity:` field, no merge).
       affinity = var.affinity
+      # `no_primary_nodes`: the chart has no per-pod config, so the pod
+      # learns its node from the downward API and, on a listed node, adds
+      # `--replica-priority 0` to the server args. `preExecCmds` runs inside
+      # start-node.sh right before `exec valkey-server "${ARGS[@]}"`.
+      extraEnvVars = length(var.sentinel.no_primary_nodes) == 0 ? [] : [{
+        name      = "NODE_NAME"
+        valueFrom = { fieldRef = { fieldPath = "spec.nodeName" } }
+      }]
+      preExecCmds = length(var.sentinel.no_primary_nodes) == 0 ? "" : "case \" ${join(" ", var.sentinel.no_primary_nodes)} \" in *\" $NODE_NAME \"*) ARGS+=(\"--replica-priority\" \"0\");; esac"
     }
   })]
 }
@@ -559,6 +568,32 @@ resource "kubernetes_deployment_v1" "haproxy" {
         }
 
         affinity {
+          dynamic "node_affinity" {
+            for_each = length(var.sentinel.no_primary_nodes) > 0 ? ["enabled"] : []
+            content {
+              required_during_scheduling_ignored_during_execution {
+                node_selector_term {
+                  match_expressions {
+                    key      = "kubernetes.io/hostname"
+                    operator = "NotIn"
+                    values   = var.sentinel.no_primary_nodes
+                  }
+                }
+              }
+            }
+          }
+          # Run next to a Valkey pod, so HAProxy sits wherever the operator's
+          # placement put the data and never on an unrelated (possibly
+          # WAN-distant) node; the node_affinity above then drops the
+          # no-primary nodes from that set.
+          pod_affinity {
+            required_during_scheduling_ignored_during_execution {
+              topology_key = "kubernetes.io/hostname"
+              label_selector {
+                match_labels = { "app.kubernetes.io/name" = "valkey", "app.kubernetes.io/component" = "node" }
+              }
+            }
+          }
           pod_anti_affinity {
             preferred_during_scheduling_ignored_during_execution {
               weight = 100
