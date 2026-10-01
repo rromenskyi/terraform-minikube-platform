@@ -154,7 +154,7 @@ resource "kubernetes_stateful_set_v1" "mysql" {
 
         container {
           name  = "mysql"
-          image = "mysql:8.0"
+          image = "mysql:8.4.11"
 
           port {
             container_port = 3306

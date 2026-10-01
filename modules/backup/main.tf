@@ -892,6 +892,12 @@ resource "kubernetes_cron_job_v1" "prune" {
               args = [<<-EOT
                 set -e
                 apk add --no-cache restic >/dev/null
+                # A backup pod killed mid-run leaves its lock behind; prune
+                # needs an exclusive lock and fails on it forever (stuck
+                # from 2026-06-13 until this was added). `unlock` removes
+                # only stale locks, never those of a running process.
+                echo "[prune] unlock stale locks"
+                restic unlock
                 echo "[prune] forget --keep-daily=$KEEP_DAILY --keep-weekly=$KEEP_WEEKLY --keep-monthly=$KEEP_MONTHLY"
                 restic forget --group-by host,tags --keep-daily "$KEEP_DAILY" \
                   --keep-weekly "$KEEP_WEEKLY" --keep-monthly "$KEEP_MONTHLY" --prune
