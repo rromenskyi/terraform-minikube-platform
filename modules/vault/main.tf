@@ -1024,10 +1024,41 @@ resource "kubernetes_namespace_v1" "vault_config_operator" {
   }
 }
 
+# Helm installs a chart's `crds/` only on first install and never
+# upgrades them, so a vco chart bump alone would leave the operator on
+# stale CRDs. Render them from the same chart version and server-side
+# apply them, so they always match the chart.
+data "helm_template" "vault_config_operator_crds" {
+  for_each = local.instances
+
+  name         = "vault-config-operator"
+  namespace    = var.vault_config_operator_namespace
+  repository   = "https://redhat-cop.github.io/vault-config-operator"
+  chart        = "vault-config-operator"
+  version      = var.vault_config_operator_chart_version
+  include_crds = true
+}
+
+resource "kubectl_manifest" "vault_config_operator_crds" {
+  for_each = {
+    for doc in try(data.helm_template.vault_config_operator_crds["enabled"].crds, []) :
+    yamldecode(doc).metadata.name => doc
+  }
+
+  yaml_body         = each.value
+  server_side_apply = true
+  # The chart created them client-side on first install; take over the
+  # fields it set.
+  force_conflicts = true
+}
+
 resource "helm_release" "vault_config_operator" {
   for_each = local.instances
 
-  depends_on = [kubernetes_namespace_v1.vault_config_operator]
+  depends_on = [
+    kubernetes_namespace_v1.vault_config_operator,
+    kubectl_manifest.vault_config_operator_crds,
+  ]
 
   name       = "vault-config-operator"
   repository = "https://redhat-cop.github.io/vault-config-operator"

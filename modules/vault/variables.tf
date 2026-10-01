@@ -87,7 +87,7 @@ variable "vault_config_operator_service_account" {
 variable "vault_config_operator_chart_version" {
   description = "Chart version for the vault-config-operator Helm release. Pinned so apply-at-time is deterministic; bump deliberately."
   type        = string
-  default     = "0.8.48"
+  default     = "1.0.3"
 }
 
 # -----------------------------------------------------------------------------
