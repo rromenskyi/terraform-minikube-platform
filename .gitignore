@@ -61,3 +61,7 @@ config/.scrub-list
 # syntax checks against scripts/*.py, never meant to be tracked.
 __pycache__/
 *.pyc
+
+# Operator branding assets (login page logo/icon), referenced from
+# config/platform.yaml services.zitadel.branding
+config/branding/

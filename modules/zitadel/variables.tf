@@ -25,7 +25,7 @@ variable "image" {
 variable "login_image" {
   description = "Zitadel Login UI v2 sidecar image. Pinned to the last tagged release — the rolling `:main` tag has been observed to ship a SPA race that double-submits `createCallback` and trips `Auth Request has already been handled (COMMAND-Sx208nt)` on every OIDC flow, breaking forward-auth-style gates. The wait-for-token-file behaviour we used to need from `:main` is now done in this module's own container `command` override, so the tagged release is fine."
   type        = string
-  default     = "ghcr.io/zitadel/login:v3.0.1"
+  default     = "ghcr.io/zitadel/zitadel-login:v4.19.3"
 }
 
 variable "postgres_host" {

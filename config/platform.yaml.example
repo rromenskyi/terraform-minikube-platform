@@ -523,6 +523,15 @@ services:
     # retention_keep_monthly: 6
 
   zitadel:
+    # Optional login page branding (zitadel_branding.tf): logo / icon
+    # paths relative to the repo root (keep them in gitignored
+    # config/branding/), colours as hex, theme_mode THEME_MODE_AUTO|LIGHT|DARK.
+    # branding:
+    #   logo: config/branding/logo-light.png
+    #   logo_dark: config/branding/logo-dark.png
+    #   icon: config/branding/icon.png
+    #   primary_color: "#4f46e5"
+    #   primary_color_dark: "#a5b4fc"
     enabled: false
     # Public hostname Zitadel issues OIDC tokens for. Must equal the
     # route you wired in `config/domains/<your-domain>.yaml`. Changing
