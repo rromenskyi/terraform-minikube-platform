@@ -176,7 +176,7 @@ locals {
       }
       security_scan = {
         enabled                      = false
-        trivy_operator_chart_version = "0.30.0"
+        trivy_operator_chart_version = "0.36.0"
         cache_node_hostname          = "roman-romenskyi-optiplex-7060"
         trivy_cache_size             = "5Gi"
         service_monitor_enabled      = false

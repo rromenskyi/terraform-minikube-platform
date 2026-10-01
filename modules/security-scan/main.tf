@@ -179,12 +179,41 @@ resource "kubernetes_persistent_volume_claim_v1" "trivy_cache" {
 
 # ── Trivy-Operator: Helm release ───────────────────────────────────────────
 
+# Helm installs a chart's `crds/` only on first install and never
+# upgrades them, so a chart bump alone leaves the operator running
+# against stale CRDs. Render the CRDs from the same chart version and
+# server-side apply them, so they always match the chart.
+data "helm_template" "trivy_operator_crds" {
+  for_each = local.instances
+
+  name         = "trivy-operator"
+  namespace    = var.namespace
+  repository   = "https://aquasecurity.github.io/helm-charts/"
+  chart        = "trivy-operator"
+  version      = var.trivy_operator_chart_version
+  include_crds = true
+}
+
+resource "kubectl_manifest" "trivy_operator_crds" {
+  for_each = {
+    for doc in try(data.helm_template.trivy_operator_crds["enabled"].crds, []) :
+    yamldecode(doc).metadata.name => doc
+  }
+
+  yaml_body         = each.value
+  server_side_apply = true
+  # The chart created them client-side on first install; take over the
+  # fields it set.
+  force_conflicts = true
+}
+
 resource "helm_release" "trivy_operator" {
   for_each = local.instances
 
   depends_on = [
     kubernetes_namespace_v1.this,
     kubernetes_persistent_volume_claim_v1.trivy_cache,
+    kubectl_manifest.trivy_operator_crds,
   ]
 
   name             = "trivy-operator"

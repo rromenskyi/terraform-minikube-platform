@@ -19,7 +19,7 @@ variable "namespace" {
 variable "trivy_operator_chart_version" {
   description = "Version of the upstream `trivy-operator` Helm chart (https://github.com/aquasecurity/trivy-operator). Pin to a known-good release; bump deliberately when upstream cuts a security fix or major version. Chart repo: https://aquasecurity.github.io/helm-charts/ ."
   type        = string
-  default     = "0.30.0"
+  default     = "0.36.0"
 }
 
 variable "host_volume_path" {
