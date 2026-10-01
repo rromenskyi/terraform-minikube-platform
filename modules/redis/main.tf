@@ -353,9 +353,12 @@ resource "helm_release" "valkey_sentinel" {
   name       = "redis"
   repository = "https://charts.bitnami.com/bitnami"
   chart      = "valkey"
-  version    = var.sentinel.chart_version
-  namespace  = var.namespace
-  timeout    = 900
+  # Helm keeps one Secret per revision; each holds the full rendered
+  # manifest, so unbounded history slowly fills etcd.
+  max_history = 3
+  version     = var.sentinel.chart_version
+  namespace   = var.namespace
+  timeout     = 900
   # Don't block apply on pod readiness. Sentinel cluster bring-up
   # converges on its own once pods schedule (StatefulSet, sidecar
   # quorum gossip); kubelet probes can flap on network-saturated

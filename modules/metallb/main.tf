@@ -83,9 +83,12 @@ resource "kubernetes_namespace_v1" "metallb" {
 resource "helm_release" "metallb" {
   for_each = local.instances
 
-  name             = "metallb"
-  repository       = "https://metallb.github.io/metallb"
-  chart            = "metallb"
+  name       = "metallb"
+  repository = "https://metallb.github.io/metallb"
+  chart      = "metallb"
+  # Helm keeps one Secret per revision; each holds the full rendered
+  # manifest, so unbounded history slowly fills etcd.
+  max_history      = 3
   version          = var.version_pin
   namespace        = kubernetes_namespace_v1.metallb["enabled"].metadata[0].name
   create_namespace = false

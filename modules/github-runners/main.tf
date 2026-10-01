@@ -128,9 +128,12 @@ resource "helm_release" "controller" {
 
   depends_on = [kubectl_manifest.controller_crds]
 
-  name             = "arc-controller"
-  repository       = "oci://ghcr.io/actions/actions-runner-controller-charts"
-  chart            = "gha-runner-scale-set-controller"
+  name       = "arc-controller"
+  repository = "oci://ghcr.io/actions/actions-runner-controller-charts"
+  chart      = "gha-runner-scale-set-controller"
+  # Helm keeps one Secret per revision; each holds the full rendered
+  # manifest, so unbounded history slowly fills etcd.
+  max_history      = 3
   version          = var.controller_chart_version
   namespace        = kubernetes_namespace_v1.controller["enabled"].metadata[0].name
   create_namespace = false
@@ -329,9 +332,12 @@ resource "helm_release" "scale_set" {
     }
   }
 
-  name             = each.key
-  repository       = "oci://ghcr.io/actions/actions-runner-controller-charts"
-  chart            = "gha-runner-scale-set"
+  name       = each.key
+  repository = "oci://ghcr.io/actions/actions-runner-controller-charts"
+  chart      = "gha-runner-scale-set"
+  # Helm keeps one Secret per revision; each holds the full rendered
+  # manifest, so unbounded history slowly fills etcd.
+  max_history      = 3
   version          = var.scale_set_chart_version
   namespace        = each.value.namespace
   create_namespace = false

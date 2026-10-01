@@ -201,9 +201,12 @@ resource "helm_release" "trivy_operator" {
     kubectl_manifest.trivy_operator_crds,
   ]
 
-  name             = "trivy-operator"
-  repository       = "https://aquasecurity.github.io/helm-charts/"
-  chart            = "trivy-operator"
+  name       = "trivy-operator"
+  repository = "https://aquasecurity.github.io/helm-charts/"
+  chart      = "trivy-operator"
+  # Helm keeps one Secret per revision; each holds the full rendered
+  # manifest, so unbounded history slowly fills etcd.
+  max_history      = 3
   version          = var.trivy_operator_chart_version
   namespace        = kubernetes_namespace_v1.this["enabled"].metadata[0].name
   create_namespace = false
@@ -225,6 +228,11 @@ resource "helm_release" "trivy_operator" {
       exposedSecretScannerEnabled                  = false
       vulnerabilityScannerScanOnlyCurrentRevisions = true
       scanJobTimeout                               = "5m"
+      # SBOM reports are the biggest objects the operator writes (a full
+      # package list per image, ~0.5 MB each) and nothing here reads them;
+      # they also outlive their workloads. Off keeps etcd from swelling.
+      # The vulnerability scanner works without them.
+      sbomGenerationEnabled = false
     }
 
     trivy = {

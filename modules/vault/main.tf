@@ -1048,8 +1048,11 @@ resource "helm_release" "vault_config_operator" {
   name       = "vault-config-operator"
   repository = "https://redhat-cop.github.io/vault-config-operator"
   chart      = "vault-config-operator"
-  version    = var.vault_config_operator_chart_version
-  namespace  = kubernetes_namespace_v1.vault_config_operator["enabled"].metadata[0].name
+  # Helm keeps one Secret per revision; each holds the full rendered
+  # manifest, so unbounded history slowly fills etcd.
+  max_history = 3
+  version     = var.vault_config_operator_chart_version
+  namespace   = kubernetes_namespace_v1.vault_config_operator["enabled"].metadata[0].name
 
   values = [yamlencode({
     # Default vault address vco uses for all CR reconcile calls.
@@ -1487,8 +1490,11 @@ resource "helm_release" "vso" {
   name       = "vault-secrets-operator"
   repository = "https://helm.releases.hashicorp.com"
   chart      = "vault-secrets-operator"
-  version    = var.vso_chart_version
-  namespace  = kubernetes_namespace_v1.vso["enabled"].metadata[0].name
+  # Helm keeps one Secret per revision; each holds the full rendered
+  # manifest, so unbounded history slowly fills etcd.
+  max_history = 3
+  version     = var.vso_chart_version
+  namespace   = kubernetes_namespace_v1.vso["enabled"].metadata[0].name
 
   values = [yamlencode({
     # Default cluster-level VaultConnection + VaultAuth — every

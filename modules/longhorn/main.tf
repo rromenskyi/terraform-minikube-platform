@@ -181,9 +181,12 @@ resource "kubernetes_secret_v1" "backup_credentials" {
 resource "helm_release" "longhorn" {
   for_each = local.instances
 
-  name             = "longhorn"
-  repository       = "https://charts.longhorn.io"
-  chart            = "longhorn"
+  name       = "longhorn"
+  repository = "https://charts.longhorn.io"
+  chart      = "longhorn"
+  # Helm keeps one Secret per revision; each holds the full rendered
+  # manifest, so unbounded history slowly fills etcd.
+  max_history      = 3
   version          = var.version_pin
   namespace        = var.namespace
   create_namespace = true

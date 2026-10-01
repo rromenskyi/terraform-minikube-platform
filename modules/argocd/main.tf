@@ -206,8 +206,11 @@ resource "helm_release" "argocd" {
   name       = "argocd"
   repository = "https://argoproj.github.io/argo-helm"
   chart      = "argo-cd"
-  version    = var.version_pin
-  namespace  = var.namespace
+  # Helm keeps one Secret per revision; each holds the full rendered
+  # manifest, so unbounded history slowly fills etcd.
+  max_history = 3
+  version     = var.version_pin
+  namespace   = var.namespace
   # Namespace owned by the caller — the OIDC Secret rendered by
   # `module.argocd_oidc` lands in the same namespace and needs it
   # to exist before the chart upgrade hook fires.
