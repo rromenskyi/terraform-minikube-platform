@@ -716,7 +716,7 @@ services:
     # k8s Secret automatically.
     #
     # trivy_operator_chart_version: 0.30.0           # upstream chart version pin
-    # cache_node_hostname: roman-romenskyi-optiplex-7060   # hostPath PV pinned here
+    # cache_node_hostname: <node-hostname>   # hostPath PV pinned here
     # trivy_cache_size: 5Gi                          # vuln DB ~700 MB; 5Gi gives headroom
     # service_monitor_enabled: false                 # set true if kube-prometheus-stack is installed
     # snapshot_schedule: "0 4 * * 0"                 # default: Sunday 04:00 UTC

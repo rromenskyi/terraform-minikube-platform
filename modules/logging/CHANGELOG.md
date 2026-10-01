@@ -40,7 +40,7 @@ the project itself follows [Semantic Versioning](https://semver.org/).
   Notes: alerts carry an `alert_source=log` label and the route matches it, so
   the receiver gets ONLY log alerts (not the built-in metric alerts that also
   carry `namespace=monitoring`); the email `hello` (EHLO) is a real FQDN
-  (`alertmanager.ipsupport.us`) because Stalwart rejects the pod hostname with
+  (e.g. `alertmanager.example.com`) because Stalwart rejects the pod hostname with
   `550 Invalid EHLO domain`; `requireTLS=false` for the in-cluster hop. Empty
   `alert_email` deploys none of this (store + collector only). Verified e2e: a
   panic log line → vmalert fires → email delivered to the mailbox.

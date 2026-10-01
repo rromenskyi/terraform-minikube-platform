@@ -99,7 +99,7 @@ module "addons" {
   # Cloudflare DNS-01 ACME solver. Required for hosts whose Certificate
   # cannot satisfy HTTP-01 — direct LB endpoints with no port-80 listener
   # (UDP/raw-TCP services bound to a MetalLB VIP, e.g. SIP-over-WSS at
-  # `sipdev.ipsupport.us`). HTTP-01 stays the default for every host
+  # `sip.example.com`). HTTP-01 stays the default for every host
   # outside the listed zones (sipmeshd, sfdev, sipuidev, all platform-side
   # web routes — they sit behind Traefik on port 80 and resolve HTTP-01
   # cleanly). Engine-emitted Secret carries the same CF API token the

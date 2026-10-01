@@ -16,9 +16,7 @@ config/domains/*.yaml
 # `config/domains/<domain>.yaml` under `envs.<env>.components.<name>`.
 # These two get listed explicitly so a stale committed copy on a
 # fresh clone trips the gitignore instead of polluting state.
-config/components/sipmesh-frontend.yaml
 config/components/platform-dash.yaml
-config/components/lineoneagent-frontend-dev.yaml
 
 # Platform-service toggles — the live file is per-operator
 config/platform.yaml

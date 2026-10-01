@@ -264,7 +264,7 @@ variable "node_selector" {
     Node-selector labels the pod must match. Empty map means the
     scheduler can place the pod on any node that satisfies the other
     constraints (resources, taints, affinity). Useful for
-    "stateful → optiplex (workload-tier=stateful)" style pinning.
+    "stateful workloads → the data node (workload-tier=stateful)" style pinning.
   EOT
   type        = map(string)
   default     = {}

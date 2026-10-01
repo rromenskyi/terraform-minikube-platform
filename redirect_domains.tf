@@ -49,8 +49,8 @@ locals {
   # (whole zone → one target), this redirects ONE host to its own
   # target, overriding the zone redirect for that host. Use for
   # campaign link hosts that live on an otherwise redirect-only zone
-  # but must land on a different app (e.g. `dev-links.l1promo.com` →
-  # `dev.lineoneagent.com` while the rest of l1promo.com → the prod
+  # but must land on a different app (e.g. `links.example.org` →
+  # `app.example.com` while the rest of example.org → the main
   # site). Keyed by FQDN for a stable for_each.
   _redirect_hosts = merge([
     for name, cfg in local._domain_configs : {

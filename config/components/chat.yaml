@@ -5,8 +5,8 @@ replicas: 1
 # Place chat onto the fat compute node — Open WebUI orchestrates the
 # Ollama traffic for every tenant; a Python event loop on the data
 # node steals CPU from MySQL / Postgres / Redis under load. The
-# `general` tier (k3s-2) has 28 CPU + 32G to spare and the same
-# in-cluster latency to Ollama (also pinned to k3s-2 via gpu=intel).
+# `general` tier has the CPU to spare and the same in-cluster latency
+# to Ollama.
 node_selector:
   workload-tier: general
 

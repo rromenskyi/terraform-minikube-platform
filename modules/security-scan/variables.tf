@@ -31,7 +31,12 @@ variable "host_volume_path" {
 variable "cache_node_hostname" {
   description = "Hostname (`kubernetes.io/hostname`) of the node the trivy DB cache PV pins to. Should match the operator's `stateful` tier node — that's the convention for hostPath PVs. Without an explicit pin the PV could bind on a node where the hostPath dir doesn't exist."
   type        = string
-  default     = "roman-romenskyi-optiplex-7060"
+  default     = ""
+
+  validation {
+    condition     = var.cache_node_hostname != ""
+    error_message = "cache_node_hostname is required: the trivy cache hostPath PV must pin to a node."
+  }
 }
 
 variable "trivy_cache_size" {

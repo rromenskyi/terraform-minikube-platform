@@ -61,6 +61,7 @@ locals {
         tolerations   = []
         # Chart-shaped `controller.resources`; {} = chart default.
         controller_resources = {}
+        built_from_apps      = []
       }
       # Maintenance window defaults = the addons module's (reboot any time,
       # any day, UTC). Operators narrow it in config/platform.yaml —
@@ -84,9 +85,13 @@ locals {
         storage_size     = "50Gi"
         node_selector    = {}
         # Empty = store + collector only (no alerting). Set to a LOCAL mailbox
-        # (e.g. an @ipsupport.us address Stalwart delivers without auth) to
+        # (e.g. an @example.com address Stalwart delivers without auth) to
         # wire vmalert LogsQL alerts → Alertmanager → email.
         alert_email = ""
+        # From address and EHLO FQDN for alert mail; both required with
+        # alert_email (Stalwart rejects a non-FQDN EHLO).
+        smtp_from  = ""
+        smtp_hello = ""
         # Operator-defined alert rules, MERGED on top of the generic default
         # set (`local._default_alert_rules`) by logging.tf — so the yaml only
         # lists ADDITIONS (e.g. app-specific substrings), not the defaults.
@@ -182,7 +187,7 @@ locals {
       security_scan = {
         enabled                      = false
         trivy_operator_chart_version = "0.36.0"
-        cache_node_hostname          = "roman-romenskyi-optiplex-7060"
+        cache_node_hostname          = "" # required when enabled; set in config
         node_selector                = {}
         trivy_cache_size             = "5Gi"
         service_monitor_enabled      = false
@@ -385,6 +390,9 @@ locals {
         cpu_limit      = "500m"
         memory_request = "64Mi"
         memory_limit   = "256Mi"
+        # From address and EHLO FQDN for the enriched alert mail.
+        smtp_from  = ""
+        smtp_hello = ""
       }
     }
   }
@@ -437,7 +445,7 @@ locals {
   }
 
   # Expand domain × env → one entry per project/env combination.
-  # Key / namespace: "{prefix}{slug}-{env}"  (e.g. "phost-paseka-co-prod")
+  # Key / namespace: "{prefix}{slug}-{env}"  (e.g. "phost-example-com-prod")
   # Hostname per route: "{host_prefix}.{domain}" literally, host_prefix ""
   # collapses to the apex domain. Env does NOT leak into the hostname; if
   # two envs of the same domain need distinct hostnames, the operator
@@ -457,8 +465,8 @@ locals {
       for _, cfg in local._domain_configs : [
         for env_name, env_spec in try(cfg.envs, {}) : {
           key                = "${cfg.slug}-${env_name}"
-          name               = cfg.name # domain, e.g. "paseka.co"
-          slug               = cfg.slug # e.g. "paseka-co"
+          name               = cfg.name # domain, e.g. "example.com"
+          slug               = cfg.slug # e.g. "example-com"
           env                = env_name # "prod" | "dev" | ...
           namespace          = "${var.namespace_prefix}${cfg.slug}-${env_name}"
           cloudflare_zone_id = try(cfg.cloudflare_zone_id, null)

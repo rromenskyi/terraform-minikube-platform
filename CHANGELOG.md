@@ -33,8 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   redirects exactly `<prefix>.<domain>` (path + query preserved) to its
   own target, winning over the zone redirect via an explicit high Traefik
   priority. Use for campaign link hosts that must stay on the link domain
-  for alignment (e.g. `dev-links.l1promo.com`) but land on a different
-  app (`dev.lineoneagent.com`) than the rest of the zone. Tunnel DNS +
+  for alignment (e.g. `links.example.org`) but land on a different
+  app (`app.example.com`) than the rest of the zone. Tunnel DNS +
   ingress are wired automatically. No project namespace is created (it's
   a pure redirect, not a routed component).
 - **`mail.ingest_forward` takes a LIST of `addresses`.** One forward can

@@ -49,6 +49,8 @@ module "logging" {
   # vmalert / Alertmanager receiver. Set it to wire LogsQL rule alerts to email
   # via the existing Alertmanager + the in-cluster Stalwart SMTP (local mailbox).
   alert_email = local.platform.services.logging.alert_email
+  smtp_from   = local.platform.services.logging.smtp_from
+  smtp_hello  = local.platform.services.logging.smtp_hello
 
   # Generic baseline rules + the operator's app-specific additions.
   alert_rules = merge(local._default_alert_rules, local.platform.services.logging.alert_rules)

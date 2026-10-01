@@ -78,8 +78,8 @@ locals {
       dmarc_rua     = try(cfg.mail.dmarc_rua, "")
       zone_id       = try(cfg.cloudflare_zone_id, "")
       # Optional per-domain SPF override. When a submission-only domain
-      # exits a different relay than the primary (e.g. lineoneagent.com +
-      # l1promo.com go out relay.l1promo.com), it authorises its own sender
+      # exits a different relay than the primary (e.g. example.com +
+      # example.org go out relay.example.org), it authorises its own sender
       # IP(s) here instead of inheriting the primary's — so the primary's SPF
       # is never widened. Empty ⇒ inherit the shared `mail.spf_authorized_ip`.
       spf_authorized_ip = try(cfg.mail.spf_authorized_ip, "")

@@ -70,3 +70,10 @@ variable "controller_resources" {
   default     = {}
   nullable    = false
 }
+
+variable "built_from_apps" {
+  description = "Argo CD Applications whose image-bump commits carry a `built-from=<sha>` trailer. For these the deploy notification resolves and shows the source commit, and it fires only for bump commits that carry the trailer. Empty = every app notifies with its own sync revision."
+  type        = list(string)
+  default     = []
+  nullable    = false
+}

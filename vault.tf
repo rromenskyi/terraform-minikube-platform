@@ -74,7 +74,7 @@ module "vault_oidc" {
   # JWTOIDCAuthEngineRole CRs (in modules/vault) bound_claims match
   # against these keys.
   # `distinct()` because `local.projects` is keyed `<slug>-<env>` —
-  # multi-env projects (e.g. ipsupport-us in prod/dev/mm-dev) repeat
+  # multi-env projects (e.g. example-com in prod/dev/staging) repeat
   # the same slug; without dedup `for_each` in modules/zitadel-app
   # crashes with "Duplicate object key".
   roles = concat(

@@ -139,6 +139,14 @@ resource "kubernetes_deployment_v1" "alert_llm_enricher" {
             value = local.platform.services.logging.alert_email
           }
           env {
+            name  = "SMTP_FROM"
+            value = local.alert_llm_enrichment.smtp_from
+          }
+          env {
+            name  = "SMTP_HELLO"
+            value = local.alert_llm_enrichment.smtp_hello
+          }
+          env {
             name  = "OLLAMA_MODEL"
             value = local.alert_llm_enrichment.ollama_model
           }

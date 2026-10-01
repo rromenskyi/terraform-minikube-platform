@@ -103,6 +103,7 @@ module "argocd" {
   tolerations   = local.platform.services.argocd.tolerations
 
   controller_resources = local.platform.services.argocd.controller_resources
+  built_from_apps      = local.platform.services.argocd.built_from_apps
 }
 
 output "argocd_url" {

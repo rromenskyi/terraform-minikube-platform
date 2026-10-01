@@ -657,8 +657,7 @@ locals {
     # Never destroyed (same reasoning as Domain above — nothing to
     # objectIsLinked on yet, but wiping-and-recreating on every apply
     # would also nuke any MailingList the operator created by hand,
-    # e.g. the existing hello@/corp@ distribution lists on this
-    # server). The applier's idempotency pass converts a `create` whose
+    # e.g. hand-made distribution lists such as hello@/corp@). The applier's idempotency pass converts a `create` whose
     # target address already exists into an `update` instead, so
     # `recipients` changes on a later apply actually take effect —
     # unlike Domain's static name/description, an alias's recipient

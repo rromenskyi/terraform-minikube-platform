@@ -129,7 +129,7 @@ locals {
     controller = length(var.controller_resources) > 0 ? { resources = var.controller_resources } : {}
 
     # The repo-server's health endpoint stalls past the chart-default 1s probe
-    # timeout while it is busy generating manifests on this box (observed 5s+
+    # timeout while it is busy generating manifests on a small node (5s+
     # responses → liveness kill → CrashLoopBackOff every few minutes for days;
     # controllers then see "name resolver error: produced zero addresses"
     # between restarts). Generous timeouts keep a busy-but-healthy repo-server
@@ -173,7 +173,7 @@ locals {
               method: POST
               body: |
                 {{- $line := printf "revision: %s" .app.status.sync.revision -}}
-                {{- if has .app.metadata.name (list "lineoneagent-frontend-dev" "lineoneagent-backend-dev" "lineoneagent-sipmesh-dev") -}}
+                {{- if has .app.metadata.name (list ${join(" ", [for a in var.built_from_apps : "\"${a}\""])}) -}}
                   {{- $bump := call .repo.GetCommitMetadata .app.status.sync.revision -}}
                   {{- $sha := regexFind "built-from=[0-9a-f]{7,40}" $bump.Message | trimPrefix "built-from=" -}}
                   {{- if $sha -}}
@@ -188,7 +188,7 @@ locals {
         "trigger.on-deployed" = <<-EOT
           - description: Application is synced and healthy. Triggered once per commit.
             oncePer: app.status.sync.revision
-            when: app.status.operationState.phase in ['Succeeded'] and app.status.health.status == 'Healthy' and (app.metadata.name not in ['lineoneagent-frontend-dev','lineoneagent-backend-dev','lineoneagent-sipmesh-dev'] or repo.GetCommitMetadata(app.status.sync.revision).Message matches 'built-from=')
+            when: app.status.operationState.phase in ['Succeeded'] and app.status.health.status == 'Healthy' and (app.metadata.name not in [${join(",", [for a in var.built_from_apps : "'${a}'"])}] or repo.GetCommitMetadata(app.status.sync.revision).Message matches 'built-from=')
             send:
               - app-deployed
         EOT

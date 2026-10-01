@@ -9,7 +9,7 @@ mock_provider "kubernetes" {}
 # requires name + namespace + image + port unconditionally.
 variables {
   name             = "platform-dash"
-  namespace        = "phost-ipsupport-us-prod"
+  namespace        = "phost-example-com-prod"
   image            = "ghcr.io/example/platform-dash:latest"
   port             = 3000
   volume_base_path = "/tmp/test-vol"
@@ -67,7 +67,7 @@ run "rbac_created_when_rules_present" {
   }
 
   assert {
-    condition     = kubernetes_service_account_v1.this["enabled"].metadata[0].namespace == "phost-ipsupport-us-prod"
+    condition     = kubernetes_service_account_v1.this["enabled"].metadata[0].namespace == "phost-example-com-prod"
     error_message = "ServiceAccount should land in the component's namespace."
   }
 
@@ -77,7 +77,7 @@ run "rbac_created_when_rules_present" {
   }
 
   assert {
-    condition     = kubernetes_cluster_role_v1.this["enabled"].metadata[0].name == "phost-ipsupport-us-prod-platform-dash"
+    condition     = kubernetes_cluster_role_v1.this["enabled"].metadata[0].name == "phost-example-com-prod-platform-dash"
     error_message = "ClusterRole name should be `<namespace>-<component>` so it stays cluster-unique across operators sharing one cluster."
   }
 
@@ -92,7 +92,7 @@ run "rbac_created_when_rules_present" {
   }
 
   assert {
-    condition     = kubernetes_cluster_role_binding_v1.this["enabled"].metadata[0].name == "phost-ipsupport-us-prod-platform-dash"
+    condition     = kubernetes_cluster_role_binding_v1.this["enabled"].metadata[0].name == "phost-example-com-prod-platform-dash"
     error_message = "ClusterRoleBinding name should match the ClusterRole name."
   }
 
@@ -102,7 +102,7 @@ run "rbac_created_when_rules_present" {
   }
 
   assert {
-    condition     = kubernetes_cluster_role_binding_v1.this["enabled"].subject[0].namespace == "phost-ipsupport-us-prod"
+    condition     = kubernetes_cluster_role_binding_v1.this["enabled"].subject[0].namespace == "phost-example-com-prod"
     error_message = "ClusterRoleBinding subject namespace should match the SA's namespace."
   }
 }

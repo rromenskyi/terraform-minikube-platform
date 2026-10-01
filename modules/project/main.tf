@@ -30,8 +30,8 @@ terraform {
 # ── Locals ────────────────────────────────────────────────────────────────────
 
 locals {
-  namespace = var.project_config.namespace       # e.g. "phost-paseka-co-prod"
-  domain    = var.project_config.name            # e.g. "paseka.co"
+  namespace = var.project_config.namespace       # e.g. "phost-example-com-prod"
+  domain    = var.project_config.name            # e.g. "example.com"
   env       = var.project_config.env             # e.g. "prod"
   routes    = try(var.project_config.routes, {}) # { "": web, www: web, api: whoami2, "/api": api }
 

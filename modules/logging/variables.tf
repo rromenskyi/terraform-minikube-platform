@@ -93,7 +93,7 @@ variable "alert_email" {
 }
 
 variable "smtp_smarthost" {
-  description = "SMTP host:port Alertmanager sends through. Default is the in-cluster Stalwart inbound listener, which accepts unauthenticated submission for LOCAL recipients (e.g. an `@ipsupport.us` mailbox) — no relay-trust change or credentials needed. External recipients would require auth/relay changes (out of scope)."
+  description = "SMTP host:port Alertmanager sends through. Default is the in-cluster Stalwart inbound listener, which accepts unauthenticated submission for LOCAL recipients (e.g. an `@example.com` mailbox) — no relay-trust change or credentials needed. External recipients would require auth/relay changes (out of scope)."
   type        = string
   default     = "stalwart-smtp.mail.svc.cluster.local:25"
 }
@@ -101,13 +101,23 @@ variable "smtp_smarthost" {
 variable "smtp_from" {
   description = "Envelope/From address for alert emails."
   type        = string
-  default     = "alerts@ipsupport.us"
+  default     = ""
+
+  validation {
+    condition     = var.alert_email == "" || var.smtp_from != ""
+    error_message = "smtp_from (From address) is required when alert_email is set."
+  }
 }
 
 variable "smtp_hello" {
   description = "EHLO hostname Alertmanager presents to the SMTP server. Must be a valid FQDN — the default pod hostname is not, and Stalwart rejects the session with `550 Invalid EHLO domain`."
   type        = string
-  default     = "alertmanager.ipsupport.us"
+  default     = ""
+
+  validation {
+    condition     = var.alert_email == "" || var.smtp_hello != ""
+    error_message = "smtp_hello (EHLO hostname) is required when alert_email is set."
+  }
 }
 
 variable "vmalert_image" {

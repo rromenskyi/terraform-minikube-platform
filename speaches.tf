@@ -3,11 +3,10 @@
 # upstream image directly (no custom build, no Helm chart needed for a
 # single-container service). CPU-only: upstream only ships CPU/CUDA
 # variants, no Intel GPU/Vulkan backend — doesn't compete with Ollama for
-# the Arc B50 on k3s-2. Exposes the standard OpenAI-compatible endpoints
+# the GPU. Exposes the standard OpenAI-compatible endpoints
 # (/v1/audio/transcriptions, /v1/audio/speech, /v1/models) so it can be
 # wired into AirLLM (or anything else in-cluster) as a provider target the
-# same way any other OpenAI-compatible upstream is — see
-# project_ipsupport_airouter memory, v0.1.16.
+# same way any other OpenAI-compatible upstream is.
 #
 # Internal-only by default: no hostname/IngressRoute. Add one later the
 # same way airllm.tf does if a public/testing route is ever needed.
@@ -91,8 +90,7 @@ resource "kubernetes_deployment_v1" "speaches" {
         # The image runs as uid 1000 (ubuntu). Without fsGroup the
         # model-cache PVC lands root-owned (kubelet creates the hostPath
         # dir as root before the pod's first mount) and every model
-        # download fails with PermissionError — see the ipsupport-airllm
-        # handoff (2026-08-30). fsGroup matches the image's ubuntu gid
+        # download fails with PermissionError. fsGroup matches the image's ubuntu gid
         # exactly so kubelet chowns the volume's group ownership on mount
         # going forward, but confirmed live that it does NOT retroactively
         # fix a hostPath volume's pre-existing root-owned root dir (group

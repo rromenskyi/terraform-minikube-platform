@@ -3,9 +3,9 @@ port: 80
 replicas: 1
 
 # WordPress + Apache (prefork workers) under a traffic/crawler/brute-force
-# spike or a heavy wp-cron run blows past the 256Mi component default —
-# jagdterrier.club got a burst of cgroup OOM-kills on 2026-07-06 (a scanner
-# hammering /wp-login.php + wp-cron, workers killed, 500s served). 512Mi gives
+# spike or a heavy wp-cron run blows past the 256Mi component default
+# (a scanner hammering /wp-login.php + wp-cron gets workers cgroup
+# OOM-killed and the site serves 500s). 512Mi gives
 # the fpm/apache workers headroom; requests bumped to match the real floor.
 resources:
   requests: { cpu: "100m", memory: "128Mi" }
