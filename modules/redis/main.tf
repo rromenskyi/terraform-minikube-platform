@@ -798,7 +798,7 @@ resource "kubernetes_deployment_v1" "acl_keeper" {
 
         container {
           name  = "keeper"
-          image = "redis:7-alpine"
+          image = "redis:8.10.2-alpine"
 
           # Root only to `apk add curl` at start (see resource comment).
           security_context {

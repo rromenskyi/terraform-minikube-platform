@@ -89,7 +89,7 @@ resource "kubernetes_job_v1" "airllm_postgres_setup" {
 
         container {
           name  = "psql"
-          image = "postgres:16-alpine"
+          image = "postgres:18.6-alpine"
 
           env {
             name = "PGPASSWORD"

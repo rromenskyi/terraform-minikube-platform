@@ -435,7 +435,7 @@ resource "kubernetes_cron_job_v1" "mysql" {
               # Alpine's standalone mariadb-client package strips
               # plugins, so the full mariadb:11 image is what we
               # want. Debian-based, apt-get installs restic.
-              image = "mariadb:11"
+              image = "mariadb:11.8.9"
 
               env_from {
                 secret_ref {

@@ -251,7 +251,7 @@ resource "kubernetes_job_v1" "mysql_setup" {
 
         container {
           name  = "mysql-setup"
-          image = "mysql:8.0"
+          image = "mysql:8.4.11"
 
           env {
             name  = "MYSQL_PWD"

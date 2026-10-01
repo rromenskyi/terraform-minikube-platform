@@ -114,7 +114,7 @@ resource "kubernetes_job_v1" "pg_dashboard_ro_setup" {
 
         container {
           name  = "pg-dashboard-ro-setup"
-          image = "postgres:16-alpine"
+          image = "postgres:18.6-alpine"
 
           env_from {
             secret_ref {
@@ -215,7 +215,7 @@ resource "kubernetes_job_v1" "mysql_dashboard_ro_setup" {
 
         container {
           name  = "mysql-dashboard-ro-setup"
-          image = "mysql:8.0"
+          image = "mysql:8.4.11"
 
           env_from {
             secret_ref {

@@ -147,7 +147,7 @@ resource "kubernetes_job_v1" "postgres_setup" {
 
         container {
           name  = "postgres-setup"
-          image = "postgres:16-alpine"
+          image = "postgres:18.6-alpine"
 
           env_from {
             secret_ref {

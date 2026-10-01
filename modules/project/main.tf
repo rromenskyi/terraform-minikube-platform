@@ -568,7 +568,7 @@ resource "kubernetes_job_v1" "mysql_setup" {
 
         container {
           name  = "mysql-setup"
-          image = "mysql:8.0"
+          image = "mysql:8.4.11"
 
           env_from {
             secret_ref {
@@ -675,7 +675,7 @@ resource "kubernetes_job_v1" "postgres_setup" {
 
         container {
           name  = "postgres-setup"
-          image = "postgres:16-alpine"
+          image = "postgres:18.6-alpine"
 
           env_from {
             secret_ref {
@@ -834,7 +834,7 @@ resource "kubernetes_job_v1" "postgres_setup_extra" {
 
         container {
           name  = "postgres-setup"
-          image = "postgres:16-alpine"
+          image = "postgres:18.6-alpine"
 
           env_from {
             secret_ref {
