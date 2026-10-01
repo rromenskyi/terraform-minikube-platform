@@ -64,14 +64,26 @@ variable "branch_prefix" {
   default     = "security-scan/snapshot"
 }
 
-variable "telegram_notify_enabled" {
-  description = "Whether to DM the operator on Telegram when the snapshot content changed since last run. Requires the operator to have placed a bot's `bot_token` + numeric `chat_id` at `var.telegram_vault_path` in Vault. False (default) skips the VaultStaticSecret + the env wiring entirely; the CronJob runs without notification — PR open is the only signal."
-  type        = bool
-  default     = false
+variable "email_to" {
+  description = "Operator address emailed when the snapshot's findings change (list of added/resolved findings + PR link). Empty (default) disables email; the PR stays the only signal."
+  type        = string
+  default     = ""
 }
 
-variable "telegram_vault_path" {
-  description = "Vault path (under `secret/data/...`, kv-v2 mount) holding the Telegram bot creds for snapshot notifications. Expected data keys: `bot_token` (the `<id>:<auth>` string from BotFather) and `chat_id` (numeric int — Bot API doesn't accept usernames for DMs, only channel `@names` or numeric chat IDs). Default path lives under `platform/telegram-bots/operator` to leave room for additional bots later. Has no effect when `var.telegram_notify_enabled = false`."
+variable "email_from" {
+  description = "Sender address of the snapshot email. Required when `email_to` is set."
   type        = string
-  default     = "platform/telegram-bots/operator"
+  default     = ""
+}
+
+variable "email_helo" {
+  description = "EHLO name the CronJob uses towards the mail server. List it in the mail domain's `trusted_helo_domains` so the in-cluster message skips the inbound spam filter. Required when `email_to` is set."
+  type        = string
+  default     = ""
+}
+
+variable "smtp_server" {
+  description = "In-cluster SMTP `host:port` (plain SMTP, no auth) the snapshot email is submitted to."
+  type        = string
+  default     = "stalwart-smtp.mail.svc.cluster.local:25"
 }

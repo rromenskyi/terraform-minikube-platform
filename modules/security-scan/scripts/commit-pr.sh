@@ -9,6 +9,11 @@
 #   $GH_REPO        — `owner/repo`
 #   $BRANCH_PREFIX  — branch the snapshot lives on
 #   $REPORT_PATH    — committed file path inside the repo
+#   $SMTP_URL, $MAIL_FROM, $MAIL_TO
+#                   — optional; when all set, the operator gets an email
+#                     listing the added/removed findings and the PR link.
+#                     The path of SMTP_URL is the EHLO name
+#                     (smtp://host:25/<helo>).
 #
 # Exits 0 silently when:
 #   - the repo's current $REPORT_PATH already matches /work/cve-report.md
@@ -55,11 +60,10 @@ git add "$REPORT_PATH"
 #   - For an untracked-now-staged file (very first commit on this
 #     branch), `git diff --cached` shows the full content and the
 #     -I filter is moot — staged add ⇒ commit.
-#   - For an existing file, fall back to comparing staged vs HEAD,
-#     ignoring the `Generated:` timestamp line so a stale-but-equal
-#     snapshot doesn't churn the PR.
-if git diff --cached --quiet -I '^Generated: ' -- "$REPORT_PATH" 2>/dev/null \
-   && git diff --quiet HEAD -- "$REPORT_PATH" 2>/dev/null; then
+#   - For an existing file, compare staged vs HEAD ignoring the
+#     `Generated:` timestamp line, so a snapshot whose findings are
+#     unchanged doesn't churn the PR.
+if git diff --cached --quiet -I '^Generated: ' -- "$REPORT_PATH" 2>/dev/null; then
   echo "No substantive change to $REPORT_PATH since last snapshot. Exiting silently."
   exit 0
 fi
@@ -80,7 +84,7 @@ DEFAULT_BRANCH=$(curl -fsSL \
 
 PR_BODY=$(printf 'Weekly CVE snapshot from trivy-operator across platform-system namespaces.\n\nReview the diff vs the previous snapshot to see new/resolved findings since last week.\n\nSource: `modules/security-scan`.\n')
 
-PR_RESPONSE=$(curl -sS -o /tmp/pr-resp.json -w '%%{http_code}' \
+PR_RESPONSE=$(curl -sS -o /tmp/pr-resp.json -w '%{http_code}' \
   -X POST \
   -H "Authorization: token $GH_TOKEN" \
   -H "Accept: application/vnd.github+json" \
@@ -100,8 +104,7 @@ elif [ "$PR_RESPONSE" = "422" ]; then
   # Either PR already open OR the head branch is identical to base.
   # Both fine — branch was force-pushed, existing PR refreshes.
   echo "PR not opened (422 — likely already exists for $BRANCH_PREFIX). Branch was force-pushed."
-  # Look up the existing open PR's URL so the Telegram message can
-  # link to it.
+  # Look up the existing open PR's URL so the email can link to it.
   PR_URL=$(curl -fsSL \
     -H "Authorization: token $GH_TOKEN" \
     -H "Accept: application/vnd.github+json" \
@@ -113,21 +116,27 @@ else
   exit 1
 fi
 
-# Optional Telegram DM — only fires when the engine wired the
-# `security-scan-telegram` Secret in (telegram_notify_enabled = true)
-# AND the operator populated bot_token + chat_id in Vault. Empty
-# either var = silent skip; container exit code unaffected.
-if [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${TELEGRAM_CHAT_ID:-}" ] && [ -n "$PR_URL" ]; then
-  ADDED=$(git diff HEAD~1 -- "$REPORT_PATH" 2>/dev/null | grep -c '^+|' || true)
-  REMOVED=$(git diff HEAD~1 -- "$REPORT_PATH" 2>/dev/null | grep -c '^-|' || true)
-  MSG=$(printf '🛡 *Platform CVE snapshot changed*\n\n%s lines added, %s removed in `%s`.\n\nPR: %s' \
-    "$ADDED" "$REMOVED" "$REPORT_PATH" "$PR_URL")
-  curl -fsS -o /dev/null \
-    -X POST \
-    "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-    -d "chat_id=${TELEGRAM_CHAT_ID}" \
-    --data-urlencode "text=${MSG}" \
-    -d "parse_mode=Markdown" \
-    && echo "Telegram notification sent." \
-    || echo "Telegram notification failed (non-fatal — report still committed)."
+# Optional email to the operator through the in-cluster mail server.
+# Unset SMTP_URL / MAIL_FROM / MAIL_TO = silent skip; a failed send is
+# logged but doesn't fail the run (the PR is the durable record).
+if [ -n "${SMTP_URL:-}" ] && [ -n "${MAIL_FROM:-}" ] && [ -n "${MAIL_TO:-}" ]; then
+  ADDED=$(git diff HEAD~1 -- "$REPORT_PATH" 2>/dev/null | grep '^+|' | sed 's/^+//' || true)
+  REMOVED=$(git diff HEAD~1 -- "$REPORT_PATH" 2>/dev/null | grep '^-|' | sed 's/^-//' || true)
+  N_ADDED=$(printf '%s' "$ADDED" | grep -c '|' || true)
+  N_REMOVED=$(printf '%s' "$REMOVED" | grep -c '|' || true)
+  {
+    printf 'From: Platform security scan <%s>\r\n' "$MAIL_FROM"
+    printf 'To: %s\r\n' "$MAIL_TO"
+    printf 'Subject: [security-scan] CVE snapshot changed: %s new, %s resolved\r\n' "$N_ADDED" "$N_REMOVED"
+    printf 'Date: %s\r\n' "$(date -R)"
+    printf 'MIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n'
+    printf 'The weekly HIGH/CRITICAL CVE snapshot of platform-system images changed.\n\n'
+    printf 'Pull request: %s\n\n' "${PR_URL:-(not found)}"
+    printf 'New findings (%s):\n%s\n\n' "$N_ADDED" "${ADDED:-none}"
+    printf 'Resolved findings (%s):\n%s\n' "$N_REMOVED" "${REMOVED:-none}"
+  } > /tmp/mail.txt
+  curl -sS --max-time 60 --url "$SMTP_URL" \
+    --mail-from "$MAIL_FROM" --mail-rcpt "$MAIL_TO" --upload-file /tmp/mail.txt \
+    && echo "Email sent to $MAIL_TO." \
+    || echo "Email failed (non-fatal — report still committed)."
 fi

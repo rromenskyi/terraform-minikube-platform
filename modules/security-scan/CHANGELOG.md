@@ -7,6 +7,24 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- **BREAKING (inputs): Telegram notification replaced by email.**
+  `telegram_notify_enabled` / `telegram_vault_path` and the Telegram
+  VaultStaticSecret are gone; set `email_to`, `email_from`, `email_helo`
+  (and optionally `smtp_server`) to get the new/resolved findings and the
+  PR link by email through the in-cluster mail server.
+- CronJob pods use `restartPolicy: Never`, so a failed run keeps its pod
+  and logs instead of the Job controller deleting them.
+
+### Fixed
+- Every run failed after pushing: the PR call used `-w '%%{http_code}'`,
+  a templatefile escape in a script loaded with `file()`, so curl printed
+  the literal format, no status matched and the script exited 1, before
+  any notification.
+- Unchanged findings no longer produce a weekly commit: the change check
+  now ignores only the `Generated:` line instead of also requiring a
+  byte-identical file.
+
 ### Added
 - Initial release. Two-layer setup: upstream `trivy-operator` Helm chart
   scans Pods cluster-wide and emits VulnerabilityReport CRDs; a weekly

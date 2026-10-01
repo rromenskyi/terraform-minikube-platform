@@ -355,41 +355,6 @@ resource "kubectl_manifest" "github_pat_vault" {
   })
 }
 
-# Optional Telegram notification on snapshot changes. When the
-# operator places a bot's `bot_token` + `chat_id` (numeric) at
-# `secret/data/platform/telegram-bots/operator`, the CronJob's
-# commit-pr step DM's the operator with a one-line link to the PR
-# whenever the snapshot content changed. VSS only emitted when
-# `var.telegram_notify_enabled = true`; if disabled, the CronJob
-# step that consumes these env vars no-ops silently (no Secret to
-# bind, container starts fine, notification curl is skipped).
-resource "kubectl_manifest" "telegram_vault" {
-  for_each = (var.enabled && var.telegram_notify_enabled) ? toset(["enabled"]) : toset([])
-
-  depends_on = [kubernetes_service_account_v1.vso_proxy]
-
-  yaml_body = yamlencode({
-    apiVersion = "secrets.hashicorp.com/v1beta1"
-    kind       = "VaultStaticSecret"
-    metadata = {
-      name      = "security-scan-telegram"
-      namespace = kubernetes_namespace_v1.this["enabled"].metadata[0].name
-      labels    = local.tags
-    }
-    spec = {
-      vaultAuthRef = ""
-      mount        = "secret"
-      type         = "kv-v2"
-      path         = var.telegram_vault_path
-      destination = {
-        name   = "security-scan-telegram"
-        create = true
-      }
-      refreshAfter = "30s"
-    }
-  })
-}
-
 # ConfigMap carrying the two scripts the CronJob runs. defaultMode
 # 0755 in the volume mount so they're executable straight from the
 # mount.
@@ -442,7 +407,10 @@ resource "kubernetes_cron_job_v1" "snapshot" {
           }
           spec {
             service_account_name = kubernetes_service_account_v1.snapshot["enabled"].metadata[0].name
-            restart_policy       = "OnFailure"
+            # Never, not OnFailure: with OnFailure the Job controller deletes
+            # the pod once the backoff limit is hit, taking the logs of the
+            # failed run with it.
+            restart_policy = "Never"
 
             init_container {
               name    = "collect"
@@ -492,31 +460,18 @@ resource "kubernetes_cron_job_v1" "snapshot" {
                 value = "inventory/cve-report.md"
               }
 
-              # Telegram notification env. When the VSS-synced
-              # `security-scan-telegram` Secret is missing
-              # (telegram_notify_enabled = false), `optional: true`
-              # makes the env vars unset and the script's `[ -z
-              # "$TELEGRAM_BOT_TOKEN" ]` guard skips the curl call
-              # silently — no container start failure.
+              # Snapshot email. Empty values make the script skip it.
               env {
-                name = "TELEGRAM_BOT_TOKEN"
-                value_from {
-                  secret_key_ref {
-                    name     = "security-scan-telegram"
-                    key      = "bot_token"
-                    optional = true
-                  }
-                }
+                name  = "SMTP_URL"
+                value = var.email_to == "" ? "" : "smtp://${var.smtp_server}/${var.email_helo}"
               }
               env {
-                name = "TELEGRAM_CHAT_ID"
-                value_from {
-                  secret_key_ref {
-                    name     = "security-scan-telegram"
-                    key      = "chat_id"
-                    optional = true
-                  }
-                }
+                name  = "MAIL_FROM"
+                value = var.email_from
+              }
+              env {
+                name  = "MAIL_TO"
+                value = var.email_to
               }
 
               volume_mount {
