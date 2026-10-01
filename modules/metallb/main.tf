@@ -107,6 +107,11 @@ resource "helm_release" "metallb" {
         enabled = false
       }
     }
+    # Chart 0.16+ bundles frr-k8s as the default BGP backend; this
+    # module runs L2 only, so keep the BGP stack out.
+    frrk8s = {
+      enabled = false
+    }
   })]
 }
 
