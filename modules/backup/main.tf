@@ -628,15 +628,12 @@ resource "kubernetes_cron_job_v1" "vault" {
           spec {
             restart_policy = "OnFailure"
 
-            container {
+            # The vault image runs unprivileged (2.x), so nothing can be
+            # installed into it at runtime: the snapshot is taken by an
+            # init container and uploaded by a restic container.
+            init_container {
               name  = "snapshot"
               image = "hashicorp/vault:2.1.1"
-
-              env_from {
-                secret_ref {
-                  name = kubernetes_secret_v1.backup_creds["enabled"].metadata[0].name
-                }
-              }
 
               env {
                 name  = "VAULT_ADDR"
@@ -652,28 +649,45 @@ resource "kubernetes_cron_job_v1" "vault" {
                 }
               }
 
-              command = ["sh", "-c"]
-              args = [<<-EOT
-                set -e
-                # vault image is alpine-based; apk works.
-                apk add --no-cache restic >/dev/null
+              command = ["vault", "operator", "raft", "snapshot", "save", "/stage/vault.snap"]
 
-                STAGE=$(mktemp -d)
-                trap 'rm -rf "$STAGE"' EXIT
-
-                echo "[vault] operator raft snapshot save"
-                vault operator raft snapshot save "$STAGE/vault.snap"
-
-                echo "[vault] restic backup"
-                restic backup --host platform-vault --tag vault "$STAGE"
-                echo "[vault] done"
-              EOT
-              ]
+              volume_mount {
+                name       = "stage"
+                mount_path = "/stage"
+              }
 
               resources {
                 requests = { cpu = "50m", memory = "128Mi" }
                 limits   = { cpu = "500m", memory = "512Mi" }
               }
+            }
+
+            container {
+              name  = "upload"
+              image = "restic/restic:0.19.1"
+
+              env_from {
+                secret_ref {
+                  name = kubernetes_secret_v1.backup_creds["enabled"].metadata[0].name
+                }
+              }
+
+              command = ["restic", "backup", "--host", "platform-vault", "--tag", "vault", "/stage"]
+
+              volume_mount {
+                name       = "stage"
+                mount_path = "/stage"
+              }
+
+              resources {
+                requests = { cpu = "50m", memory = "128Mi" }
+                limits   = { cpu = "500m", memory = "512Mi" }
+              }
+            }
+
+            volume {
+              name = "stage"
+              empty_dir {}
             }
           }
         }
