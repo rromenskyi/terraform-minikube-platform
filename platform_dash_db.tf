@@ -156,81 +156,31 @@ resource "kubernetes_job_v1" "pg_dashboard_ro_setup" {
   timeouts { create = "2m" }
 }
 
-# ── Redis: provision dashboard_ro via redis-cli ACL Job ──────────────────────
+# ── Redis: dashboard_ro via the ACL keeper ──────────────────────────────────
+# Valkey runs without persistence and does not replicate ACLs, so a user
+# created once by a Job vanishes on the next pod restart (the dashboard then
+# shows `WRONGPASS`). Instead, hand the user to the same keeper that
+# re-applies the tenant ACLs on every node (see modules/redis): a Secret
+# labelled `platform.local/redis-acl=true` carrying one `ACL SETUSER` line
+# with the password as a SHA-256 hash.
 # +@read +info covers the INFO command and any future read query;
 # `~*` allows access to all keys (read-only); `&*` allows all
 # pub/sub channels (subscribe is read in spirit). No write categories.
-resource "kubernetes_job_v1" "redis_dashboard_ro_setup" {
-  for_each   = local.dash_red_enabled ? toset(["enabled"]) : toset([])
-  depends_on = [module.redis]
+resource "kubernetes_secret_v1" "redis_dashboard_ro_acl" {
+  for_each = local.dash_red_enabled ? toset(["enabled"]) : toset([])
 
   metadata {
-    # Job name carries the Valkey helm revision so a chart upgrade
-    # auto-replaces this Job and re-applies the read-only ACL against
-    # the post-upgrade Sentinel master. Same pattern as the
-    # per-tenant `redis_setup` Jobs in modules/project.
-    name      = "redis-dashboard-ro-setup-rev${module.redis.helm_revision}"
+    name      = "redis-acl-platform-dash"
     namespace = module.redis.namespace
     labels = {
-      "managed-by" = "platform-dash-db-discovery"
+      "managed-by"               = "platform-dash-db-discovery"
+      "platform.local/redis-acl" = "true"
     }
   }
 
-  spec {
-    backoff_limit = 3
-
-    template {
-      metadata {
-        labels = {
-          job = "redis-dashboard-ro-setup"
-        }
-      }
-      spec {
-        restart_policy = "Never"
-
-        container {
-          name  = "redis-dashboard-ro-setup"
-          image = "redis:7-alpine"
-
-          env_from {
-            secret_ref {
-              name = module.redis.default_secret_name
-            }
-          }
-          env {
-            name  = "RO_PASSWORD"
-            value = random_password.dashboard_ro_redis["enabled"].result
-          }
-
-          resources {
-            requests = { cpu = "50m", memory = "32Mi" }
-            limits   = { cpu = "200m", memory = "128Mi" }
-          }
-
-          # ACL SETUSER is idempotent — re-applying is a no-op when
-          # the user already matches. -a uses the `default` (root)
-          # password from the env_from Secret.
-          #
-          # The trailing `ACL SAVE` persists `dashboard_ro` to Redis's
-          # aclfile (/data/users.acl on the shared PV). Without it the
-          # user lives only in-memory and vanishes on the next redis-0
-          # restart — the dashboard then fails with `WRONGPASS invalid
-          # username-password pair or user is disabled` until the next
-          # `terraform apply` re-runs this Job. SETUSER and SAVE run as
-          # two separate redis-cli invocations so the shell `&&`
-          # short-circuits SAVE if SETUSER fails. Matches the per-tenant
-          # ACL provisioner in modules/project.
-          command = [
-            "sh", "-c",
-            "redis-cli -h ${module.redis.host} -a \"$REDIS_PASSWORD\" --no-auth-warning ACL SETUSER dashboard_ro on \">$RO_PASSWORD\" \"~*\" \"&*\" +@read +info && redis-cli -h ${module.redis.host} -a \"$REDIS_PASSWORD\" --no-auth-warning ACL SAVE"
-          ]
-        }
-      }
-    }
+  data = {
+    setuser = "dashboard_ro on #${sha256(random_password.dashboard_ro_redis["enabled"].result)} ~* &* +@read +info"
   }
-
-  wait_for_completion = true
-  timeouts { create = "2m" }
 }
 
 # ── MySQL: provision dashboard_ro via mysql Job ──────────────────────────────
@@ -333,7 +283,7 @@ resource "kubernetes_secret_v1" "platform_pg_dashboard" {
 
 resource "kubernetes_secret_v1" "platform_redis_dashboard" {
   for_each   = local.dash_red_enabled ? toset(["enabled"]) : toset([])
-  depends_on = [kubernetes_job_v1.redis_dashboard_ro_setup]
+  depends_on = [kubernetes_secret_v1.redis_dashboard_ro_acl]
 
   metadata {
     name      = "platform-redis-dashboard"

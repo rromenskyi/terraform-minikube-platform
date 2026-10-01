@@ -545,6 +545,19 @@ basic_auth: true
 # error bodies, e.g. JSON.
 # fallback_errors: false
 
+# Per-path rate limits on the whole-host routes, counted per client
+# (`CF-Connecting-IP`). Over-limit requests get 429 from Traefik and never
+# reach the workload. `methods` (optional) narrows the rule; `period`
+# defaults to 1m and `burst` to `average`. Each Traefik pod keeps its own
+# counters, so the effective limit is the value times the Traefik replica
+# count.
+# rate_limits:
+#   - path:    /wp-login.php
+#     methods: [POST]
+#     average: 10
+#     period:  1h
+#     burst:   10
+
 # Optional IR-side service override for Traefik-internal services like api@internal
 # ingress_service:
 #   kind: TraefikService

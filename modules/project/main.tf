@@ -269,6 +269,28 @@ locals {
     name => c if try(c.auth, "") == "zitadel"
   }
 
+  # Per-path request rate limits (`rate_limits:` in the component yaml),
+  # keyed "<component>/<index>". Each entry gets its own Traefik RateLimit
+  # middleware and its own IngressRoute rule on the component's whole-host
+  # routes, so the limit applies to that path only. Clients are counted by
+  # `CF-Connecting-IP`: every request arrives through the Cloudflare Tunnel,
+  # so the socket peer is always cloudflared and the header carries the
+  # real client.
+  rate_limits = merge([
+    for name, c in local.normalized_components : {
+      for i, rl in try(c.rate_limits, []) :
+      "${name}/${i}" => {
+        component = name
+        name      = "${name}-rate-limit-${i}"
+        path      = rl.path
+        methods   = try(rl.methods, [])
+        average   = rl.average
+        period    = try(rl.period, "1m")
+        burst     = try(rl.burst, rl.average)
+      }
+    }
+  ]...)
+
   # Components that declare `env_random: [VAR_1, VAR_2, ...]` in their
   # yaml. Every listed env name gets a random 32-char value terraform
   # owns and persists in state, injected into the container via a
@@ -1741,6 +1763,32 @@ resource "kubernetes_secret_v1" "basic_auth" {
   }
 }
 
+# One RateLimit middleware per `rate_limits:` entry; the IngressRoute
+# attaches it only to that entry's path rule.
+resource "kubectl_manifest" "rate_limit_middleware" {
+  for_each = local.rate_limits
+
+  yaml_body = yamlencode({
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = each.value.name
+      namespace = local.namespace
+      labels    = module.project_label.tags
+    }
+    spec = {
+      rateLimit = {
+        average = each.value.average
+        period  = each.value.period
+        burst   = each.value.burst
+        sourceCriterion = {
+          requestHeaderName = "CF-Connecting-IP"
+        }
+      }
+    }
+  })
+}
+
 resource "kubectl_manifest" "basic_auth_middleware" {
   for_each = local.basic_auth_components
 
@@ -1978,7 +2026,7 @@ resource "kubectl_manifest" "argocd_bootstrap" {
 resource "kubectl_manifest" "ingressroute" {
   for_each = local.routes_by_component
 
-  depends_on = [module.component, kubectl_manifest.basic_auth_middleware]
+  depends_on = [module.component, kubectl_manifest.basic_auth_middleware, kubectl_manifest.rate_limit_middleware]
 
   lifecycle {
     precondition {
@@ -2010,6 +2058,20 @@ resource "kubectl_manifest" "ingressroute" {
             },
             length(local.ir_middlewares[each.key]) > 0 ? { middlewares = local.ir_middlewares[each.key] } : {},
           )] : [],
+          # Rate-limited paths on the whole-host routes. The priority sits
+          # above every path-scoped route so the limit cannot be skipped.
+          length(each.value) == 0 ? [] : [
+            for rl in values(local.rate_limits) : {
+              match = join(" && ", concat(
+                ["(${join(" || ", [for d in each.value : "Host(`${d}`)"])})", "Path(`${rl.path}`)"],
+                length(rl.methods) > 0 ? ["(${join(" || ", [for m in rl.methods : "Method(`${m}`)"])})"] : [],
+              ))
+              kind        = "Rule"
+              priority    = 20000 + length(rl.path)
+              services    = [local.ir_service_refs[each.key]]
+              middlewares = concat([{ name = rl.name }], local.ir_middlewares[each.key])
+            } if rl.component == each.key
+          ],
           [
             for r in local.path_routes_by_component[each.key] : merge(
               {

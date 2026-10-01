@@ -80,3 +80,32 @@ config_files:
   /etc/apache2/conf-enabled/remoteip.conf: |
     RemoteIPHeader CF-Connecting-IP
     RemoteIPInternalProxy 100.64.0.0/10
+  # Brute-force hardening, enforced by Apache before PHP runs (REMOTE_ADDR
+  # is already the real client, see remoteip above).
+  #   - xmlrpc.php is the main brute-force / amplification target. Only
+  #     Jetpack / WordPress.com may call it; the ranges are the vendor's
+  #     published list (jetpack.com/support/how-to-add-jetpack-ips-allowlist/).
+  #     Scanners fake the "Jetpack by WordPress.com" User-Agent, so the
+  #     source address is the only thing worth trusting.
+  #   - `/?author=N` redirects to the author archive and leaks login names
+  #     for the brute-force that follows. Only the bare front-page form is
+  #     denied; `?author=` in wp-admin URLs keeps working.
+  /etc/apache2/conf-enabled/wp-hardening.conf: |
+    <Files "xmlrpc.php">
+      Require ip 192.0.64.0/18 195.234.108.0/22 122.248.245.244 54.217.201.243 54.232.116.4
+    </Files>
+    <If "%{REQUEST_URI} == '/' && %{QUERY_STRING} =~ /(^|&)author=/">
+      Require all denied
+    </If>
+
+# Login brute-force runs at roughly 150 attempts per source address in a
+# burst. The limit is counted per Traefik pod (4 DaemonSet pods, requests
+# spread across them), so 3 per pod is about a dozen POSTs an hour per
+# client: plenty for a person, and each bot address drops to a trickle of
+# 429s that never reach PHP.
+rate_limits:
+  - path:    /wp-login.php
+    methods: [POST]
+    average: 3
+    period:  1h
+    burst:   3

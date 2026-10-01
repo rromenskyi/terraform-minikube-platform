@@ -7,6 +7,10 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- `rate_limits:` component key: per-path Traefik RateLimit middleware on the
+  whole-host routes, counted per `CF-Connecting-IP`.
+
 ### Changed
 - **BREAKING (inputs): removed `redis_default_secret` and `redis_helm_revision`.**
   Per-tenant Redis ACL provisioning moved from a one-shot `redis-setup` Job to
