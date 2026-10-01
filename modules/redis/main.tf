@@ -387,6 +387,7 @@ resource "helm_release" "valkey_sentinel" {
       registry   = "docker.io"
       repository = var.sentinel.image_repo
       tag        = var.sentinel.image_tag
+      digest     = var.sentinel.image_digest
     }
 
     sentinel = {
@@ -396,6 +397,7 @@ resource "helm_release" "valkey_sentinel" {
         registry   = "docker.io"
         repository = var.sentinel.sentinel_image_repo
         tag        = var.sentinel.sentinel_image_tag
+        digest     = var.sentinel.sentinel_image_digest
       }
       # Bitnami chart's default sentinel resource preset is tight
       # (~150m CPU limit). Sentinel needs timer interrupts firing

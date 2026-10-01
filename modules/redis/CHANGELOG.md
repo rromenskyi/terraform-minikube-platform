@@ -7,6 +7,12 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- `sentinel.no_primary_nodes`: replicas on listed nodes never get promoted
+  (`replica-priority 0`); HAProxy runs only next to Valkey pods, off those nodes.
+- `sentinel.image_digest` / `sentinel_image_digest`, defaulting to the
+  2026-09-30 `latest` builds, so every node runs the same Valkey.
+
 ### Changed
 - **Disable AOF/RDB persistence on the Sentinel cache** via `commonConfiguration`
   (`appendonly no`, `save ""`). The data volume is an emptyDir (no PVC), so the

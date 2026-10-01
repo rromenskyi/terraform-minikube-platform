@@ -77,8 +77,10 @@ variable "sentinel" {
     # free `docker.io/bitnami/*` images now ship ONLY `:latest` (every
     # prior `:9.x.y` is `404 not found`; the `bitnamilegacy/*` archive
     # does not back-fill). Pinning options short of paying:
-    #   1. Digest-pin (`bitnami/valkey@sha256:...`) — works but needs
-    #      manual digest bumps per upgrade, defeats reusable defaults.
+    #   1. Digest-pin (`bitnami/valkey@sha256:...`) — what the
+    #      `*_digest` defaults below do: `latest` alone let every node
+    #      run whichever build it happened to cache. Bump them by hand
+    #      from the Docker Hub `latest` tag when upgrading.
     #   2. Switch off the Bitnami chart (run upstream `valkey/valkey`
     #      under our own StatefulSet, or move to the
     #      `valkeyio/valkey-helm-chart` community chart) — real long-
@@ -89,8 +91,11 @@ variable "sentinel" {
     image_tag           = optional(string, "latest")
     sentinel_image_repo = optional(string, "bitnami/valkey-sentinel")
     sentinel_image_tag  = optional(string, "latest")
-    haproxy_image       = optional(string, "haproxytech/haproxy-alpine:3.0")
-    haproxy_replicas    = optional(number, 2)
+    # `latest` as of 2026-09-30. A digest overrides the tag in the chart.
+    image_digest          = optional(string, "sha256:3ab4091a7e3cb5f12184a3009cad1aefef50f424c0860d580a41675e38392ba5")
+    sentinel_image_digest = optional(string, "sha256:a8f552cf341f908baeff807a02c72cc73097be3c3951ef110c14c27cb072e773")
+    haproxy_image         = optional(string, "haproxytech/haproxy-alpine:3.0")
+    haproxy_replicas      = optional(number, 2)
     # Nodes whose Valkey pod may hold a copy and vote in the Sentinel
     # quorum but must never be promoted to primary (`replica-priority 0`),
     # e.g. a WAN-distant node used only as the quorum tie-breaker. HAProxy
