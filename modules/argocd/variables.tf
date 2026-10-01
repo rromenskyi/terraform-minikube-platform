@@ -13,7 +13,7 @@ variable "namespace" {
 variable "version_pin" {
   description = "Helm chart version for argo/argo-cd. Pinned so an upstream re-tag doesn't silently change behavior across applies. Bump deliberately when a new chart fixes a CVE or ships a desired feature."
   type        = string
-  default     = "9.5.11"
+  default     = "10.9.5"
 }
 
 variable "hostname" {

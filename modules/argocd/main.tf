@@ -46,6 +46,12 @@ locals {
   # inputs don't render a half-shaped `oidc.config` block.
   values = yamlencode({
     global = {
+      # Chart 10+ creates NetworkPolicies by default. The platform runs
+      # one trust boundary without NetworkPolicy; policies on Argo CD alone
+      # would only cut off cross-namespace callers such as Prometheus.
+      networkPolicy = {
+        create = false
+      }
       nodeSelector = var.node_selector
       tolerations = [
         for t in var.tolerations : {
@@ -108,6 +114,12 @@ locals {
     # external` component yaml) routes Cloudflare Tunnel traffic to
     # the `argocd-server` Service the chart creates — owning ingress
     # in two places at once would conflict at the IngressClass level.
+    # SSO is configured as direct OIDC (`oidc.config`), so the bundled
+    # Dex never gets a config and only idles.
+    dex = {
+      enabled = false
+    }
+
     server = {
       ingress = {
         enabled = false
