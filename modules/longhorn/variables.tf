@@ -19,7 +19,7 @@ variable "namespace" {
 variable "version_pin" {
   description = "Helm chart version for longhorn/longhorn. Pinned so an upstream re-tag doesn't change behavior across applies."
   type        = string
-  default     = "1.11.1"
+  default     = "1.13.0"
 }
 
 variable "default_replica_count" {
