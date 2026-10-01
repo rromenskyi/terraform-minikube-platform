@@ -8,6 +8,13 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- **Charts 0.9.3 -> 0.14.2; CRDs managed from the controller chart.** Helm
+  never upgrades a chart's `crds/`, so they are rendered from the same
+  chart version (`helm_template` with `include_crds`) and server-side
+  applied. The README's "Upgrading ARC" section documents the
+  scale-set replace an upgrade still needs.
+
+### Changed
 - **Vault-mode (`vault: true`) now documented as accepting GitHub-App credentials
   alongside PAT.** No code change — the ARC chart auto-detects PAT vs App by
   which keys are present in the Secret, so VSO syncs whatever the operator put

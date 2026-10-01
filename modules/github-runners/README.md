@@ -24,6 +24,26 @@ concern. Outbound bandwidth + image-pull caching is the usual
 bottleneck on self-hosted; sizing comes from the operator's
 observed CI workload.
 
+## Upgrading ARC
+
+Bump `controller_chart_version` and `scale_set_chart_version` together;
+the CRDs follow from the controller chart automatically.
+
+A plain apply is not enough. The new controller deletes every
+AutoscalingRunnerSet whose version label doesn't match its own as soon as
+it starts, which races the scale-set Helm upgrades: Helm patches the
+objects while they are being deleted, reports success, and the runner
+sets are gone (no listeners, CI stalls). After the version bump is
+applied, replace the scale-set releases so they are installed fresh:
+
+```sh
+./tf apply -replace='module.github_runners.helm_release.scale_set["<name>"]'  # one flag per scale set
+```
+
+Then delete any leftover `AutoscalingListener` from the old version in the
+controller namespace; the controller can no longer clean those up because
+their runner sets no longer exist.
+
 <!-- BEGIN_TF_DOCS -->
 ## Requirements
 

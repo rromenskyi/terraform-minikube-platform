@@ -19,13 +19,13 @@ variable "namespace_controller" {
 variable "controller_chart_version" {
   description = "Pinned chart version for `gha-runner-scale-set-controller`. Pin both controller and scale-set chart to the same version — they share a CRD that crosses both releases, and a version skew can break listener-pod creation."
   type        = string
-  default     = "0.9.3"
+  default     = "0.14.2"
 }
 
 variable "scale_set_chart_version" {
   description = "Pinned chart version for `gha-runner-scale-set`. Match the controller's version (see `controller_chart_version`)."
   type        = string
-  default     = "0.9.3"
+  default     = "0.14.2"
 }
 
 variable "controller_node_selector" {
