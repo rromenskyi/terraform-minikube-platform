@@ -63,3 +63,10 @@ variable "tolerations" {
   }))
   default = []
 }
+
+variable "controller_resources" {
+  description = "Resources for the Argo CD application-controller, in the chart's `controller.resources` shape. The chart sets none, so by default the scheduler treats the controller (which caches every managed object in memory) as free. Empty map keeps the chart default."
+  type        = any
+  default     = {}
+  nullable    = false
+}

@@ -172,14 +172,8 @@ resource "kubernetes_stateful_set_v1" "mysql" {
           }
 
           resources {
-            requests = {
-              cpu    = "100m"
-              memory = "256Mi"
-            }
-            limits = {
-              cpu    = "500m"
-              memory = "1Gi"
-            }
+            requests = var.resources.requests
+            limits   = var.resources.limits
           }
 
           volume_mount {

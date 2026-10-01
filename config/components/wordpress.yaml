@@ -98,11 +98,11 @@ config_files:
       Require all denied
     </If>
 
-# Login brute-force runs at roughly 150 attempts per source address in a
-# burst. The limit is counted per Traefik pod (4 DaemonSet pods, requests
-# spread across them), so 3 per pod is about a dozen POSTs an hour per
-# client: plenty for a person, and each bot address drops to a trickle of
-# 429s that never reach PHP.
+# Login brute-force comes as bursts of many attempts per source address.
+# The limit is counted per Traefik pod, so the effective cap is the value
+# times the number of Traefik replicas: a few tries per pod is plenty for a
+# person, and each bot address drops to a trickle of 429s that never reach
+# PHP.
 rate_limits:
   - path:    /wp-login.php
     methods: [POST]

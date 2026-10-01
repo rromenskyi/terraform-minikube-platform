@@ -101,6 +101,8 @@ module "argocd" {
 
   node_selector = local.platform.services.argocd.node_selector
   tolerations   = local.platform.services.argocd.tolerations
+
+  controller_resources = local.platform.services.argocd.controller_resources
 }
 
 output "argocd_url" {

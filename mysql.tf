@@ -15,4 +15,5 @@ module "mysql" {
 
   node_selector = local.platform.services.mysql.node_selector
   tolerations   = local.platform.services.mysql.tolerations
+  resources     = local.platform.services.mysql.resources
 }

@@ -39,3 +39,16 @@ variable "tolerations" {
   }))
   default = []
 }
+
+variable "resources" {
+  description = "CPU/memory requests and limits for the MySQL container. Size the memory request to the server's working set (InnoDB buffer pool plus per-connection buffers) and leave the limit enough headroom above it: hitting the limit OOM-kills the database."
+  type = object({
+    requests = map(string)
+    limits   = map(string)
+  })
+  default = {
+    requests = { cpu = "100m", memory = "256Mi" }
+    limits   = { cpu = "500m", memory = "1Gi" }
+  }
+  nullable = false
+}

@@ -15,6 +15,7 @@ locals {
         enabled       = false
         node_selector = {}
         tolerations   = []
+        resources     = null # null = module default
       }
       postgres = {
         enabled       = false
@@ -58,6 +59,8 @@ locals {
         namespace     = "argocd"
         node_selector = {}
         tolerations   = []
+        # Chart-shaped `controller.resources`; {} = chart default.
+        controller_resources = {}
       }
       # Maintenance window defaults = the addons module's (reboot any time,
       # any day, UTC). Operators narrow it in config/platform.yaml —

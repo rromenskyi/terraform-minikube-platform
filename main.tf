@@ -83,7 +83,7 @@ check "k3s_ssh_vars_set" {
 # Layer 2: Platform add-ons (Traefik, cert-manager, monitoring, namespaces).
 # -----------------------------------------------------------------------------
 module "addons" {
-  source = "git::https://github.com/rromenskyi/terraform-k8s-addons.git?ref=v2.11.0"
+  source = "git::https://github.com/rromenskyi/terraform-k8s-addons.git?ref=v2.12.0"
 
   kubeconfig_path      = module.k8s.kubeconfig_path
   cluster_name         = module.k8s.cluster_name
@@ -161,6 +161,7 @@ module "addons" {
   monitoring_grafana_extra_values = merge(
     local.platform.services.logging.enabled ? { plugins = ["victoriametrics-logs-datasource"] } : {},
     length(local.monitoring_node_selector) > 0 ? { nodeSelector = local.monitoring_node_selector } : {},
+    length(local.grafana_resources) > 0 ? { resources = local.grafana_resources } : {},
   )
 
   # Pin Alertmanager's externalUrl (from the gitignored monitoring config)
@@ -179,6 +180,8 @@ module "addons" {
   # metric alert's "Source" link resolves to the browser-reachable host
   # instead of the in-cluster Service. Needs the `prometheus` route +
   # component. Empty config => {} => chart default (unchanged).
+  monitoring_prometheus_memory_request = local.prometheus_memory_request
+
   monitoring_prometheus_extra_values = length(local.prometheus_spec) > 0 ? { prometheusSpec = local.prometheus_spec } : {}
 }
 
@@ -191,6 +194,10 @@ locals {
   # pod and its volume stay on the same node.
   monitoring_node_selector = try(local.platform.monitoring.node_selector, {})
   prometheus_storage_size  = try(local.platform.monitoring.prometheus_storage_size, "")
+  # `monitoring.prometheus_memory_request` (default = the addons module's)
+  # and `monitoring.grafana_resources` (chart `grafana.resources` shape).
+  prometheus_memory_request = try(local.platform.monitoring.prometheus_memory_request, "512Mi")
+  grafana_resources         = try(local.platform.monitoring.grafana_resources, {})
   prometheus_spec = merge(
     try(local.platform.monitoring.prometheus_external_url, "") != "" ? { externalUrl = local.platform.monitoring.prometheus_external_url } : {},
     length(local.monitoring_node_selector) > 0 ? { nodeSelector = local.monitoring_node_selector } : {},

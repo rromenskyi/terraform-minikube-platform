@@ -126,6 +126,8 @@ locals {
       }
     }
 
+    controller = length(var.controller_resources) > 0 ? { resources = var.controller_resources } : {}
+
     # The repo-server's health endpoint stalls past the chart-default 1s probe
     # timeout while it is busy generating manifests on this box (observed 5s+
     # responses → liveness kill → CrashLoopBackOff every few minutes for days;
