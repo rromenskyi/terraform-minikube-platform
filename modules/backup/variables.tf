@@ -219,5 +219,5 @@ variable "retention_keep_monthly" {
 variable "image_alpine" {
   description = "Alpine image used as the base for every backup CronJob. Each Job apk-installs the tools it needs (postgresql-client, mysql-client, redis, restic, …) at start. Pinned to keep behavior stable across applies."
   type        = string
-  default     = "alpine:3.22"
+  default     = "alpine:3.24"
 }

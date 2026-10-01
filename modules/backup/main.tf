@@ -359,7 +359,7 @@ resource "kubernetes_cron_job_v1" "postgres" {
               command = ["sh", "-c"]
               args = [<<-EOT
                 set -e
-                apk add --no-cache restic postgresql16-client >/dev/null
+                apk add --no-cache restic postgresql18-client >/dev/null
 
                 STAGE=$(mktemp -d)
                 trap 'rm -rf "$STAGE"' EXIT
