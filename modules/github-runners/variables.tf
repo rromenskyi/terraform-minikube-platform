@@ -74,3 +74,9 @@ variable "tokens" {
   default     = {}
   sensitive   = true
 }
+
+variable "controller_crds" {
+  description = "CRD manifests of the gha-runner-scale-set-controller chart at the pinned version (e.g. `data.helm_template` with `include_crds = true`, `.crds`), server-side applied by this module. Helm installs a chart's `crds/` once and never upgrades them, so without this the CRDs stay at the version first installed. Rendered by the caller because a data source inside a module with a module-level `depends_on` is deferred to apply whenever that dependency has pending changes, leaving the for_each keys unknown at plan."
+  type        = list(string)
+  default     = []
+}

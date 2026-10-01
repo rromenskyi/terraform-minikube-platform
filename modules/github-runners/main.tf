@@ -110,27 +110,11 @@ resource "kubernetes_namespace_v1" "controller" {
   }
 }
 
-# Helm installs a chart's `crds/` only on first install and never
-# upgrades them; ARC's own upgrade guide works around that by
-# uninstalling everything. Rendering the CRDs from the same chart
-# version and server-side applying them keeps them current, so a version
-# bump is a plain in-place upgrade.
-data "helm_template" "controller_crds" {
-  for_each = local.instances
-
-  name         = "arc-controller"
-  namespace    = var.namespace_controller
-  repository   = "oci://ghcr.io/actions/actions-runner-controller-charts"
-  chart        = "gha-runner-scale-set-controller"
-  version      = var.controller_chart_version
-  include_crds = true
-}
-
+# CRDs come pre-rendered from the root (`operator_crds.tf`), because
+# Helm never upgrades a chart's `crds/`; server-side apply keeps them
+# matching the chart version.
 resource "kubectl_manifest" "controller_crds" {
-  for_each = {
-    for doc in try(data.helm_template.controller_crds["enabled"].crds, []) :
-    yamldecode(doc).metadata.name => doc
-  }
+  for_each = { for doc in var.controller_crds : yamldecode(doc).metadata.name => doc }
 
   yaml_body         = each.value
   server_side_apply = true

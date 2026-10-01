@@ -89,12 +89,15 @@ module "vault" {
   source     = "./modules/vault"
   depends_on = [module.addons, kubernetes_namespace_v1.platform]
 
-  context          = module.platform_label.context
-  enabled          = local.platform.services.vault.enabled
-  namespace        = kubernetes_namespace_v1.platform.metadata[0].name
-  hostname         = local.platform.services.vault.hostname
-  volume_base_path = var.host_volume_path
-  storage_class    = local.platform.services.vault.storage_class
+  context   = module.platform_label.context
+  enabled   = local.platform.services.vault.enabled
+  namespace = kubernetes_namespace_v1.platform.metadata[0].name
+
+  vault_config_operator_chart_version = local.platform.services.vault.vault_config_operator_chart_version
+  vault_config_operator_crds          = try(data.helm_template.vault_config_operator_crds["enabled"].crds, [])
+  hostname                            = local.platform.services.vault.hostname
+  volume_base_path                    = var.host_volume_path
+  storage_class                       = local.platform.services.vault.storage_class
 
   # Phase 2 — OIDC self-serve. Wired only when both Vault AND Zitadel
   # are on; otherwise the module stays in Phase 1 shape (root-token

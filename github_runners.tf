@@ -17,6 +17,9 @@ module "github_runners" {
 
   context                  = module.platform_label.context
   enabled                  = local.platform.services.github_runners.enabled
+  controller_chart_version = local.platform.services.github_runners.chart_version
+  scale_set_chart_version  = local.platform.services.github_runners.chart_version
+  controller_crds          = try(data.helm_template.arc_controller_crds["enabled"].crds, [])
   controller_node_selector = local.platform.services.github_runners.controller_node_selector
   controller_tolerations   = local.platform.services.github_runners.controller_tolerations
   scale_sets               = local.platform.services.github_runners.scale_sets

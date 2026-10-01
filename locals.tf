@@ -47,9 +47,10 @@ locals {
         affinity      = {}
       }
       vault = {
-        enabled       = false
-        hostname      = ""
-        storage_class = ""
+        enabled                             = false
+        hostname                            = ""
+        storage_class                       = ""
+        vault_config_operator_chart_version = "1.0.3"
       }
       argocd = {
         enabled       = false
@@ -128,6 +129,7 @@ locals {
       }
       github_runners = {
         enabled                  = false
+        chart_version            = "0.14.2" # controller and scale sets must match
         controller_node_selector = {}
         controller_tolerations   = []
         scale_sets               = {}
