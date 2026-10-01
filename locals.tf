@@ -299,7 +299,7 @@ locals {
         # Defaults below are the values that survived a real ARC
         # build cycle on this cluster.
         enabled                         = false
-        image_tag                       = "v0.29.0"
+        image_tag                       = "v0.33.1"
         host_path                       = "/data/vol/buildkit-cache"
         mount_path                      = "/var/lib/buildkit"
         cpu_request                     = "200m"
