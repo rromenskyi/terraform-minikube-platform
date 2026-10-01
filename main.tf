@@ -158,9 +158,10 @@ module "addons" {
   # so the datasource the `logging` module emits (sidecar-discovered) renders
   # with full LogsQL + the Explore field/time UI. Gated so a disabled logging
   # stack adds nothing to the Grafana pod. The plugin downloads at pod start.
-  monitoring_grafana_extra_values = local.platform.services.logging.enabled ? {
-    plugins = ["victoriametrics-logs-datasource"]
-  } : {}
+  monitoring_grafana_extra_values = merge(
+    local.platform.services.logging.enabled ? { plugins = ["victoriametrics-logs-datasource"] } : {},
+    length(local.monitoring_node_selector) > 0 ? { nodeSelector = local.monitoring_node_selector } : {},
+  )
 
   # Pin Alertmanager's externalUrl (from the gitignored monitoring config)
   # so notification links — the email "View in Alertmanager" button and
@@ -178,11 +179,32 @@ module "addons" {
   # metric alert's "Source" link resolves to the browser-reachable host
   # instead of the in-cluster Service. Needs the `prometheus` route +
   # component. Empty config => {} => chart default (unchanged).
-  monitoring_prometheus_extra_values = try(local.platform.monitoring.prometheus_external_url, "") != "" ? {
-    prometheusSpec = {
-      externalUrl = local.platform.monitoring.prometheus_external_url
-    }
-  } : {}
+  monitoring_prometheus_extra_values = length(local.prometheus_spec) > 0 ? { prometheusSpec = local.prometheus_spec } : {}
+}
+
+locals {
+  # Optional placement for Prometheus + Grafana (`monitoring.node_selector`),
+  # and a PVC for Prometheus (`monitoring.prometheus_storage_size`). Without
+  # the PVC the TSDB lives in an emptyDir and every Prometheus restart drops
+  # the whole retention window. The PVC uses the cluster default
+  # StorageClass; with a node-local class, keep `node_selector` set so the
+  # pod and its volume stay on the same node.
+  monitoring_node_selector = try(local.platform.monitoring.node_selector, {})
+  prometheus_storage_size  = try(local.platform.monitoring.prometheus_storage_size, "")
+  prometheus_spec = merge(
+    try(local.platform.monitoring.prometheus_external_url, "") != "" ? { externalUrl = local.platform.monitoring.prometheus_external_url } : {},
+    length(local.monitoring_node_selector) > 0 ? { nodeSelector = local.monitoring_node_selector } : {},
+    local.prometheus_storage_size != "" ? {
+      storageSpec = {
+        volumeClaimTemplate = {
+          spec = {
+            accessModes = ["ReadWriteOnce"]
+            resources   = { requests = { storage = local.prometheus_storage_size } }
+          }
+        }
+      }
+    } : {},
+  )
 }
 
 # =============================================================================
