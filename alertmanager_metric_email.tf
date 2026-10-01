@@ -9,7 +9,8 @@
 # routing that namespace's `alert_source=metric` alerts to email.
 #
 # Everything operator/tenant-specific (recipient, From, EHLO, the namespace
-# list) comes from the gitignored config under `monitoring.metric_alert_email`
+# list, optional `repeat_intervals` per namespace) comes from the gitignored
+# config under `monitoring.metric_alert_email`
 # — tracked TF stays generic. smarthost defaults to the in-cluster Stalwart
 # inbound listener (unauthenticated LOCAL delivery), same path the log alerts
 # already use. Absent config (no address or no namespaces) => no resources.
@@ -34,11 +35,13 @@ resource "kubectl_manifest" "metric_alert_email" {
     }
     spec = {
       route = {
-        receiver       = "email"
-        groupBy        = ["alertname", "namespace"]
-        groupWait      = "30s"
-        groupInterval  = "5m"
-        repeatInterval = "3h"
+        receiver      = "email"
+        groupBy       = ["alertname", "namespace"]
+        groupWait     = "30s"
+        groupInterval = "5m"
+        # Optional per-namespace override, e.g. a weekly reminder for
+        # long-lived findings while new ones still notify at once.
+        repeatInterval = try(local._metric_alert.repeat_intervals[each.value], "3h")
         matchers       = [{ name = "alert_source", value = "metric", matchType = "=" }]
       }
       receivers = [{

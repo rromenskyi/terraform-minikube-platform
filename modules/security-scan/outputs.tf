@@ -1,5 +1,5 @@
 output "namespace" {
-  description = "Namespace trivy-operator + the snapshot CronJob land in. Empty when the module is disabled."
+  description = "Namespace trivy-operator lands in. Empty when the module is disabled."
   value       = var.enabled ? var.namespace : ""
 }
 

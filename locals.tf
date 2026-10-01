@@ -187,16 +187,11 @@ locals {
       security_scan = {
         enabled                      = false
         trivy_operator_chart_version = "0.36.0"
-        cache_node_hostname          = "" # required when enabled; set in config
         node_selector                = {}
-        trivy_cache_size             = "5Gi"
+        extra_target_namespaces      = []
         service_monitor_enabled      = false
-        snapshot_schedule            = "0 4 * * 0"
-        github_repo                  = "rromenskyi/terraform-minikube-platform"
-        branch_prefix                = "security-scan/snapshot"
-        email_to                     = ""
-        email_from                   = ""
-        email_helo                   = ""
+        alerts_enabled               = false
+        alert_severities             = ["Critical"]
       }
       backup = {
         enabled                = false

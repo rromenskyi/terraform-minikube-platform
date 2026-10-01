@@ -1,59 +1,44 @@
 # security-scan
 
-Continuous CVE scanning of platform-system container images, with a
-weekly snapshot committed to the engine repo as an audit trail.
+Continuous CVE scanning of platform-system container images with
+[`trivy-operator`](https://github.com/aquasecurity/trivy-operator)
+(Aqua Security), reported through the platform's monitoring stack.
 
 ## Shape
 
-Two layers, both Terraform-managed in this module.
+- **Scanner.** trivy-operator watches Pods in the platform-system
+  namespaces (allowlist in `main.tf::local.target_namespaces`, extendable
+  with `extra_target_namespaces`), scans each unique image and writes a
+  `VulnerabilityReport` next to the workload. Reports expire after the
+  chart's TTL (24h) and are rescanned, so they describe what runs now.
+  Tenant namespaces are out of scope.
+- **Metrics.** With `service_monitor_enabled`, Prometheus scrapes the
+  operator's `trivy_image_vulnerabilities` gauge (labels: image, severity,
+  workload namespace).
+- **Alerts.** With `alerts_enabled`, a PrometheusRule raises
+  `ImageVulnerabilities` per image with fixable findings at
+  `alert_severities`, and `SecurityScanNoData` when the scanner exports
+  nothing for 6h — so silence can't also mean "broken". Alerts carry
+  `namespace=<this namespace>` plus `alert_labels`, so one Alertmanager
+  route delivers them.
 
-**Bottom**: upstream [`trivy-operator`](https://github.com/aquasecurity/trivy-operator)
-(Aqua Security) installed via Helm. Watches Pods cluster-wide,
-dispatches a trivy scan per unique image, writes the result back as a
-`VulnerabilityReport` CRD next to the workload it covers. Configured
-to scan only the platform-system namespaces (allowlist in
-`main.tf::local.target_namespaces`); tenant project namespaces are
-intentionally excluded in v0. Severity floor `HIGH,CRITICAL`.
+Scans run as clients of the chart's built-in trivy server, which keeps
+the vulnerability DB on a PVC (`builtin_trivy_server`).
 
-The trivy vulnerability DB (~700 MB) lives on a hostPath PV pinned to
-a stateful tier node so operator pod restarts don't re-pull on every
-scrape.
+Defaults keep the footprint small: only the vulnerability scanner runs
+(config audit, RBAC, infra, secret and SBOM reports are off), at most
+`scan_jobs_concurrent_limit` scans run at once, unfixed findings are
+ignored, and the operator gets no cluster-wide Secret access (private
+images then show up as scan failures).
 
-**Top**: a weekly `CronJob` (default Sunday 04:00 UTC) collects every
-active VulnerabilityReport across the allowlist, formats the HIGH +
-CRITICAL findings into a single markdown table, and commits that as
-`inventory/cve-report.md` in the platform repo via a force-pushed
-branch + GitHub API PR. If the report didn't change since last run
-(modulo the `Generated:` timestamp line), the CronJob exits silently
-— no PR, no noise. New CVEs or image bumps trigger PR open / refresh.
+## Looking at findings
 
-## Operator setup
+```sh
+kubectl get vulnerabilityreports -A \
+  -o custom-columns=NS:.metadata.namespace,IMAGE:.report.artifact.repository,TAG:.report.artifact.tag,CRIT:.report.summary.criticalCount,HIGH:.report.summary.highCount
+```
 
-1. Mint a classic GitHub PAT with scope `repo` (full) for
-   `<owner>/terraform-minikube-platform`. Personal account that has
-   write access to the repo. No expiration is fine; rotate via
-   replace-in-Vault when needed (no TF re-apply required).
-2. Place the PAT in Vault under
-   `secret/data/platform/github-deploy-tokens/security-scan` with one
-   data key `github_token`. VSO syncs into the
-   `security-scan-github-pat` Secret in the module namespace within
-   `refreshAfter: 30s`.
-3. Set `services.security_scan.enabled: true` in `config/platform.yaml`.
-4. `./tf apply`.
-
-The first weekly run will commit the initial snapshot. Subsequent runs
-update the same branch (`security-scan/snapshot` by default) — one
-long-lived PR rather than a new branch each week.
-
-## Scope evolution (v1)
-
-Tenant project namespaces (matching `var.namespace_prefix` on the root
-stack — default `phost-*`) are out of v0 scope to avoid leaking
-operator-private image refs into the public engine repo via the
-snapshot file. v1 will add a `targetNamespaces` extension that reads
-`var.namespace_prefix` to template the tenant allowlist + handle the
-public-vs-private split (likely opaque tenant labels in the public
-report + private mapping kept out of the repo).
+In Prometheus/Grafana: `sum by (image_repository, image_tag, severity) (trivy_image_vulnerabilities)`.
 
 <!-- BEGIN_TF_DOCS -->
 <!-- END_TF_DOCS -->

@@ -1,10 +1,9 @@
 # Continuous CVE scanning of platform-system images — root wiring.
 #
-# Module owns the trivy-operator helm release, the snapshot CronJob,
-# the trivy DB cache PV/PVC, and the Vault-backed PAT consumption.
-# Operator drives toggle + tuning via `services.security_scan` in
-# `config/platform.yaml`. See `modules/security-scan/main.tf` header
-# for the two-layer architecture rationale.
+# The module owns the trivy-operator release and its alert rules; findings
+# surface as alerts through the platform's Alertmanager (routing labels
+# below) and as metrics/Grafana. Operator drives toggle + tuning via
+# `services.security_scan` in `config/platform.yaml`.
 
 module "security_scan" {
   source = "./modules/security-scan"
@@ -15,14 +14,12 @@ module "security_scan" {
   trivy_operator_chart_version = local.platform.services.security_scan.trivy_operator_chart_version
   trivy_operator_crds          = try(data.helm_template.trivy_operator_crds["enabled"].crds, [])
   node_selector                = local.platform.services.security_scan.node_selector
-  cache_node_hostname          = local.platform.services.security_scan.cache_node_hostname
-  host_volume_path             = var.host_volume_path
-  trivy_cache_size             = local.platform.services.security_scan.trivy_cache_size
+  extra_target_namespaces      = local.platform.services.security_scan.extra_target_namespaces
   service_monitor_enabled      = local.platform.services.security_scan.service_monitor_enabled
-  snapshot_schedule            = local.platform.services.security_scan.snapshot_schedule
-  github_repo                  = local.platform.services.security_scan.github_repo
-  branch_prefix                = local.platform.services.security_scan.branch_prefix
-  email_to                     = local.platform.services.security_scan.email_to
-  email_from                   = local.platform.services.security_scan.email_from
-  email_helo                   = local.platform.services.security_scan.email_helo
+  alerts_enabled               = local.platform.services.security_scan.alerts_enabled
+  alert_severities             = local.platform.services.security_scan.alert_severities
+  grafana_dashboard_enabled    = local.platform.services.security_scan.service_monitor_enabled
+  # Metric alerts reach email through alertmanager_metric_email.tf, which
+  # matches this label (list the scanner namespace there).
+  alert_labels = { alert_source = "metric" }
 }

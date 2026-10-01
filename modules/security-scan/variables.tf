@@ -5,13 +5,13 @@ variable "context" {
 }
 
 variable "enabled" {
-  description = "Whether to install trivy-operator + the snapshot CronJob. False collapses every resource to zero — namespace, helm release, PV/PVC, RBAC, CronJob, Vault Secret all disappear."
+  description = "Whether to install trivy-operator. False collapses every resource to zero."
   type        = bool
   default     = false
 }
 
 variable "namespace" {
-  description = "Namespace the trivy-operator deployment + snapshot CronJob land in. Module owns the namespace creation, so the name must not collide with one already managed elsewhere. Convention is `security-scan` — a sibling of the other platform-system namespaces (`vault`, `zitadel`, etc.)."
+  description = "Namespace trivy-operator lands in. Module owns the namespace creation, so the name must not collide with one already managed elsewhere. It is always part of the scan allowlist."
   type        = string
   default     = "security-scan"
 }
@@ -22,79 +22,14 @@ variable "trivy_operator_chart_version" {
   default     = "0.36.0"
 }
 
-variable "host_volume_path" {
-  description = "Parent path used by the trivy DB cache hostPath PV. Same convention as the rest of the engine (`var.host_volume_path` on the root) — module appends `/trivy-cache` to derive the on-disk dir. The kubelet on `var.cache_node_hostname` must be able to read/write this path."
-  type        = string
-  default     = "/data/vol"
-}
-
-variable "cache_node_hostname" {
-  description = "Hostname (`kubernetes.io/hostname`) of the node the trivy DB cache PV pins to. Should match the operator's `stateful` tier node — that's the convention for hostPath PVs. Without an explicit pin the PV could bind on a node where the hostPath dir doesn't exist."
-  type        = string
-  default     = ""
-
-  validation {
-    condition     = var.cache_node_hostname != ""
-    error_message = "cache_node_hostname is required: the trivy cache hostPath PV must pin to a node."
-  }
-}
-
-variable "trivy_cache_size" {
-  description = "Capacity declared on the trivy DB cache PV/PVC. Trivy's vulnerability DB is ~700 MB compressed; allow headroom for repo metadata and parallel scan working space. Plain `1Gi` is too tight if upstream DB grows; 5Gi gives years of runway."
-  type        = string
-  default     = "5Gi"
-}
-
-variable "service_monitor_enabled" {
-  description = "Whether to emit a `ServiceMonitor` for trivy-operator's metrics endpoint, scraped by the platform's kube-prometheus-stack. False if the platform doesn't run kube-prometheus-stack — ServiceMonitor CRD must exist or the helm install fails on schema validation."
-  type        = bool
-  default     = false
-}
-
-variable "snapshot_schedule" {
-  description = "Cron expression for the weekly snapshot CronJob. Default is Sunday 04:00 UTC — quiet time, plenty of CI headroom, and weekly cadence keeps PR noise low for a single operator. Bump to daily (`0 4 * * *`) if signal proves valuable."
-  type        = string
-  default     = "0 4 * * 0"
-}
-
-variable "github_repo" {
-  description = "Full `owner/repo` slug of the platform engine repo where the snapshot CronJob commits the CVE report and opens a PR. Format: `<owner>/<repo>` (no scheme, no `.git` suffix). The PAT in Vault under `secret/data/platform/github-deploy-tokens/security-scan` must hold `repo` (full) scope on this repo."
-  type        = string
-  default     = "rromenskyi/terraform-minikube-platform"
-}
-
-variable "branch_prefix" {
-  description = "Prefix the CronJob uses when creating PR branches — e.g. `security-scan/2026-05-19`. The date suffix is generated at run time. The branch is force-pushed each run, so multiple in the same week share one branch (PRs auto-update rather than spawning new ones). Leave defaulted unless the operator wants a different naming convention."
-  type        = string
-  default     = "security-scan/snapshot"
-}
-
-variable "email_to" {
-  description = "Operator address emailed when the snapshot's findings change (list of added/resolved findings + PR link). Empty (default) disables email; the PR stays the only signal."
-  type        = string
-  default     = ""
-}
-
-variable "email_from" {
-  description = "Sender address of the snapshot email. Required when `email_to` is set."
-  type        = string
-  default     = ""
-}
-
-variable "email_helo" {
-  description = "EHLO name the CronJob uses towards the mail server. List it in the mail domain's `trusted_helo_domains` so the in-cluster message skips the inbound spam filter. Required when `email_to` is set."
-  type        = string
-  default     = ""
-}
-
-variable "smtp_server" {
-  description = "In-cluster SMTP `host:port` (plain SMTP, no auth) the snapshot email is submitted to."
-  type        = string
-  default     = "stalwart-smtp.mail.svc.cluster.local:25"
-}
-
 variable "trivy_operator_crds" {
   description = "CRD manifests of the trivy-operator chart at the pinned version (e.g. `data.helm_template` with `include_crds = true`, `.crds`), server-side applied by this module. Helm installs a chart's `crds/` once and never upgrades them, so without this the CRDs stay at the version first installed. Rendered by the caller because a data source inside a module with a module-level `depends_on` is deferred to apply whenever that dependency has pending changes, leaving the for_each keys unknown at plan."
+  type        = list(string)
+  default     = []
+}
+
+variable "extra_target_namespaces" {
+  description = "Namespaces scanned in addition to the built-in platform-system allowlist."
   type        = list(string)
   default     = []
 }
@@ -105,3 +40,106 @@ variable "node_selector" {
   default     = {}
 }
 
+variable "severity" {
+  description = "Comma-separated severities trivy records in reports and metrics."
+  type        = string
+  default     = "HIGH,CRITICAL"
+}
+
+variable "ignore_unfixed" {
+  description = "Drop findings that have no fixed version yet. They cannot be acted on, so with them every alert stays open forever."
+  type        = bool
+  default     = true
+}
+
+variable "scan_jobs_concurrent_limit" {
+  description = "Maximum scan Jobs running at once. Scans share one trivy cache and one node; too many in parallel fail on the cache lock and starve the node."
+  type        = number
+  default     = 2
+}
+
+variable "scan_job_timeout" {
+  description = "Deadline of one scan Job. Large images (databases, identity servers) need several minutes in slow mode."
+  type        = string
+  default     = "15m"
+}
+
+variable "scan_job_resources" {
+  description = "Resources of each scan Job, in the chart's `trivy.resources` shape."
+  type        = any
+  default = {
+    requests = { cpu = "100m", memory = "256Mi" }
+    limits   = { cpu = "1", memory = "2Gi" }
+  }
+}
+
+variable "operator_resources" {
+  description = "Resources of the operator Deployment, in the chart's `resources` shape. The chart sets none."
+  type        = any
+  default = {
+    requests = { cpu = "50m", memory = "256Mi" }
+    limits   = { memory = "512Mi" }
+  }
+}
+
+variable "service_monitor_enabled" {
+  description = "Whether to emit a `ServiceMonitor` for trivy-operator's metrics endpoint, scraped by kube-prometheus-stack. Requires the ServiceMonitor CRD."
+  type        = bool
+  default     = false
+}
+
+variable "alerts_enabled" {
+  description = "Whether to emit the PrometheusRule (image vulnerabilities + scanner no-data). Requires `service_monitor_enabled` and the PrometheusRule CRD."
+  type        = bool
+  default     = false
+
+  validation {
+    condition     = !var.alerts_enabled || var.service_monitor_enabled
+    error_message = "alerts_enabled needs service_monitor_enabled: the rules evaluate the scanner's metrics."
+  }
+}
+
+variable "alert_severities" {
+  description = "Vulnerability severities (as in the `trivy_image_vulnerabilities` `severity` label) that raise an alert."
+  type        = list(string)
+  default     = ["Critical"]
+}
+
+variable "alert_labels" {
+  description = "Extra labels on the alerts, typically what the Alertmanager routing matches on."
+  type        = map(string)
+  default     = {}
+}
+
+variable "grafana_dashboard_enabled" {
+  description = "Emit a findings-table dashboard as a ConfigMap labelled `grafana_dashboard=1` in this module's namespace. Needs a Grafana dashboard sidecar that watches all namespaces (kube-prometheus-stack's does)."
+  type        = bool
+  default     = false
+}
+
+variable "builtin_trivy_server" {
+  description = "Run trivy-operator's built-in trivy server and scan in ClientServer mode. The DB lives once on a PVC instead of in every scan Pod, and multi-container workloads no longer fail on the shared local cache lock."
+  type        = bool
+  default     = true
+}
+
+variable "trivy_server_storage_class" {
+  description = "StorageClass of the trivy server's DB PVC. Empty = cluster default."
+  type        = string
+  default     = ""
+}
+
+variable "trivy_server_storage_size" {
+  description = "Size of the trivy server's DB PVC (the vulnerability DB is under 1 GiB)."
+  type        = string
+  default     = "5Gi"
+}
+
+variable "trivy_server_resources" {
+  description = "Resources of the built-in trivy server, in the chart's `trivy.server.resources` shape."
+  type        = any
+  default = {
+    requests = { cpu = "100m", memory = "512Mi" }
+    limits   = { cpu = "1", memory = "1Gi" }
+  }
+}

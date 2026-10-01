@@ -8,6 +8,29 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- **BREAKING: snapshot pipeline removed.** The weekly CronJob that wrote
+  `inventory/cve-report.md`, pushed a branch, opened a PR and emailed a
+  summary is gone, with its scripts, RBAC, Vault PAT sync and the unused
+  trivy cache PV/PVC. It swallowed collection errors (a failed run looked
+  like a clean report), mis-deduplicated images and could lose PRs and
+  mail for good. Findings now go through Prometheus: new inputs
+  `alerts_enabled`, `alert_severities`, `alert_labels` emit a
+  PrometheusRule (`ImageVulnerabilities`, `SecurityScanNoData`).
+  Migration: drop `cache_node_hostname`, `host_volume_path`,
+  `trivy_cache_size`, `snapshot_schedule`, `github_repo`, `branch_prefix`,
+  `email_*`, `smtp_server` from the call; route the alerts via
+  Alertmanager; revoke the snapshot PAT.
+- Operator no longer gets cluster-wide Secret access
+  (`accessGlobalSecretsAndServiceAccount=false`); config-audit and SBOM
+  reports are off; scans are capped at `scan_jobs_concurrent_limit`
+  (default 2) with `scan_job_timeout` / `scan_job_resources` /
+  `operator_resources` inputs; `ignore_unfixed` defaults to true; the
+  `mail` namespace and `extra_target_namespaces` are scanned.
+- Scans run in ClientServer mode against the chart's built-in trivy server
+  (`builtin_trivy_server`, default true, DB on a PVC): Standalone scans of
+  multi-container workloads failed on the shared cache lock.
+
+### Changed
 - **BREAKING (inputs): Telegram notification replaced by email.**
   `telegram_notify_enabled` / `telegram_vault_path` and the Telegram
   VaultStaticSecret are gone; set `email_to`, `email_from`, `email_helo`

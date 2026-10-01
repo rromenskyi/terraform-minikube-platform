@@ -1,29 +1,20 @@
 # Continuous CVE scanning of platform-system container images.
 #
-# Two-layer setup. The bottom layer is upstream `trivy-operator` (Aqua
-# Security, https://github.com/aquasecurity/trivy-operator) — a
-# Kubernetes operator that watches Pods cluster-wide, dispatches a
-# trivy scan per unique image, and writes the result back as a
-# `VulnerabilityReport` CRD next to the workload it covers. Configured
-# here to scan only the platform-system namespaces (allowlist below).
-# The DB cache that trivy needs (~700 MB) lives on a hostPath PV pinned
-# to the operator's stateful node so re-creates of the operator pod
-# don't re-pull the DB each time.
+# Upstream `trivy-operator` (Aqua Security,
+# https://github.com/aquasecurity/trivy-operator) watches Pods in the
+# allowlisted namespaces, scans each unique image and writes a
+# `VulnerabilityReport` next to the workload. Reports expire after the
+# chart's report TTL (24h) and are rescanned, so they always describe what
+# is running now.
 #
-# The top layer is a weekly `CronJob` that collects every active
-# VulnerabilityReport, formats the high/critical findings into a
-# single `inventory/cve-report.md`, opens a PR against the platform
-# repo if the report changed since last run, and silently exits
-# otherwise. The PR is the audit trail: an operator scrolling git log
-# of `inventory/cve-report.md` sees exactly when each new vulnerability
-# entered the platform and when it left. Authentication uses a
-# vault-backed PAT (`secret/data/platform/github-deploy-tokens/security-scan`).
+# Signal goes through the platform's monitoring stack, not a side channel:
+# the operator's metrics are scraped by Prometheus (ServiceMonitor), and a
+# PrometheusRule turns them into alerts that Alertmanager delivers like any
+# other alert. Quiet means clean only because a second rule fires when the
+# scanner stops producing data.
 #
-# Scope is intentionally tight in v0 — only platform-owned namespaces
-# (vault, zitadel, postgres, redis, etc.) are scanned. Tenant project
-# namespaces (matching `var.namespace_prefix`-* on the root stack) are
-# excluded; v1 will extend the allowlist + handle the leak surface
-# around tenant naming in the public report.
+# Scope is the platform-system namespaces only. Tenant namespaces are out of
+# scope on purpose.
 
 terraform {
   required_providers {
@@ -47,11 +38,10 @@ terraform {
 
 locals {
   instances = var.enabled ? toset(["enabled"]) : toset([])
+  alerting  = var.enabled && var.alerts_enabled ? toset(["enabled"]) : toset([])
 
-  # Namespace allowlist. Static, hand-curated — this is the
-  # public-repo "what we scan" surface. Tenant namespaces
-  # (`var.namespace_prefix`-*) intentionally excluded in v0.
-  target_namespaces = [
+  # Namespace allowlist: the platform-system namespaces this engine creates.
+  target_namespaces = distinct(concat([
     "platform",
     "ops",
     "ingress-controller",
@@ -67,8 +57,9 @@ locals {
     "monitoring",
     "longhorn-system",
     "metallb-system",
-    "security-scan",
-  ]
+    "mail",
+    var.namespace,
+  ], var.extra_target_namespaces))
 
   tags = module.label.tags
 }
@@ -100,84 +91,7 @@ resource "kubernetes_namespace_v1" "this" {
 }
 
 
-# ── Trivy-Operator: hostPath PV for vuln DB cache ──────────────────────────
-#
-# Trivy's vulnerability DB is ~700 MB. Without persistence the operator
-# pod re-downloads on every restart — slow + wasteful. hostPath PV
-# pinned to the operator's stateful tier node keeps the cache warm
-# across pod recreates. Single replica is fine — trivy-operator is
-# leader-elected internally and the upstream chart deploys one replica
-# by default.
-
-resource "kubernetes_persistent_volume_v1" "trivy_cache" {
-  for_each = local.instances
-
-  metadata {
-    name = "platform-trivy-cache"
-    labels = merge(local.tags, {
-      "app.kubernetes.io/managed-by" = "terraform"
-      "app.kubernetes.io/component"  = "trivy-cache"
-    })
-  }
-
-  spec {
-    capacity = {
-      storage = var.trivy_cache_size
-    }
-    access_modes                     = ["ReadWriteOnce"]
-    persistent_volume_reclaim_policy = "Retain"
-    storage_class_name               = "manual"
-    volume_mode                      = "Filesystem"
-
-    persistent_volume_source {
-      host_path {
-        path = "${var.host_volume_path}/trivy-cache"
-        type = "DirectoryOrCreate"
-      }
-    }
-
-    # Pin to the stateful tier node so the hostPath dir is
-    # always reachable. Without this affinity the PV could
-    # bind on any node, then Pod re-schedules elsewhere and
-    # the volume's hostPath dir doesn't exist there.
-    node_affinity {
-      required {
-        node_selector_term {
-          match_expressions {
-            key      = "kubernetes.io/hostname"
-            operator = "In"
-            values   = [var.cache_node_hostname]
-          }
-        }
-      }
-    }
-  }
-}
-
-resource "kubernetes_persistent_volume_claim_v1" "trivy_cache" {
-  for_each = local.instances
-
-  metadata {
-    name      = "trivy-cache"
-    namespace = kubernetes_namespace_v1.this["enabled"].metadata[0].name
-    labels    = local.tags
-  }
-
-  spec {
-    access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "manual"
-    volume_name        = kubernetes_persistent_volume_v1.trivy_cache["enabled"].metadata[0].name
-
-    resources {
-      requests = {
-        storage = var.trivy_cache_size
-      }
-    }
-  }
-}
-
-
-# ── Trivy-Operator: Helm release ───────────────────────────────────────────
+# ── Trivy-Operator ─────────────────────────────────────────────────────────
 
 # CRDs come pre-rendered from the root (`operator_crds.tf`), because
 # Helm never upgrades a chart's `crds/`; server-side apply keeps them
@@ -197,7 +111,6 @@ resource "helm_release" "trivy_operator" {
 
   depends_on = [
     kubernetes_namespace_v1.this,
-    kubernetes_persistent_volume_claim_v1.trivy_cache,
     kubectl_manifest.trivy_operator_crds,
   ]
 
@@ -212,54 +125,58 @@ resource "helm_release" "trivy_operator" {
   create_namespace = false
 
   values = [yamlencode({
-    # Scan-target gating. `targetNamespaces` filters which Pods get
-    # scanned to the platform-system allowlist. Empty would mean
-    # "every namespace" — explicitly NOT what we want in v0.
     targetNamespaces = join(",", local.target_namespaces)
 
-    # Severity floor. LOW + MEDIUM produce noise without action;
-    # operator only wants to see what's actually exploitable.
     operator = {
       vulnerabilityScannerEnabled                  = true
-      configAuditScannerEnabled                    = true
-      rbacAssessmentScannerEnabled                 = false
-      infraAssessmentScannerEnabled                = false
-      clusterComplianceEnabled                     = false
-      exposedSecretScannerEnabled                  = false
       vulnerabilityScannerScanOnlyCurrentRevisions = true
-      scanJobTimeout                               = "5m"
-      # SBOM reports are the biggest objects the operator writes (a full
-      # package list per image, ~0.5 MB each) and nothing here reads them;
-      # they also outlive their workloads. Off keeps etcd from swelling.
-      # The vulnerability scanner works without them.
+      # Nothing consumes the other report kinds; each one is more etcd
+      # objects and more scan Jobs.
+      configAuditScannerEnabled     = false
+      rbacAssessmentScannerEnabled  = false
+      infraAssessmentScannerEnabled = false
+      clusterComplianceEnabled      = false
+      exposedSecretScannerEnabled   = false
+      # SBOM reports are the largest objects the operator writes (a full
+      # package list per image) and nothing reads them.
       sbomGenerationEnabled = false
+      # The chart default (10) starts ten scans at once; with a shared
+      # trivy cache they then fail on its lock, and they pile onto one node.
+      scanJobsConcurrentLimit = var.scan_jobs_concurrent_limit
+      scanJobTimeout          = var.scan_job_timeout
+      # The chart default grants the operator get/create/update on Secrets
+      # in every namespace (to pull private images). The scan allowlist does
+      # not narrow RBAC, so that would expose tenant credentials. Private
+      # images are then reported as scan failures instead.
+      accessGlobalSecretsAndServiceAccount = false
+      # Built-in trivy server: one StatefulSet holds the vulnerability DB on
+      # a PVC and scan Jobs run as thin clients against it. In Standalone
+      # mode every container of a scan Pod opens the same local cache and
+      # multi-container workloads fail on its lock.
+      builtInTrivyServer = var.builtin_trivy_server
     }
 
     trivy = {
-      severity      = "HIGH,CRITICAL"
-      ignoreUnfixed = false
-      slow          = true # slow-mode keeps memory < 1 GiB on big scan jobs
+      severity = var.severity
+      # Findings without a fixed version cannot be acted on and never go
+      # away; keeping them makes every alert permanent noise.
+      ignoreUnfixed = var.ignore_unfixed
+      slow          = true # lower memory per scan at some CPU cost
+      resources     = var.scan_job_resources
 
-      # Persistent cache mount — bound to the hostPath PVC above.
-      # Without this trivy re-downloads the ~700 MB vuln DB on
-      # every operator-pod restart.
-      storageClassEnabled = false
-      storageClassName    = ""
-      storageSize         = ""
-
-      # Resource sizing for scan Jobs trivy-operator spawns. These
-      # are short-lived per-image scans (tens of seconds each), but
-      # multiple can run in parallel — keep limits modest so a scan
-      # storm doesn't starve real workloads.
-      resources = {
-        requests = { cpu = "100m", memory = "256Mi" }
-        limits   = { cpu = "1", memory = "1Gi" }
+      # Server DB storage (built-in server only). Empty class = cluster
+      # default; with a node-local class keep `node_selector` set so the
+      # server stays next to its volume.
+      storageClassEnabled = var.builtin_trivy_server
+      storageClassName    = var.trivy_server_storage_class
+      storageSize         = var.trivy_server_storage_size
+      server = {
+        resources = var.trivy_server_resources
       }
     }
 
-    # ServiceMonitor for Prometheus scrape — reuses the platform's
-    # kube-prometheus-stack. Adds a `trivy_image_vulnerabilities`
-    # gauge series Grafana can dashboard off.
+    resources = var.operator_resources
+
     serviceMonitor = {
       enabled = var.service_monitor_enabled
     }
@@ -275,260 +192,106 @@ resource "helm_release" "trivy_operator" {
 }
 
 
-# ── Snapshot CronJob: collect VulnerabilityReports → commit to repo ────────
+# ── Alerts ─────────────────────────────────────────────────────────────────
 #
-# Every Sunday 04:00 UTC (configurable). Pod sequence:
-#   1. initContainer `collect`: kubectl get vulnerabilityreports -A
-#      → format markdown table of HIGH/CRITICAL → write /work/cve-report.md
-#   2. main container `commit-pr`: clone repo via PAT, diff
-#      `inventory/cve-report.md`, if changed open a PR via curl + GitHub
-#      API. If unchanged, exit 0 silently.
+# Requires the ServiceMonitor (metrics in Prometheus). One alert per image
+# with fixable findings at the alert severity, grouped by Alertmanager into
+# one notification; plus a dead-man rule so "no alert" can't also mean "the
+# scanner is broken". `alert_labels` carries the routing labels the
+# platform's Alertmanager matches on.
 
-resource "kubernetes_service_account_v1" "snapshot" {
-  for_each = local.instances
+resource "kubectl_manifest" "alerts" {
+  for_each = local.alerting
 
-  metadata {
-    name      = "security-scan-snapshot"
-    namespace = kubernetes_namespace_v1.this["enabled"].metadata[0].name
-    labels    = local.tags
-  }
-}
-
-# Read-only on VulnerabilityReports cluster-wide. The CronJob never
-# writes back — only reads what trivy-operator emitted, formats it,
-# and commits the result outside the cluster.
-resource "kubernetes_cluster_role_v1" "snapshot" {
-  for_each = local.instances
-
-  metadata {
-    name   = "security-scan-snapshot-read"
-    labels = local.tags
-  }
-
-  rule {
-    api_groups = ["aquasecurity.github.io"]
-    resources  = ["vulnerabilityreports", "configauditreports"]
-    verbs      = ["get", "list"]
-  }
-
-  rule {
-    api_groups = [""]
-    resources  = ["namespaces"]
-    verbs      = ["get", "list"]
-  }
-}
-
-resource "kubernetes_cluster_role_binding_v1" "snapshot" {
-  for_each = local.instances
-
-  metadata {
-    name   = "security-scan-snapshot-read"
-    labels = local.tags
-  }
-
-  role_ref {
-    api_group = "rbac.authorization.k8s.io"
-    kind      = "ClusterRole"
-    name      = kubernetes_cluster_role_v1.snapshot["enabled"].metadata[0].name
-  }
-
-  subject {
-    kind      = "ServiceAccount"
-    name      = kubernetes_service_account_v1.snapshot["enabled"].metadata[0].name
-    namespace = kubernetes_namespace_v1.this["enabled"].metadata[0].name
-  }
-}
-
-# VSO consuming-namespace SA — VSO impersonates this SA when
-# authenticating against Vault's k8s auth method. Same pattern as
-# `modules/project` and `modules/github-runners`.
-resource "kubernetes_service_account_v1" "vso_proxy" {
-  for_each = local.instances
-
-  depends_on = [kubernetes_namespace_v1.this]
-
-  metadata {
-    name      = "vault-secrets-operator-controller-manager"
-    namespace = kubernetes_namespace_v1.this["enabled"].metadata[0].name
-    labels    = local.tags
-  }
-}
-
-# Vault-mode PAT for opening PRs. Operator places the value at
-# `secret/data/platform/github-deploy-tokens/security-scan` (one key:
-# `github_token`); VSO syncs into `security-scan-github-pat` Secret in
-# this namespace; the CronJob mounts it as an env var.
-resource "kubectl_manifest" "github_pat_vault" {
-  for_each = local.instances
-
-  depends_on = [kubernetes_service_account_v1.vso_proxy]
+  depends_on = [helm_release.trivy_operator]
 
   yaml_body = yamlencode({
-    apiVersion = "secrets.hashicorp.com/v1beta1"
-    kind       = "VaultStaticSecret"
+    apiVersion = "monitoring.coreos.com/v1"
+    kind       = "PrometheusRule"
     metadata = {
-      name      = "security-scan-github-pat"
+      name      = "security-scan"
       namespace = kubernetes_namespace_v1.this["enabled"].metadata[0].name
-      labels    = local.tags
+      labels = merge(local.tags, {
+        # kube-prometheus-stack selects rules by this label.
+        release = "kube-prometheus-stack"
+      })
     }
     spec = {
-      vaultAuthRef = ""
-      mount        = "secret"
-      type         = "kv-v2"
-      path         = "platform/github-deploy-tokens/security-scan"
-      destination = {
-        name   = "security-scan-github-pat"
-        create = true
-      }
-      refreshAfter = "30s"
+      groups = [{
+        name = "security-scan"
+        rules = [
+          {
+            alert = "ImageVulnerabilities"
+            expr  = "sum by (image_registry, image_repository, image_tag) (trivy_image_vulnerabilities{severity=~\"${join("|", var.alert_severities)}\"}) > 0"
+            for   = "15m"
+            # Series carry the scanned workload's namespace; pin the alert to
+            # the scanner's namespace so it routes in one place.
+            labels = merge(var.alert_labels, {
+              severity  = "warning"
+              namespace = var.namespace
+            })
+            annotations = {
+              summary     = "{{ $labels.image_repository }}:{{ $labels.image_tag }} has {{ $value }} fixable ${join("/", var.alert_severities)} vulnerabilities"
+              description = "Details: kubectl get vulnerabilityreports -A | grep '{{ $labels.image_repository }}'. Bump the image (or its chart) to a version with the fixes."
+            }
+          },
+          {
+            alert = "SecurityScanNoData"
+            expr  = "absent(trivy_image_vulnerabilities)"
+            for   = "6h"
+            labels = merge(var.alert_labels, {
+              severity  = "warning"
+              namespace = var.namespace
+            })
+            annotations = {
+              summary     = "trivy-operator exports no vulnerability metrics"
+              description = "No trivy_image_vulnerabilities series for 6h: the operator is down, not scraped, or scans keep failing. Until fixed, the absence of ImageVulnerabilities alerts means nothing."
+            }
+          },
+        ]
+      }]
     }
   })
 }
 
-# ConfigMap carrying the two scripts the CronJob runs. defaultMode
-# 0755 in the volume mount so they're executable straight from the
-# mount.
-resource "kubernetes_config_map_v1" "scripts" {
-  for_each = local.instances
+
+# ── Grafana dashboard ──────────────────────────────────────────────────────
+#
+# One table of fixable findings per image, picked up by the Grafana
+# dashboard sidecar (label `grafana_dashboard=1`).
+
+resource "kubernetes_config_map_v1" "dashboard" {
+  for_each = var.enabled && var.grafana_dashboard_enabled ? toset(["enabled"]) : toset([])
 
   metadata {
-    name      = "security-scan-scripts"
+    name      = "security-scan-dashboard"
     namespace = kubernetes_namespace_v1.this["enabled"].metadata[0].name
-    labels    = local.tags
+    labels    = merge(local.tags, { grafana_dashboard = "1" })
   }
 
   data = {
-    "collect.sh"   = file("${path.module}/scripts/collect.sh")
-    "commit-pr.sh" = file("${path.module}/scripts/commit-pr.sh")
-  }
-}
-
-resource "kubernetes_cron_job_v1" "snapshot" {
-  for_each = local.instances
-
-  depends_on = [
-    helm_release.trivy_operator,
-    kubernetes_cluster_role_binding_v1.snapshot,
-    kubectl_manifest.github_pat_vault,
-  ]
-
-  metadata {
-    name      = "security-scan-snapshot"
-    namespace = kubernetes_namespace_v1.this["enabled"].metadata[0].name
-    labels    = local.tags
-  }
-
-  spec {
-    schedule                      = var.snapshot_schedule
-    concurrency_policy            = "Forbid"
-    successful_jobs_history_limit = 3
-    failed_jobs_history_limit     = 3
-    starting_deadline_seconds     = 300
-
-    job_template {
-      metadata {
-        labels = local.tags
-      }
-      spec {
-        backoff_limit = 1
-        template {
-          metadata {
-            labels = local.tags
-          }
-          spec {
-            service_account_name = kubernetes_service_account_v1.snapshot["enabled"].metadata[0].name
-            # Never, not OnFailure: with OnFailure the Job controller deletes
-            # the pod once the backoff limit is hit, taking the logs of the
-            # failed run with it.
-            restart_policy = "Never"
-
-            init_container {
-              name    = "collect"
-              image   = "bitnami/kubectl:latest"
-              command = ["/scripts/collect.sh"]
-
-              env {
-                name  = "TARGET_NAMESPACES"
-                value = join(" ", local.target_namespaces)
-              }
-
-              volume_mount {
-                name       = "work"
-                mount_path = "/work"
-              }
-              volume_mount {
-                name       = "scripts"
-                mount_path = "/scripts"
-                read_only  = true
-              }
-            }
-
-            container {
-              name    = "commit-pr"
-              image   = "alpine/git:latest"
-              command = ["/scripts/commit-pr.sh"]
-
-              env {
-                name = "GH_TOKEN"
-                value_from {
-                  secret_key_ref {
-                    name = "security-scan-github-pat"
-                    key  = "github_token"
-                  }
-                }
-              }
-              env {
-                name  = "GH_REPO"
-                value = var.github_repo
-              }
-              env {
-                name  = "BRANCH_PREFIX"
-                value = var.branch_prefix
-              }
-              env {
-                name  = "REPORT_PATH"
-                value = "inventory/cve-report.md"
-              }
-
-              # Snapshot email. Empty values make the script skip it.
-              env {
-                name  = "SMTP_URL"
-                value = var.email_to == "" ? "" : "smtp://${var.smtp_server}/${var.email_helo}"
-              }
-              env {
-                name  = "MAIL_FROM"
-                value = var.email_from
-              }
-              env {
-                name  = "MAIL_TO"
-                value = var.email_to
-              }
-
-              volume_mount {
-                name       = "work"
-                mount_path = "/work"
-              }
-              volume_mount {
-                name       = "scripts"
-                mount_path = "/scripts"
-                read_only  = true
-              }
-            }
-
-            volume {
-              name = "work"
-              empty_dir {}
-            }
-            volume {
-              name = "scripts"
-              config_map {
-                name         = kubernetes_config_map_v1.scripts["enabled"].metadata[0].name
-                default_mode = "0755"
-              }
-            }
-          }
-        }
-      }
-    }
+    "security-scan.json" = jsonencode({
+      title         = "Security scan"
+      uid           = "security-scan"
+      schemaVersion = 39
+      refresh       = "15m"
+      time          = { from = "now-6h", to = "now" }
+      panels = [{
+        type       = "table"
+        title      = "Fixable vulnerabilities by image"
+        gridPos    = { x = 0, y = 0, w = 24, h = 20 }
+        datasource = { type = "prometheus", uid = "prometheus" }
+        targets = [{
+          refId   = "A"
+          expr    = "sum by (namespace, image_repository, image_tag, severity) (trivy_image_vulnerabilities) > 0"
+          instant = true
+          format  = "table"
+        }]
+        transformations = [
+          { id = "organize", options = { excludeByName = { Time = true } } },
+          { id = "sortBy", options = { sort = [{ field = "Value", desc = true }] } },
+        ]
+      }]
+    })
   }
 }
