@@ -8,6 +8,15 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- Restore scripts rewritten after a restore drill: Postgres/MySQL restore
+  one database from the combined `all.sql.gz` (they only looked for
+  `<db>.sql.gz`), Postgres gains `--all`; `restore-pv.sh` validates the
+  target and archive and keeps the old content instead of `rm -rf`;
+  `restore-redis.sh` works with Sentinel (temporary server + MIGRATE).
+  Destructive modes require `CONFIRM=yes`.
+- The init Job's name carries a hash of the restore scripts, so editing
+  them re-uploads the copy under tag `scripts`; it runs on the restic image
+  (`image_restic`) instead of installing restic at start.
 - Postgres dump runs with `pipefail`: a failing `pg_dump` piped into gzip
   used to upload an empty archive and report success.
 

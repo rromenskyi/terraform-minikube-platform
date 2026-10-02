@@ -119,24 +119,27 @@ Set them once at the top of the operator's session:
     export AWS_ACCESS_KEY_ID=$TF_VAR_backup_b2_access_key_id
     export AWS_SECRET_ACCESS_KEY=$TF_VAR_backup_b2_secret_access_key
 
-| Script                                  | Restores                                                  |
-| ---                                     | ---                                                       |
-| `restore-postgres.sh <db> [snapshot]`   | One Postgres database from `pg_dump` output              |
-| `restore-mysql.sh <db> [snapshot]`      | One MySQL database from `mariadb-dump` output            |
-| `restore-redis.sh [snapshot]`           | Redis RDB via `kubectl cp` + `rollout restart sts/redis` |
-| `restore-vault.sh [snapshot]`           | Vault raft via `vault operator raft snapshot restore`    |
-| `restore-pv.sh <name> [snapshot]`       | One hostPath PV directory by name                        |
-| `restore-config.sh [snapshot] [target]` | Operator's `.env` + `config/` to local disk              |
+| Script                                          | Restores                                                                 |
+| ---                                             | ---                                                                      |
+| `restore-postgres.sh <db> [snapshot]`           | One database, from `<db>.sql.gz` or its section of `all.sql.gz`. From `all.sql.gz` the database is recreated, so an existing one needs `CONFIRM=yes` |
+| `CONFIRM=yes restore-postgres.sh --all [snap]`  | The whole cluster from `all.sql.gz` (every database and role recreated)  |
+| `restore-mysql.sh <db> [snapshot]`              | One database, from `<db>.sql.gz` or its section of `all.sql.gz`; other databases and the `mysql` schema untouched |
+| `CONFIRM=yes restore-redis.sh [snapshot]`       | Merges the RDB's keys into the live primary (temporary pod + `MIGRATE`), either topology |
+| `restore-vault.sh [snapshot]`                   | Vault raft via `vault operator raft snapshot restore`                    |
+| `CONFIRM=yes restore-pv.sh <name> [snapshot]`   | One hostPath PV directory; old content kept as `<target>.pre-restore-*`  |
+| `restore-config.sh [snapshot] [target]`         | Operator's `.env` + `config/` to local disk                              |
 
 `<snapshot>` defaults to `latest` for each tag. `restic snapshots
 --tag <tag>` lists what's available; `restic snapshots --tag <tag>
 --latest 1` shows just the most recent.
 
-For `restore-pv.sh`, scale the consuming workload to 0 first to
-avoid corruption from a live untar:
+For `restore-pv.sh`, run it on the node that holds the volume and
+scale the consuming workload to 0 first to avoid corruption from a
+live untar. The target must sit under `PV_BASE` (default `/data/vol`);
+`/`, the base itself and symlinks are refused:
 
     kubectl -n <ns> scale deploy/<workload> --replicas=0
-    PV_TARGET_PATH=<absolute-host-path> restore-pv.sh <name> latest
+    CONFIRM=yes PV_TARGET_PATH=<absolute-host-path> restore-pv.sh <name> latest
     kubectl -n <ns> scale deploy/<workload> --replicas=1
 
 ## Sanity-check a snapshot without touching anything live
@@ -201,16 +204,16 @@ Steps:
 
 5. Restore database data into the new pods, in order:
 
-       /tmp/scripts/restore-postgres.sh <db> latest    # for each
+       CONFIRM=yes /tmp/scripts/restore-postgres.sh --all latest
        /tmp/scripts/restore-mysql.sh <db> latest       # for each
-       /tmp/scripts/restore-redis.sh latest
+       CONFIRM=yes /tmp/scripts/restore-redis.sh latest  # optional: cache
        /tmp/scripts/restore-vault.sh latest
 
 6. For each PV target listed in `services.backup.pv_paths`, scale
    its consumer to 0, restore the tarball, scale back up:
 
        kubectl -n <ns> scale deploy/<workload> --replicas=0
-       PV_TARGET_PATH=<path> /tmp/scripts/restore-pv.sh <name> latest
+       CONFIRM=yes PV_TARGET_PATH=<path> /tmp/scripts/restore-pv.sh <name> latest
        kubectl -n <ns> scale deploy/<workload> --replicas=1
 
 7. Smoke-test the public surface (sign in, send a test email,

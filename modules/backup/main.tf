@@ -94,9 +94,9 @@ locals {
   # Common shell preamble all CronJob containers share. `set -e`
   # so a failing restic backup propagates to the Pod status; jobs that
   # pipe a dump into gzip also need `pipefail`, otherwise the pipeline
-  # reports gzip's success and an empty dump gets uploaded. `apk add restic` lands the binary at /usr/bin/restic.
-  # The retention CronJob only needs restic; the dump CronJobs
-  # additionally apk-install the per-target client.
+  # reports gzip's success and an empty dump gets uploaded. Jobs that
+  # need only restic run on `var.image_restic`; the dump jobs install the
+  # per-target client next to restic.
   restic_env = "RESTIC_REPOSITORY=$RESTIC_REPOSITORY RESTIC_PASSWORD=$RESTIC_PASSWORD AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY"
 
   # Restore scripts read from `scripts/` directory and bundled
@@ -214,7 +214,11 @@ resource "kubernetes_job_v1" "restic_init" {
   for_each = local.instances
 
   metadata {
-    name      = "backup-restic-init"
+    # The scripts reach the pod through a ConfigMap, which the Job spec
+    # doesn't see. Their hash in the name makes a script edit replace this
+    # Job, so the copy in the repo (tag `scripts`, the one disaster recovery
+    # pulls) never goes stale.
+    name      = "backup-restic-init-${substr(sha256(jsonencode(local.restore_scripts)), 0, 8)}"
     namespace = kubernetes_namespace_v1.backup["enabled"].metadata[0].name
     labels = merge(local.tags, {
       "app.kubernetes.io/component" = "backup-init"
@@ -239,7 +243,7 @@ resource "kubernetes_job_v1" "restic_init" {
 
         container {
           name  = "init"
-          image = var.image_alpine
+          image = var.image_restic
 
           env_from {
             secret_ref {
@@ -250,7 +254,6 @@ resource "kubernetes_job_v1" "restic_init" {
           command = ["sh", "-c"]
           args = [<<-EOT
             set -e
-            apk add --no-cache restic >/dev/null
             echo "[init] checking repository at $RESTIC_REPOSITORY"
             if restic snapshots --no-lock >/dev/null 2>&1; then
               echo "[init] repository already initialised — skipping init"
@@ -667,7 +670,7 @@ resource "kubernetes_cron_job_v1" "vault" {
 
             container {
               name  = "upload"
-              image = "restic/restic:0.19.1"
+              image = var.image_restic
 
               env_from {
                 secret_ref {
@@ -747,7 +750,7 @@ resource "kubernetes_cron_job_v1" "pv" {
 
             container {
               name  = "tar"
-              image = var.image_alpine
+              image = var.image_restic
 
               env_from {
                 secret_ref {
@@ -777,7 +780,6 @@ resource "kubernetes_cron_job_v1" "pv" {
               command = ["sh", "-c"]
               args = [<<-EOT
                 set -e
-                apk add --no-cache restic >/dev/null
 
                 STAGE=$(mktemp -d)
                 trap 'rm -rf "$STAGE"' EXIT
@@ -870,7 +872,7 @@ resource "kubernetes_cron_job_v1" "prune" {
 
             container {
               name  = "prune"
-              image = var.image_alpine
+              image = var.image_restic
 
               env_from {
                 secret_ref {
@@ -894,7 +896,6 @@ resource "kubernetes_cron_job_v1" "prune" {
               command = ["sh", "-c"]
               args = [<<-EOT
                 set -e
-                apk add --no-cache restic >/dev/null
                 # A backup pod killed mid-run leaves its lock behind; prune
                 # needs an exclusive lock and fails on it forever (stuck
                 # from 2026-06-13 until this was added). `unlock` removes

@@ -216,6 +216,12 @@ variable "retention_keep_monthly" {
   default     = 6
 }
 
+variable "image_restic" {
+  description = "restic image for jobs that need only restic (repository init/script upload, the Vault snapshot upload). Ships the binary, so nothing is downloaded at run time."
+  type        = string
+  default     = "restic/restic:0.19.1"
+}
+
 variable "image_alpine" {
   description = "Alpine image used as the base for every backup CronJob. Each Job apk-installs the tools it needs (postgresql-client, mysql-client, redis, restic, …) at start. Pinned to keep behavior stable across applies."
   type        = string
