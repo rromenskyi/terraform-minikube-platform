@@ -432,6 +432,8 @@ locals {
     # in prometheus_rules.tf renders whatever is under `monitoring.prometheus_rules`
     # into a PrometheusRule — app/tenant-specific exprs stay out of tracked TF.
     monitoring = try(local._platform_raw.monitoring, {})
+    # Operator gate allowlist (`forward_auth.allowed_emails` / `allowed_domains`).
+    forward_auth = try(local._platform_raw.forward_auth, {})
   }
 
   # Load raw domain configs from YAML files

@@ -190,11 +190,34 @@ resource "kubernetes_deployment_v1" "oauth2_proxy" {
             name  = "LOG_LEVEL"
             value = "info"
           }
-          # Allow any email — auth controlled by Zitadel-side roles
-          # (operator can layer that in later via Zitadel's user mgmt).
           env {
             name  = "DEFAULT_ACTION"
             value = "auth"
+          }
+
+          # Authentication alone admits every Zitadel user; these narrow the
+          # gate to operators. Both empty = any authenticated user. When both
+          # are set, a user matching either list is allowed.
+          dynamic "env" {
+            for_each = length(var.allowed_emails) > 0 ? ["enabled"] : []
+            content {
+              name  = "WHITELIST"
+              value = join(",", var.allowed_emails)
+            }
+          }
+          dynamic "env" {
+            for_each = length(var.allowed_domains) > 0 ? ["enabled"] : []
+            content {
+              name  = "DOMAIN"
+              value = join(",", var.allowed_domains)
+            }
+          }
+          dynamic "env" {
+            for_each = length(var.allowed_emails) > 0 && length(var.allowed_domains) > 0 ? ["enabled"] : []
+            content {
+              name  = "MATCH_WHITELIST_OR_DOMAIN"
+              value = "true"
+            }
           }
 
           env_from {

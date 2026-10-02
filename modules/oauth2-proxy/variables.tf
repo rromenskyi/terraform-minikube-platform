@@ -67,3 +67,17 @@ variable "cpu_limit" {
   type    = string
   default = "100m"
 }
+
+variable "allowed_emails" {
+  description = "Email addresses allowed through the gate. The gate protects operator UIs, and logging in alone admits every user of the identity provider. Empty (with `allowed_domains` empty) = any authenticated user."
+  type        = list(string)
+  default     = []
+  nullable    = false
+}
+
+variable "allowed_domains" {
+  description = "Email domains allowed through the gate (see `allowed_emails`). With both set, a match on either is enough."
+  type        = list(string)
+  default     = []
+  nullable    = false
+}

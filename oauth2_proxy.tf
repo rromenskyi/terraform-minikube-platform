@@ -51,4 +51,8 @@ module "oauth2_proxy" {
   # traefik-forward-auth canonicalises the cookie domain itself —
   # pass the bare parent zone, no leading dot.
   cookie_domain = local._oauth2_parent_domain
+
+  # Who may pass the operator gate (gitignored config `forward_auth:`).
+  allowed_emails  = try(local.platform.forward_auth.allowed_emails, [])
+  allowed_domains = try(local.platform.forward_auth.allowed_domains, [])
 }
