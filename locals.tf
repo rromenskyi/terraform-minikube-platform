@@ -359,7 +359,7 @@ locals {
         # airllm's postgres-setup Job). This only names the hostPath
         # subdirectory under host_volume_path for the model-cache PV.
         namespace     = "speaches"
-        image         = "ghcr.io/speaches-ai/speaches:latest-cpu"
+        image         = "ghcr.io/speaches-ai/speaches:0.8.3-cpu@sha256:21e3df06d842fb7802ab470dd77c25f0e8c0d22950e8d8c6ae886e851af53ef8"
         storage_size  = "20Gi"
         node_selector = { "workload-tier" = "general" }
         cpu_request   = "200m"

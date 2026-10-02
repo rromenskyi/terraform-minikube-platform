@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the module is disabled.
 - `modules/component` objects carry `app.kubernetes.io/name`, `/instance`
   and `/managed-by` labels; selectors and pod templates keep `app` only.
+- Images pinned by tag and digest: `whoami` (v1.12.0), `echo` (0.9.2),
+  Speaches default (0.8.3-cpu). `modules/zitadel` gains `pat_broker_image`
+  (default `bitnami/kubectl:latest` pinned by digest).
 
 ### Added
 - **`modules/logging` — cluster log aggregation (VictoriaLogs + Vector).**

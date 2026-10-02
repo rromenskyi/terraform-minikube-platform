@@ -28,6 +28,12 @@ variable "login_image" {
   default     = "ghcr.io/zitadel/zitadel-login:v4.19.3"
 }
 
+variable "pat_broker_image" {
+  description = "kubectl image for the PAT-broker sidecar, which only runs `kubectl create/patch secret`. Free Docker Hub `bitnami/*` images ship only `:latest` since August 2025 (versioned tags return 404), so the default pins `:latest` by digest; bump the digest deliberately. See `modules/redis/variables.tf` for the Bitnami notes."
+  type        = string
+  default     = "bitnami/kubectl:latest@sha256:f7f9e4f64d9e114650c115a4ac6fd383394b3d494061a8f17b1a0f6c8d55bc25"
+}
+
 variable "postgres_host" {
   description = "In-cluster Postgres hostname (e.g. postgres.platform.svc.cluster.local)."
   type        = string
