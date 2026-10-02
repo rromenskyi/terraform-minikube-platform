@@ -1340,7 +1340,8 @@ resource "kubernetes_deployment_v1" "stalwart" {
             mkdir -p /opt/stalwart-mail/etc /opt/stalwart-mail/data/blobs
             cp /seed/config.json /opt/stalwart-mail/etc/config.json
             touch "$SENTINEL"
-            chown -R 1000:1000 /opt/stalwart-mail
+            # Only files with the wrong owner (chown -R rewrote every ctime).
+            find /opt/stalwart-mail \( ! -user 1000 -o ! -group 1000 \) -exec chown 1000:1000 {} +
 
             # ── stalwart-cli binary ────────────────────────────────
             mkdir -p /shared/bin

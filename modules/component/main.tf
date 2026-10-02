@@ -511,9 +511,11 @@ resource "kubernetes_deployment_v1" "this" {
               limits   = { cpu = "50m", memory = "32Mi" }
             }
 
+            # Ownership fixed only where it is wrong; `chown -R` rewrote every
+            # file's ctime on each start (backups then re-read whole volumes).
             command = ["sh", "-c", join(" && ", [
               for k, v in local.volumes :
-              "chown -R ${try(var.security.run_as_user, 0)}:${var.security.fs_group} ${v.mount}"
+              "find ${v.mount} \\( ! -user ${try(var.security.run_as_user, 0)} -o ! -group ${var.security.fs_group} \\) -exec chown ${try(var.security.run_as_user, 0)}:${var.security.fs_group} {} +"
             ])]
 
             dynamic "volume_mount" {

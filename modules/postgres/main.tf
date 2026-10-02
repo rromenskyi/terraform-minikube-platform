@@ -171,7 +171,7 @@ resource "kubernetes_stateful_set_v1" "postgres" {
             limits   = { cpu = "50m", memory = "32Mi" }
           }
 
-          command = ["sh", "-c", "mkdir -p /var/lib/postgresql/data/pgdata18 && chown -R 999:999 /var/lib/postgresql/data"]
+          command = ["sh", "-c", "mkdir -p /var/lib/postgresql/data/pgdata18 && find /var/lib/postgresql/data \\( ! -user 999 -o ! -group 999 \\) -exec chown 999:999 {} +"]
 
           volume_mount {
             name       = "data"

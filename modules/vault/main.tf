@@ -456,7 +456,7 @@ resource "kubernetes_stateful_set_v1" "vault" {
             limits   = { cpu = "50m", memory = "32Mi" }
           }
 
-          command = ["sh", "-c", "chown -R 100:1000 /vault/data"]
+          command = ["sh", "-c", "find /vault/data \\( ! -user 100 -o ! -group 1000 \\) -exec chown 100:1000 {} +"]
 
           volume_mount {
             name       = "data"

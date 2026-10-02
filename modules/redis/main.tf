@@ -158,7 +158,7 @@ resource "kubernetes_stateful_set_v1" "redis" {
             limits   = { cpu = "50m", memory = "32Mi" }
           }
 
-          command = ["sh", "-c", "chown -R 999:999 /data"]
+          command = ["sh", "-c", "find /data \\( ! -user 999 -o ! -group 999 \\) -exec chown 999:999 {} +"]
 
           volume_mount {
             name       = "data"

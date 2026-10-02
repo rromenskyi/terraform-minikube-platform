@@ -361,8 +361,8 @@ resource "kubernetes_deployment_v1" "roundcube" {
         # container fixes ownership once at pod start.
         init_container {
           name    = "fix-db-perms"
-          image   = "busybox:1.36"
-          command = ["sh", "-c", "chown -R 33:33 /var/roundcube/db"]
+          image   = "busybox:stable-musl"
+          command = ["sh", "-c", "find /var/roundcube/db \\( ! -user 33 -o ! -group 33 \\) -exec chown 33:33 {} +"]
 
           volume_mount {
             name       = "db"
