@@ -188,12 +188,13 @@ resource "random_password" "airllm_redis" {
   special  = false
 }
 
-resource "kubernetes_secret_v1" "airllm_redis_acl" {
+# Same ACL line in the keeper's dedicated namespace (see modules/redis).
+resource "kubernetes_secret_v1" "airllm_redis_acl_scoped" {
   for_each = local.airllm_instances
 
   metadata {
     name      = "redis-acl-airllm"
-    namespace = module.redis.namespace
+    namespace = module.redis.acl_namespace
     labels = merge(module.platform_label.tags, {
       "app.kubernetes.io/component" = "airllm"
       "platform.local/redis-acl"    = "true"

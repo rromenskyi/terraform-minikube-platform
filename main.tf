@@ -281,6 +281,7 @@ module "project" {
   postgres_host             = module.postgres.host
   postgres_superuser_secret = module.postgres.superuser_secret_name
   redis_namespace           = module.redis.namespace
+  redis_acl_namespace       = module.redis.acl_namespace
   redis_host                = module.redis.host
   ollama_url                = module.ollama.url
 

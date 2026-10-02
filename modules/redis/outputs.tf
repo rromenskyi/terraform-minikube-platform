@@ -37,3 +37,8 @@ output "helm_revision" {
   value       = length(local.sentinel_instances) > 0 ? helm_release.valkey_sentinel["enabled"].metadata.revision : 0
   description = "Helm release revision counter for the Valkey/Sentinel chart. Increments on every `helm upgrade` (chart bump, values change, replicas/affinity update, etc). Consumers (tenant ACL provisioner Jobs) interpolate this into their resource name so a chart upgrade — which can switch the master pod and lose previously-applied ACL state — automatically re-runs the ACL setup with the new credentials. Zero when sentinel mode is disabled (no chart deployed). Sentinel-mode-only by design — the legacy single-pod path uses a different bring-up Job that is not affected by master switches."
 }
+
+output "acl_namespace" {
+  description = "Namespace for `redis-acl-*` Secrets (label `platform.local/redis-acl=true`, key `setuser`). Empty when the module is disabled."
+  value       = length(local.instances) > 0 ? kubernetes_namespace_v1.acl["enabled"].metadata[0].name : ""
+}

@@ -175,22 +175,14 @@ resource "kubernetes_job_v1" "pg_dashboard_ro_setup" {
   timeouts { create = "2m" }
 }
 
-# ── Redis: dashboard_ro via the ACL keeper ──────────────────────────────────
-# Valkey runs without persistence and does not replicate ACLs, so a user
-# created once by a Job vanishes on the next pod restart (the dashboard then
-# shows `WRONGPASS`). Instead, hand the user to the same keeper that
-# re-applies the tenant ACLs on every node (see modules/redis): a Secret
-# labelled `platform.local/redis-acl=true` carrying one `ACL SETUSER` line
-# with the password as a SHA-256 hash.
-# +@read +info covers the INFO command and any future read query;
-# `~*` allows access to all keys (read-only); `&*` allows all
-# pub/sub channels (subscribe is read in spirit). No write categories.
-resource "kubernetes_secret_v1" "redis_dashboard_ro_acl" {
+
+# Same ACL line in the keeper's dedicated namespace (see modules/redis).
+resource "kubernetes_secret_v1" "redis_dashboard_ro_acl_scoped" {
   for_each = local.dash_red_enabled ? toset(["enabled"]) : toset([])
 
   metadata {
     name      = "redis-acl-platform-dash"
-    namespace = module.redis.namespace
+    namespace = module.redis.acl_namespace
     labels = {
       "managed-by"               = "platform-dash-db-discovery"
       "platform.local/redis-acl" = "true"
@@ -321,7 +313,7 @@ resource "kubernetes_secret_v1" "platform_pg_dashboard" {
 
 resource "kubernetes_secret_v1" "platform_redis_dashboard" {
   for_each   = local.dash_red_enabled ? toset(["enabled"]) : toset([])
-  depends_on = [kubernetes_secret_v1.redis_dashboard_ro_acl]
+  depends_on = [kubernetes_secret_v1.redis_dashboard_ro_acl_scoped]
 
   metadata {
     name      = "platform-redis-dashboard"

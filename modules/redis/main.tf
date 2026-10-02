@@ -722,17 +722,27 @@ resource "kubernetes_service_account_v1" "acl_keeper" {
   }
 }
 
-resource "kubernetes_role_v1" "acl_keeper" {
+# ACL Secrets live in their own namespace so the keeper's read access
+# covers nothing but them: a Role in the Redis namespace would also
+# expose every other Secret there (database superusers, Vault bootstrap).
+resource "kubernetes_namespace_v1" "acl" {
+  for_each = local.instances
+
+  metadata {
+    name   = var.acl_namespace
+    labels = merge(local.tags, { "app.kubernetes.io/component" = "redis-acl" })
+  }
+}
+
+resource "kubernetes_role_v1" "acl_keeper_scoped" {
   for_each = local.instances
 
   metadata {
     name      = "redis-acl-keeper"
-    namespace = var.namespace
+    namespace = kubernetes_namespace_v1.acl["enabled"].metadata[0].name
     labels    = local.tags
   }
 
-  # List to discover every `redis-acl-<ns>` Secret; get is implied but
-  # listed for clarity. Scoped to this namespace — no cluster-wide reach.
   rule {
     api_groups = [""]
     resources  = ["secrets"]
@@ -740,19 +750,19 @@ resource "kubernetes_role_v1" "acl_keeper" {
   }
 }
 
-resource "kubernetes_role_binding_v1" "acl_keeper" {
+resource "kubernetes_role_binding_v1" "acl_keeper_scoped" {
   for_each = local.instances
 
   metadata {
     name      = "redis-acl-keeper"
-    namespace = var.namespace
+    namespace = kubernetes_namespace_v1.acl["enabled"].metadata[0].name
     labels    = local.tags
   }
 
   role_ref {
     api_group = "rbac.authorization.k8s.io"
     kind      = "Role"
-    name      = kubernetes_role_v1.acl_keeper["enabled"].metadata[0].name
+    name      = kubernetes_role_v1.acl_keeper_scoped["enabled"].metadata[0].name
   }
 
   subject {
@@ -827,7 +837,7 @@ resource "kubernetes_deployment_v1" "acl_keeper" {
 
           env {
             name  = "NS"
-            value = var.namespace
+            value = kubernetes_namespace_v1.acl["enabled"].metadata[0].name
           }
 
           env {

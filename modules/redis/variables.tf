@@ -104,3 +104,9 @@ variable "sentinel" {
   })
   default = {}
 }
+
+variable "acl_namespace" {
+  description = "Namespace holding the `redis-acl-*` Secrets the ACL keeper applies. Separate from the Redis namespace so the keeper can read these Secrets and nothing else."
+  type        = string
+  default     = "redis-acl"
+}

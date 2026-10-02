@@ -991,38 +991,14 @@ resource "random_password" "redis" {
   special  = false
 }
 
-# The tenant password is minted here and surfaced two ways:
-#   - plaintext in the namespace-local `redis-credentials` Secret (below),
-#     consumed by the tenant's pods via `envFrom`;
-#   - as a SHA-256 hash in a `redis-acl-<ns>` Secret in the Redis namespace
-#     (this block), consumed by the `redis-acl-keeper` in modules/redis.
-#
-# Why a keeper instead of a one-shot setup Job: the Valkey deployment is
-# effectively ephemeral (the Sentinel chart has no aclfile and no PVC), so
-# ACL users created once vanish on every Valkey pod restart / node reboot,
-# breaking tenant auth until re-applied. The keeper re-applies every line
-# to each Valkey node on a loop, so the users survive reboots. Storing only
-# the hash here means the keeper never sees plaintext — `ACL SETUSER ...
-# #<sha256>` sets the password by hash, and nothing readable leaks into the
-# shared Redis namespace.
-#
-# `resetkeys ~<ns>:*` scopes keys to the tenant prefix (two tenants can't
-# read/overwrite each other's keys); `resetchannels &<ns>:* &<ns>::*`
-# scopes pub/sub to both colon conventions. `+@all -@dangerous +INFO` =
-# every command group except destructive ones, plus INFO (object-cache
-# health probe). FLUSHDB is intentionally NOT granted: this Valkey build
-# renames FLUSHDB/FLUSHALL away, so the grant would error and the WP
-# object-cache uses selective SCAN+UNLINK flush instead (see the
-# `WP_REDIS_SELECTIVE_FLUSH` env on `redis-credentials` below).
-#
-# The ACL user is NOT deleted on terraform destroy — same policy as MySQL,
-# so data isn't lost if a project is removed and re-added.
-resource "kubernetes_secret_v1" "redis_acl" {
+
+# Same ACL line in the keeper's dedicated namespace (see modules/redis).
+resource "kubernetes_secret_v1" "redis_acl_scoped" {
   for_each = local.needs_redis ? toset(["enabled"]) : toset([])
 
   metadata {
     name      = "redis-acl-${local.namespace}"
-    namespace = var.redis_namespace
+    namespace = var.redis_acl_namespace
     labels = merge(module.project_label.tags, {
       "platform.local/redis-acl" = "true"
       "project-namespace"        = local.namespace

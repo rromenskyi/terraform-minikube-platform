@@ -8,6 +8,12 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Security
+- **BREAKING (layout):** ACL Secrets move to their own namespace
+  (`acl_namespace`, default `redis-acl`); the keeper's Role lives there,
+  so it no longer can list every Secret in the Redis namespace. Producers
+  write `redis-acl-*` into `module.redis.acl_namespace`.
+
+### Security
 - ACL keeper: `SETUSER <user> resetpass ...` so a rotated password replaces
   the old one instead of adding to it, and users no ACL Secret declares
   (offboarded projects) are deleted (`default` excepted).

@@ -8,6 +8,9 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Security
+- `redis_acl_namespace`: the project's Redis ACL Secret goes there.
+
+### Security
 - DB setup Jobs read the tenant password from a Secret (`secretKeyRef`)
   instead of embedding it in the command line.
 

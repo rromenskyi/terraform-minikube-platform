@@ -183,3 +183,9 @@ variable "vault_tenant_role" {
   default     = ""
   nullable    = false
 }
+
+variable "redis_acl_namespace" {
+  description = "Namespace for this project's `redis-acl-<ns>` Secret, read by the Redis ACL keeper (`module.redis.acl_namespace`)."
+  type        = string
+  default     = ""
+}
