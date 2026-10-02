@@ -212,3 +212,41 @@ resource "kubernetes_service_v1" "this" {
     }
   }
 }
+
+# ── Network access ─────────────────────────────────────────────────────────
+#
+# buildkitd's TCP API has no authentication: whoever reaches port 1234 can
+# run builds and read the shared cache. With `allowed_client_namespaces`
+# set, only pods in those namespaces (the CI runners) may connect; the
+# readiness probe is an exec probe and isn't affected.
+resource "kubernetes_network_policy_v1" "clients" {
+  for_each = length(local.instances) > 0 && length(var.allowed_client_namespaces) > 0 ? toset(["enabled"]) : toset([])
+
+  metadata {
+    name      = "buildkitd-clients"
+    namespace = kubernetes_namespace_v1.this["enabled"].metadata[0].name
+  }
+
+  spec {
+    pod_selector {
+      match_labels = { "app.kubernetes.io/name" = "buildkitd" }
+    }
+    policy_types = ["Ingress"]
+
+    ingress {
+      from {
+        namespace_selector {
+          match_expressions {
+            key      = "kubernetes.io/metadata.name"
+            operator = "In"
+            values   = var.allowed_client_namespaces
+          }
+        }
+      }
+      ports {
+        port     = "1234"
+        protocol = "TCP"
+      }
+    }
+  }
+}

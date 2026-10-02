@@ -98,3 +98,10 @@ variable "tolerations" {
   }))
   default = []
 }
+
+variable "allowed_client_namespaces" {
+  description = "Namespaces whose pods may connect to buildkitd (its TCP API is unauthenticated). Empty = no NetworkPolicy, any pod in the cluster can connect."
+  type        = list(string)
+  default     = []
+  nullable    = false
+}

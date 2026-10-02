@@ -7,6 +7,10 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Security
+- `allowed_client_namespaces`: NetworkPolicy so only those namespaces reach
+  the unauthenticated buildkitd API.
+
 ### Added
 - Initial extraction from the root `buildkitd.tf` file. Resources, defaults,
   inputs, and outputs are functionally identical to the prior root-inline

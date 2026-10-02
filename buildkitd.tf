@@ -19,6 +19,9 @@ module "buildkitd" {
   memory_request = local.platform.services.buildkitd.memory_request
   memory_limit   = local.platform.services.buildkitd.memory_limit
 
+  # Only the CI runners build here.
+  allowed_client_namespaces = distinct([for s in values(local.platform.services.github_runners.scale_sets) : s.namespace])
+
   readiness_initial_delay_seconds = local.platform.services.buildkitd.readiness_initial_delay_seconds
   readiness_period_seconds        = local.platform.services.buildkitd.readiness_period_seconds
   readiness_timeout_seconds       = local.platform.services.buildkitd.readiness_timeout_seconds
