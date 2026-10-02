@@ -8,6 +8,10 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- CRD manifests are `apply_only`: disabling the module or dropping a CRD no
+  longer deletes it (and every object of that kind cluster-wide).
+
+### Changed
 - **Charts 0.9.3 -> 0.14.2; CRDs managed from the controller chart.** Helm
   never upgrades a chart's `crds/`, so they are rendered from the same
   chart version (`helm_template` with `include_crds`) and server-side

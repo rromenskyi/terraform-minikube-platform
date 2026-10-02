@@ -8,6 +8,10 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- CRD manifests are `apply_only`: disabling the module or dropping a CRD no
+  longer deletes it (and every object of that kind cluster-wide).
+
+### Changed
 - **BREAKING: snapshot pipeline removed.** The weekly CronJob that wrote
   `inventory/cve-report.md`, pushed a branch, opened a PR and emailed a
   summary is gone, with its scripts, RBAC, Vault PAT sync and the unused

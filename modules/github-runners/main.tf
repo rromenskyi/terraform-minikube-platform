@@ -118,6 +118,10 @@ resource "kubectl_manifest" "controller_crds" {
 
   yaml_body         = each.value
   server_side_apply = true
+  # Keep CRDs when this module is disabled or the resource is removed:
+  # deleting a CRD deletes every object of that kind cluster-wide.
+  # Retiring them is a deliberate manual step.
+  apply_only = true
   # The chart created them client-side on first install; take over the
   # fields it set.
   force_conflicts = true
