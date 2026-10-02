@@ -271,7 +271,7 @@ resource "kubectl_manifest" "github_pat_vault" {
       # VSO falls back to the cluster-default VaultAuth in the
       # vault-secrets-operator namespace when vaultAuthRef is empty.
       # The platform's vault module enables that default at install
-      # time (modules/vault/main.tf vso helm release values).
+      # time (modules/vault/vso.tf helm release values).
       vaultAuthRef = ""
       mount        = "secret"
       type         = "kv-v2"

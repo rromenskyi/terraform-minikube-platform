@@ -40,6 +40,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are English; the new `language` setting (default `English`) picks the
   language of the diagnosis. Migration: set `ollama_model` (and `language` if
   needed) under `services.alert_llm_enrichment` in `config/platform.yaml`.
+- `modules/project`, `modules/stalwart` and `modules/vault` are split into
+  one file per concern (databases, secrets, components, ingress, …;
+  deployment, relay, listeners, dns, …; statefulset, bootstrap, oidc, vso, …).
+  Resource addresses are unchanged (plan: no changes).
 
 ### Fixed
 - Docs: the chat `open-terminal` sidecar was described as egress-limited by a

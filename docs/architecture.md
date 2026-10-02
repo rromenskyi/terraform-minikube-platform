@@ -57,7 +57,7 @@ cloudflare.tf
   → cloudflare_zero_trust_tunnel_cloudflared + its config
   → cloudflare_record for every routed hostname (collected from module.project[*].hostnames)
 
-modules/project/main.tf
+modules/project/  (main.tf, databases.tf, secrets.tf, components.tf, ingress.tf, …)
   → kubernetes_namespace_v1
   → kubernetes_resource_quota_v1 (from config/limits/<ns>.yaml → default.yaml → domain.limits)
   → kubernetes_job_v1   mysql_setup     (gated: any component has `db: true`)
