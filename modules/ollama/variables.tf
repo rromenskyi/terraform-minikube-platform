@@ -149,7 +149,7 @@ variable "gpu" {
     image               = string
     device_path         = string
     device_type         = optional(string, "Directory")
-    privileged          = optional(bool, true)
+    privileged          = optional(bool, false)
     supplemental_groups = list(number)
     env                 = map(string)
   })

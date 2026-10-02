@@ -8,16 +8,14 @@ terraform {
 }
 
 
-# `privileged` defaults to true to preserve the prior shape; this is
-# a sledgehammer that grants every device cgroup, every capability
-# and bypasses AppArmor. With a CharDevice volume on a modern
-# k3s/containerd + cgroup v2 host, kubelet adds the per-device
-# cgroup allow rule by itself, so unprivileged Vulkan inference is
-# usually possible. Operators can opt out via `privileged: false`
-# to lock the platform-namespace Ollama down (and as a side effect
-# make `runc` stop mknod-ing every host device into the pod's
-# tmpfs /dev — Mesa Anv then enumerates ONLY the projected device
-# instead of probing every renderD* node it finds).
+# `privileged` defaults to false: it is a sledgehammer that grants
+# every device cgroup, every capability and bypasses AppArmor. With a
+# CharDevice volume on a modern k3s/containerd + cgroup v2 host,
+# kubelet adds the per-device cgroup allow rule by itself, so
+# unprivileged Vulkan inference is usually possible (and `runc` stops
+# mknod-ing every host device into the pod's tmpfs /dev — Mesa Anv then
+# enumerates ONLY the projected device). Set `privileged: true` only for
+# a GPU stack that needs it.
 
 
 locals {
