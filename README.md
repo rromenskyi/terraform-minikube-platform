@@ -136,7 +136,7 @@ terraform-minikube-platform/
 
 hostPath under `$HOST_VOLUME_PATH` (default `/data/vol`) is the default for every PV the engine emits. Survives `./tf bootstrap-*` (the wrapper does NOT touch host volume data, only Terraform state). Node-pinned — fine for a single-node cluster, fine for multi-node when the workload also has `node_selector` pinning it to the node holding the data.
 
-For cross-node block replication, opt into Longhorn (`services.longhorn.enabled: true` + `tag_pools` to define replicated pools). The engine emits a `longhorn-<pool>` StorageClass per pool; tenant components opt in by setting their `storage:` `mount` to a PVC that names the SC. Longhorn replicates blocks across the pool's tagged nodes, so node-loss events re-attach the logical PV to a surviving node and the consumer pod resumes.
+For cross-node block replication, opt into Longhorn (`services.longhorn.enabled: true` + `tag_pools` to define replicated pools). The engine emits a `longhorn-<pool>` StorageClass per pool for platform services and Argo CD-managed charts. Component `storage:` entries are always hostPath; they have no StorageClass override. Longhorn replicates blocks across the pool's tagged nodes, so node-loss events re-attach the logical PV to a surviving node and the consumer pod resumes.
 
 ### External dependencies
 
@@ -293,7 +293,7 @@ Every service collapses to zero resources when its `enabled` flag is off — dis
 | `zitadel` | Identity provider — Postgres-backed StatefulSet + init Job + Login UI v2 sidecar | OIDC issuer for `oidc:` components, Argo CD, platform-dash |
 | `argocd` | GitOps controller (upstream chart) with Zitadel OIDC SSO; route emitted as `kind: external` | manual app sync via Argo UI / CLI |
 | `kured` | Kubernetes Reboot Daemon — drains + reboots a node when `/var/run/reboot-required` appears | n/a (cluster maintenance) |
-| `longhorn` | Distributed block-storage StorageClass(es) replicated across cluster nodes; native B2 backup | use `longhorn-<pool>` SC name on `storage:` of a component |
+| `longhorn` | Distributed block-storage StorageClass(es) replicated across cluster nodes; native B2 backup | use the `longhorn-<pool>` SC in a chart's PVCs (component `storage:` is hostPath only) |
 | `metallb` | Bare-metal `LoadBalancer` controller in L2 mode + per-pool address pools + L2 advertisements | tenant Services with `type: LoadBalancer` + `spec.loadBalancerIP` |
 | `minio` | Single-replica Deployment OR distributed StatefulSet (4+ erasure-coded replicas); per-bucket consumer Secrets | engine emits `S3_*` env-var Secret per consumer namespace; component `envFrom`s it |
 | `github_runners` | ARC v0.9+ controller + N scale sets (each its own namespace + chart release) | runner pools registered with org / repo / enterprise GitHub URLs |

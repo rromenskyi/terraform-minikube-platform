@@ -52,6 +52,33 @@ locals {
     }
   ]...)
 
+  # git-sync swaps worktrees behind the `current` symlink, and a subPath
+  # mount pins whatever the symlink pointed at when the container started:
+  # after the next sync the old worktree is deleted and the app serves
+  # nothing until it restarts. The hook copies every new worktree into
+  # `serve/`, a plain directory that never moves, and the main container
+  # mounts that instead. git-sync runs it with the new worktree as cwd.
+  git_sync_serve_hook = <<-EOT
+    #!/bin/bash
+    set -euo pipefail
+    shopt -s dotglob globstar nullglob
+    serve=/git/serve
+    mkdir -p "$serve"
+    for f in **; do
+      [ "$f" = .git ] && continue
+      if [ -d "$f" ] && [ ! -L "$f" ]; then
+        mkdir -p "$serve/$f"
+      else
+        cp -a --remove-destination "$f" "$serve/$f"
+      fi
+    done
+    for f in "$serve"/**; do
+      rel="$${f#"$serve"/}"
+      [ -n "$rel" ] || continue # `**` also yields "$serve/" itself
+      [ -e "$rel" ] || [ -L "$rel" ] || rm -rf "$f"
+    done
+  EOT
+
   # Main container imagePullPolicy, resolved from the explicit var when
   # the caller set one, otherwise derived from the image reference:
   #   * `foo:latest`, `foo` (no tag = implicit :latest)     → Always
@@ -291,8 +318,13 @@ resource "kubernetes_deployment_v1" "this" {
 
     template {
       metadata {
-        labels      = { app = var.name }
-        annotations = var.pod_annotations
+        labels = { app = var.name }
+        # subPath-mounted ConfigMap files never refresh in a running pod,
+        # so a content change has to roll it.
+        annotations = merge(
+          var.pod_annotations,
+          length(var.config_files) > 0 ? { "checksum/config-files" = sha256(jsonencode(var.config_files)) } : {},
+        )
       }
 
       spec {
@@ -453,6 +485,16 @@ resource "kubernetes_deployment_v1" "this" {
             image             = init_container.value.image
             image_pull_policy = "IfNotPresent"
 
+            # Writes the serve hook for the sidecar, clones once and fills
+            # `serve/` before the main container starts.
+            command = ["/bin/bash", "-ec", <<-EOT
+              printf '%s' "$SERVE_HOOK" > /git/.serve-hook
+              chmod 0755 /git/.serve-hook
+              /git-sync "$@"
+              cd /git/current
+              /git/.serve-hook
+            EOT
+            , "git-sync-init"]
             args = [
               "--repo=${init_container.value.repo}",
               "--ref=${init_container.value.branch}",
@@ -463,6 +505,11 @@ resource "kubernetes_deployment_v1" "this" {
               "--ssh-key-file=/etc/git-secret/ssh-privatekey",
               "--ssh-known-hosts-file=/etc/git-secret/known_hosts",
             ]
+
+            env {
+              name  = "SERVE_HOOK"
+              value = local.git_sync_serve_hook
+            }
 
             resources {
               requests = { cpu = "10m", memory = "32Mi" }
@@ -721,20 +768,14 @@ resource "kubernetes_deployment_v1" "this" {
             }
           }
 
-          # git-sync content. emptyDir is shared with the
-          # `git-sync-init` and `git-sync` containers; they write
-          # the worktree to `/git/<sha>` and a symlink at
-          # `/git/current` always points at the latest. Mounting
-          # the SAME emptyDir at `var.git_sync.mount` here with
-          # `subPath = "current"` resolves the symlink at mount
-          # time, so the main container sees the live content
-          # under its expected path.
+          # git-sync content: the `serve/` copy of the latest worktree
+          # (see local.git_sync_serve_hook for why not `current`).
           dynamic "volume_mount" {
             for_each = var.git_sync == null ? [] : [var.git_sync]
             content {
               name       = "git-content"
               mount_path = volume_mount.value.mount
-              sub_path   = "current"
+              sub_path   = "serve"
               read_only  = true
             }
           }
@@ -763,9 +804,8 @@ resource "kubernetes_deployment_v1" "this" {
 
         # git-sync long-running sidecar — periodic re-pull every
         # `period_seconds`. Same image + key shape as the init
-        # container above. Atomic worktree swap via the `current`
-        # symlink: the main container mounts `subPath = "current"`,
-        # so a swap propagates immediately on the next syscall.
+        # container above; its exec hook refreshes `serve/` after
+        # every new commit.
         dynamic "container" {
           for_each = var.git_sync == null ? [] : [var.git_sync]
           content {
@@ -780,6 +820,7 @@ resource "kubernetes_deployment_v1" "this" {
               "--link=current",
               "--depth=1",
               "--period=${container.value.period_seconds}s",
+              "--exechook-command=/git/.serve-hook",
               "--ssh-key-file=/etc/git-secret/ssh-privatekey",
               "--ssh-known-hosts-file=/etc/git-secret/known_hosts",
             ]

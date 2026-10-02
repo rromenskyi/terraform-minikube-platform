@@ -46,6 +46,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Resource addresses are unchanged (plan: no changes).
 
 ### Fixed
+- `modules/component` git-sync: the main container mounted the `current`
+  symlink by subPath, which pins the worktree present at container start.
+  After the next sync that worktree was deleted, the liveness probe failed
+  and the container restarted to pick up the new content (a short outage
+  per push). An exec hook now copies each new worktree into `serve/`, which
+  the main container mounts; updates land without a restart, and the
+  worktree's `.git` file is no longer served.
+- `modules/component`: a change to `config_files` rolls the pod
+  (`checksum/config-files` annotation); subPath-mounted files never refresh
+  in place. README no longer offers a StorageClass for component storage.
 - Docs: the chat `open-terminal` sidecar was described as egress-limited by a
   NetworkPolicy; no such policy exists for tenant namespaces. The component
   yaml now says so, and the sidecar image is pinned by digest. Argo CD docs
