@@ -505,6 +505,12 @@ resource "kubernetes_namespace_v1" "this" {
       "app.kubernetes.io/managed-by" = "terraform"
       "project"                      = local.domain
       "environment"                  = local.env
+      },
+      # Pod Security in warn + audit mode: violations are reported, nothing
+      # is blocked. Raise to `enforce` per project once the audit is clean.
+      var.pod_security_level == "" ? {} : {
+        "pod-security.kubernetes.io/warn"  = var.pod_security_level
+        "pod-security.kubernetes.io/audit" = var.pod_security_level
     })
   }
 }

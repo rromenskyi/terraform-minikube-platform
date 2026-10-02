@@ -7,6 +7,9 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- MySQL setup container gets resource requests/limits.
+
 ### Security
 - MySQL setup Job reads the password from a Secret instead of the script.
 

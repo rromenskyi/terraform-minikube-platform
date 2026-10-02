@@ -266,6 +266,11 @@ resource "kubernetes_job_v1" "mysql_setup" {
           name  = "mysql-setup"
           image = "mysql:8.4.11"
 
+          resources {
+            requests = { cpu = "50m", memory = "64Mi" }
+            limits   = { cpu = "200m", memory = "256Mi" }
+          }
+
           # Password from a Secret, not the command line: Job specs are
           # readable far more widely than Secrets.
           env {

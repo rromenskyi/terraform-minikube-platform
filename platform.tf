@@ -8,6 +8,10 @@ resource "kubernetes_namespace_v1" "platform" {
     labels = {
       "app.kubernetes.io/managed-by" = "terraform"
       "app.kubernetes.io/part-of"    = "platform"
+      # Reported, not enforced: the namespace runs the GPU Ollama, which
+      # baseline would reject.
+      "pod-security.kubernetes.io/warn"  = "baseline"
+      "pod-security.kubernetes.io/audit" = "baseline"
     }
   }
 }

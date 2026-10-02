@@ -189,3 +189,14 @@ variable "redis_acl_namespace" {
   type        = string
   default     = ""
 }
+
+variable "pod_security_level" {
+  description = "Pod Security Standard (`privileged`, `baseline`, `restricted`) reported for the project namespace in warn and audit mode (never enforced here). Empty = no labels."
+  type        = string
+  default     = "baseline"
+  nullable    = false
+  validation {
+    condition     = contains(["", "privileged", "baseline", "restricted"], var.pod_security_level)
+    error_message = "pod_security_level must be empty, privileged, baseline or restricted."
+  }
+}

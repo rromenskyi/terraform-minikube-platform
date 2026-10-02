@@ -7,6 +7,10 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- `pod_security_level` (default `baseline`): Pod Security warn + audit labels on
+  the project namespace (reported, not enforced).
+
 ### Security
 - `redis_acl_namespace`: the project's Redis ACL Secret goes there.
 
