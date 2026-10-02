@@ -7,6 +7,11 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Security
+- The running pod no longer receives the MySQL root password: it was still
+  in the env_from bootstrap Secret despite the comment saying otherwise;
+  only the setup Job uses it.
+
 ### Fixed
 - **First-boot bootstrap conflict — `seahub_settings.py` no longer
   mounted via ConfigMap subPath.** Seafile's first-boot installer

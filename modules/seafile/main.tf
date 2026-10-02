@@ -170,7 +170,6 @@ resource "kubernetes_secret_v1" "bootstrap" {
   data = {
     INIT_SEAFILE_ADMIN_EMAIL         = var.admin_email
     INIT_SEAFILE_ADMIN_PASSWORD      = random_password.admin["enabled"].result
-    INIT_SEAFILE_MYSQL_ROOT_PASSWORD = var.mysql_root_password
     SEAFILE_MYSQL_DB_HOST            = var.mysql_host
     SEAFILE_MYSQL_DB_PORT            = tostring(var.mysql_port)
     SEAFILE_MYSQL_DB_USER            = "seafile"

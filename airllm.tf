@@ -152,6 +152,33 @@ resource "random_password" "airllm_admin" {
   special = false
 }
 
+# Own Redis identity instead of the shared `default` superuser: the
+# gateway's keys all live under `air:` (usage counters, locks, login
+# throttling). The ACL keeper in the Redis namespace applies this line to
+# every node (see modules/redis).
+resource "random_password" "airllm_redis" {
+  for_each = local.airllm_instances
+  length   = 32
+  special  = false
+}
+
+resource "kubernetes_secret_v1" "airllm_redis_acl" {
+  for_each = local.airllm_instances
+
+  metadata {
+    name      = "redis-acl-airllm"
+    namespace = module.redis.namespace
+    labels = merge(module.platform_label.tags, {
+      "app.kubernetes.io/component" = "airllm"
+      "platform.local/redis-acl"    = "true"
+    })
+  }
+
+  data = {
+    setuser = "airllm on #${sha256(random_password.airllm_redis["enabled"].result)} ~air:* &air:* +@all -@dangerous +info"
+  }
+}
+
 resource "kubernetes_secret_v1" "airllm" {
   for_each = local.airllm_instances
 
@@ -163,7 +190,7 @@ resource "kubernetes_secret_v1" "airllm" {
 
   data = {
     "database-url"   = "postgres://${local.airllm_db}:${random_password.airllm_db["enabled"].result}@${module.postgres.host}:5432/${local.airllm_db}?sslmode=disable"
-    "redis-url"      = "redis://default:${module.redis.default_password}@${module.redis.host}:${module.redis.port}/0"
+    "redis-url"      = "redis://airllm:${random_password.airllm_redis["enabled"].result}@${module.redis.host}:${module.redis.port}/0"
     "master-key"     = random_bytes.airllm_master_key["enabled"].base64
     "session-key"    = random_bytes.airllm_session_key["enabled"].base64
     "admin-password" = random_password.airllm_admin["enabled"].result
