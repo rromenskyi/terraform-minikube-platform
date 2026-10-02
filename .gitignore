@@ -25,6 +25,8 @@ config/platform.yaml
 # Terraform secrets/overrides
 *.tfvars
 *.tfvars.json
+# Operator backend (see README "Remote state")
+*_override.tf
 
 # Domain configs (contain Cloudflare zone IDs — personal per setup)
 config/domains/*.yaml

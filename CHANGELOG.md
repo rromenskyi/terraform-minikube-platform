@@ -51,6 +51,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - `modules/component` git-sync:
+- README "Remote state": put the backend in the gitignored
+  `_local_backend_override.tf` instead of editing the tracked `_backend.tf`;
+  `*_override.tf` is now in `.gitignore`.
 - `modules/metallb`: every pool gets an L2Advertisement; a pool without
   `l2_node_selectors` was assigned but never announced.
 - `modules/minio`: the bucket Job is named by its input hash instead of

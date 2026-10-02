@@ -759,15 +759,16 @@ Local `terraform.tfstate` is the default. To move to Backblaze B2 (S3-compatible
 1. Create a B2 bucket (private) and an application key. Note your
    bucket's B2 region — it appears in the S3-compatible endpoint host
    as `s3.<region>.backblazeb2.com` (e.g. `us-east-005`, `us-west-004`).
-2. Edit `_backend.tf` (replace `<your-bucket>` and `<your-b2-region>`
-   with the values from step 1):
+2. Create `_local_backend_override.tf` (gitignored; Terraform merges
+   `*_override.tf` over `_backend.tf`, so the tracked file stays as is)
+   with the values from step 1:
    ```hcl
    terraform {
      backend "s3" {
        bucket                      = "<your-bucket>"
        key                         = "platform/terraform.tfstate"
        region                      = "<your-b2-region>"
-       endpoint                    = "https://s3.<your-b2-region>.backblazeb2.com"
+       endpoints                   = { s3 = "https://s3.<your-b2-region>.backblazeb2.com" }
        skip_credentials_validation = true
        skip_metadata_api_check     = true
        skip_region_validation      = true
