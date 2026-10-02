@@ -173,3 +173,17 @@ variable "vault_config_operator_crds" {
   type        = list(string)
   default     = []
 }
+
+variable "vso_tenants" {
+  description = "Tenant slug → namespaces. Each tenant gets a VSO policy limited to `secret/tenants/<slug>/*` and a kubernetes-auth role `vso-tenant-<slug>` bound to those namespaces; projects use it through their own VaultAuth."
+  type        = map(list(string))
+  default     = {}
+  nullable    = false
+}
+
+variable "vso_shared_namespaces" {
+  description = "Namespaces allowed to use the shared `vso` role, which reads every tenant's and the platform's secrets (e.g. Argo CD for repository credentials, the runner namespace for its tokens). Empty = every namespace, i.e. no tenant isolation."
+  type        = list(string)
+  default     = []
+  nullable    = false
+}

@@ -1206,25 +1206,77 @@ resource "kubectl_manifest" "vso_k8s_role" {
       path           = "kubernetes"
       # VSO impersonates this SA in the CONSUMING namespace (the
       # namespace where the VaultStaticSecret CR lives), not in
-      # vso's own namespace. So this role accepts the SA across
-      # ALL namespaces — engine emits the SA in every project ns
-      # that uses vault-mode secrets.
+      # vso's own namespace. This shared role reads every tenant's and
+      # the platform's secrets, so it is limited to `vso_shared_namespaces`
+      # (platform namespaces such as Argo CD's) when that list is set;
+      # tenants authenticate with their own `vso-tenant-<slug>` role.
+      # Empty list = every namespace (no tenant isolation).
       targetServiceAccounts = ["vault-secrets-operator-controller-manager"]
-      targetNamespaces = {
-        targetNamespaceSelector = {
-          # Match every namespace by the kubelet-set
-          # `kubernetes.io/metadata.name` label (always present);
-          # `Exists` selector matches every namespace in the cluster.
-          matchExpressions = [{
-            key      = "kubernetes.io/metadata.name"
-            operator = "Exists"
-          }]
-        }
-      }
+      targetNamespaces = merge(
+        length(var.vso_shared_namespaces) > 0 ? { targetNamespaces = var.vso_shared_namespaces } : {},
+        # `Exists` on the kubelet-set `kubernetes.io/metadata.name` label
+        # matches every namespace in the cluster.
+        length(var.vso_shared_namespaces) > 0 ? {} : {
+          targetNamespaceSelector = {
+            matchExpressions = [{ key = "kubernetes.io/metadata.name", operator = "Exists" }]
+          }
+        },
+      )
       policies = ["vso-tenant-read"]
       # KubernetesAuthEngineRole CRD wants seconds-as-int here (different
       # from JWTOIDCAuthEngineRole CRD, which wants a duration string).
       tokenTTL = 86400 # 24h
+    }
+  })
+}
+
+# Per-tenant VSO identity: a policy limited to `tenants/<slug>/*` and a
+# kubernetes-auth role bound to that tenant's namespaces only. Projects
+# reference it through their own VaultAuth, so a VaultStaticSecret in one
+# tenant's namespace can't read another tenant's or the platform's paths.
+resource "kubectl_manifest" "vso_tenant_policy" {
+  for_each = var.enabled ? var.vso_tenants : {}
+
+  depends_on = [helm_release.vault_config_operator]
+
+  yaml_body = yamlencode({
+    apiVersion = "redhatcop.redhat.io/v1alpha1"
+    kind       = "Policy"
+    metadata = {
+      name      = "vso-tenant-${each.key}"
+      namespace = kubernetes_namespace_v1.vault_config_operator["enabled"].metadata[0].name
+    }
+    spec = {
+      authentication = local.vco_authentication
+      connection     = local.vco_connection
+      policy         = <<-POLICY
+        path "secret/data/tenants/${each.key}/*"     { capabilities = ["read"] }
+        path "secret/metadata/tenants/${each.key}/*" { capabilities = ["read", "list"] }
+      POLICY
+    }
+  })
+}
+
+resource "kubectl_manifest" "vso_tenant_role" {
+  for_each = var.enabled ? var.vso_tenants : {}
+
+  depends_on = [kubectl_manifest.vso_tenant_policy, kubectl_manifest.kv_v2_mount]
+
+  yaml_body = yamlencode({
+    apiVersion = "redhatcop.redhat.io/v1alpha1"
+    kind       = "KubernetesAuthEngineRole"
+    metadata = {
+      name      = "vso-tenant-${each.key}"
+      namespace = kubernetes_namespace_v1.vault_config_operator["enabled"].metadata[0].name
+    }
+    spec = {
+      authentication        = local.vco_authentication
+      connection            = local.vco_connection
+      path                  = "kubernetes"
+      targetServiceAccounts = ["vault-secrets-operator-controller-manager"]
+      targetNamespaces      = { targetNamespaces = each.value }
+      policies              = ["vso-tenant-${each.key}"]
+      tokenTTL              = 86400 # 24h
     }
   })
 }

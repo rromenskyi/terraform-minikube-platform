@@ -30,10 +30,11 @@ terraform {
 # ── Locals ────────────────────────────────────────────────────────────────────
 
 locals {
-  namespace = var.project_config.namespace       # e.g. "phost-example-com-prod"
-  domain    = var.project_config.name            # e.g. "example.com"
-  env       = var.project_config.env             # e.g. "prod"
-  routes    = try(var.project_config.routes, {}) # { "": web, www: web, api: whoami2, "/api": api }
+  vault_auth_ref = var.vault_tenant_role != "" ? "vault-tenant" : ""
+  namespace      = var.project_config.namespace       # e.g. "phost-example-com-prod"
+  domain         = var.project_config.name            # e.g. "example.com"
+  env            = var.project_config.env             # e.g. "prod"
+  routes         = try(var.project_config.routes, {}) # { "": web, www: web, api: whoami2, "/api": api }
 
   # A route key is `<host-prefix>` (the whole host) or
   # `<host-prefix>/<path>` (only that path subtree of the host):
@@ -1248,6 +1249,33 @@ resource "kubernetes_service_account_v1" "vso_proxy" {
   }
 }
 
+# Tenant-scoped VaultAuth: VSO authenticates this namespace's
+# VaultStaticSecrets with the tenant's own role (`var.vault_tenant_role`,
+# limited to `tenants/<slug>/*`) instead of the shared default, which
+# reads every tenant's and the platform's secrets.
+resource "kubectl_manifest" "vault_auth" {
+  for_each = length(kubernetes_service_account_v1.vso_proxy) > 0 && var.vault_tenant_role != "" ? toset(["enabled"]) : toset([])
+
+  yaml_body = yamlencode({
+    apiVersion = "secrets.hashicorp.com/v1beta1"
+    kind       = "VaultAuth"
+    metadata = {
+      name      = "vault-tenant"
+      namespace = kubernetes_namespace_v1.this.metadata[0].name
+      labels    = merge(module.project_label.tags, { "app.kubernetes.io/managed-by" = "terraform" })
+    }
+    spec = {
+      method = "kubernetes"
+      mount  = "kubernetes"
+      kubernetes = {
+        role                   = var.vault_tenant_role
+        serviceAccount         = kubernetes_service_account_v1.vso_proxy["enabled"].metadata[0].name
+        tokenExpirationSeconds = 600
+      }
+    }
+  })
+}
+
 # Vault-mode: emit a VaultStaticSecret CR that VSO reconciles into a
 # k8s Secret with the same name in this project namespace. Path is
 # convention-derived: `tenants/<tenant_slug>/<secret_name>` — operator
@@ -1258,7 +1286,7 @@ resource "kubernetes_service_account_v1" "vso_proxy" {
 resource "kubectl_manifest" "operator_secret_vault" {
   for_each = local.operator_secret_vault_set
 
-  depends_on = [kubernetes_service_account_v1.vso_proxy]
+  depends_on = [kubernetes_service_account_v1.vso_proxy, kubectl_manifest.vault_auth]
 
   yaml_body = yamlencode({
     apiVersion = "secrets.hashicorp.com/v1beta1"
@@ -1272,11 +1300,9 @@ resource "kubectl_manifest" "operator_secret_vault" {
       })
     }
     spec = {
-      # VSO falls back to the cluster-default VaultAuth in the
-      # vault-secrets-operator namespace when vaultAuthRef is empty.
-      # The platform's vault module enables that default at install
-      # time (modules/vault/main.tf vso helm release values).
-      vaultAuthRef = ""
+      # The tenant VaultAuth above when a tenant role is set; otherwise
+      # (empty ref) VSO's cluster-default VaultAuth.
+      vaultAuthRef = local.vault_auth_ref
       mount        = "secret"
       type         = "kv-v2"
       path         = local.operator_secret_vault_paths[each.value]
@@ -1319,7 +1345,7 @@ locals {
 resource "kubectl_manifest" "git_deploy_key_vault" {
   for_each = var.git_deploy_keys
 
-  depends_on = [kubernetes_service_account_v1.vso_proxy]
+  depends_on = [kubernetes_service_account_v1.vso_proxy, kubectl_manifest.vault_auth]
 
   yaml_body = yamlencode({
     apiVersion = "secrets.hashicorp.com/v1beta1"
@@ -1333,7 +1359,7 @@ resource "kubectl_manifest" "git_deploy_key_vault" {
       })
     }
     spec = {
-      vaultAuthRef = ""
+      vaultAuthRef = local.vault_auth_ref
       mount        = "secret"
       type         = "kv-v2"
       path         = "tenants/${var.project_config.slug}/git-deploy-keys/${each.key}"
@@ -1383,7 +1409,7 @@ resource "kubectl_manifest" "git_deploy_key_vault" {
 resource "kubectl_manifest" "image_pull_secret_vault" {
   for_each = var.image_pull_secrets
 
-  depends_on = [kubernetes_service_account_v1.vso_proxy]
+  depends_on = [kubernetes_service_account_v1.vso_proxy, kubectl_manifest.vault_auth]
 
   yaml_body = yamlencode({
     apiVersion = "secrets.hashicorp.com/v1beta1"
@@ -1397,7 +1423,7 @@ resource "kubectl_manifest" "image_pull_secret_vault" {
       })
     }
     spec = {
-      vaultAuthRef = ""
+      vaultAuthRef = local.vault_auth_ref
       mount        = "secret"
       type         = "kv-v2"
       path         = "tenants/${var.project_config.slug}/image-pull-secrets/${each.key}"

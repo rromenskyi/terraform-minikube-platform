@@ -99,6 +99,20 @@ module "vault" {
   volume_base_path                    = var.host_volume_path
   storage_class                       = local.platform.services.vault.storage_class
 
+  # Tenant isolation for VSO: each tenant slug reads only its own
+  # `tenants/<slug>/*` through a role bound to its namespaces; the shared
+  # role (every tenant + platform paths) stays with the platform
+  # namespaces that need it — Argo CD (repository credentials of all
+  # tenants) and the runner namespaces (platform runner tokens).
+  vso_tenants = {
+    for slug in distinct([for p in values(local.projects) : p.slug]) :
+    slug => [for p in values(local.projects) : p.namespace if p.slug == slug]
+  }
+  vso_shared_namespaces = distinct(concat(
+    local.platform.services.argocd.enabled ? [local.platform.services.argocd.namespace] : [],
+    [for s in values(local.platform.services.github_runners.scale_sets) : s.namespace if try(s.vault, false)],
+  ))
+
   # Phase 2 — OIDC self-serve. Wired only when both Vault AND Zitadel
   # are on; otherwise the module stays in Phase 1 shape (root-token
   # only). Tenant list = every project namespace's slug — engine

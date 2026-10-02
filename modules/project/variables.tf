@@ -176,3 +176,10 @@ variable "chart_oidc_apps" {
   type        = any
   default     = {}
 }
+
+variable "vault_tenant_role" {
+  description = "Vault kubernetes-auth role for this project's VaultStaticSecrets (e.g. `vso-tenant-<slug>`, created by the vault module and limited to this tenant's paths). The project then authenticates through its own VaultAuth `vault-tenant`. Empty = VSO's cluster-default VaultAuth."
+  type        = string
+  default     = ""
+  nullable    = false
+}

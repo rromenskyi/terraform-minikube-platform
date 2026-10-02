@@ -7,6 +7,11 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- `vault_tenant_role`: the project's VaultStaticSecrets authenticate through
+  its own VaultAuth `vault-tenant` with the tenant-scoped role instead of
+  VSO's cluster default.
+
 ### Fixed
 - Tenant MySQL setup re-asserts the user's password (`ALTER USER`);
   `CREATE USER IF NOT EXISTS` alone kept an old one.

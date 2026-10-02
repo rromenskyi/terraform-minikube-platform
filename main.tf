@@ -313,4 +313,7 @@ module "project" {
     name      = "traefik-fallback-errors"
     namespace = "ingress-controller"
   }
+
+  # Tenant-scoped Vault role created by module.vault (vso_tenants).
+  vault_tenant_role = local.platform.services.vault.enabled ? "vso-tenant-${each.value.slug}" : ""
 }
