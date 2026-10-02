@@ -155,34 +155,6 @@ data "kubernetes_secret_v1" "redis_default" {
   }
 }
 
-resource "kubernetes_secret_v1" "backup_vault_token" {
-  for_each = local.platform.services.backup.enabled && local.platform.services.vault.enabled ? toset(["enabled"]) : toset([])
-
-  depends_on = [module.backup]
-
-  metadata {
-    name      = "vault-token-mirror"
-    namespace = "backups"
-    labels = {
-      "app.kubernetes.io/managed-by" = "terraform"
-      "app.kubernetes.io/component"  = "backup-creds"
-    }
-  }
-
-  data = {
-    "root-token" = data.kubernetes_secret_v1.vault_bootstrap["enabled"].data["root-token"]
-  }
-}
-
-data "kubernetes_secret_v1" "vault_bootstrap" {
-  for_each = local.platform.services.backup.enabled && local.platform.services.vault.enabled ? toset(["enabled"]) : toset([])
-
-  metadata {
-    name      = "vault-bootstrap"
-    namespace = "platform"
-  }
-}
-
 # ── Module call ───────────────────────────────────────────────────────────
 
 module "backup" {
@@ -215,9 +187,11 @@ module "backup" {
   redis_default_secret = "redis-default-mirror"
 
   # Vault
-  vault_enabled      = local.platform.services.backup.enabled && local.platform.services.vault.enabled
-  vault_addr         = local.platform.services.vault.enabled ? "http://vault.platform.svc.cluster.local:8200" : ""
-  vault_token_secret = "vault-token-mirror"
+  vault_enabled = local.platform.services.backup.enabled && local.platform.services.vault.enabled
+  vault_addr    = local.platform.services.vault.enabled ? "http://vault.platform.svc.cluster.local:8200" : ""
+  # Logs in with its own ServiceAccount; module.vault grants that identity
+  # snapshot-read only (no root token in the backups namespace).
+  vault_auth_role = "backup-snapshot"
 
   # PV
   pv_enabled       = local.platform.services.backup.enabled && length(local.platform.services.backup.pv_paths) > 0

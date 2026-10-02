@@ -1230,6 +1230,54 @@ resource "kubectl_manifest" "vso_k8s_role" {
   })
 }
 
+# Identity of the backup Job that takes raft snapshots: read on the
+# snapshot endpoint and nothing else, so backups never need the root token.
+resource "kubectl_manifest" "snapshot_policy" {
+  for_each = var.enabled && var.snapshot_backup != null ? toset(["enabled"]) : toset([])
+
+  depends_on = [helm_release.vault_config_operator]
+
+  yaml_body = yamlencode({
+    apiVersion = "redhatcop.redhat.io/v1alpha1"
+    kind       = "Policy"
+    metadata = {
+      name      = "backup-snapshot"
+      namespace = kubernetes_namespace_v1.vault_config_operator["enabled"].metadata[0].name
+    }
+    spec = {
+      authentication = local.vco_authentication
+      connection     = local.vco_connection
+      policy         = <<-POLICY
+        path "sys/storage/raft/snapshot" { capabilities = ["read"] }
+      POLICY
+    }
+  })
+}
+
+resource "kubectl_manifest" "snapshot_role" {
+  for_each = var.enabled && var.snapshot_backup != null ? toset(["enabled"]) : toset([])
+
+  depends_on = [kubectl_manifest.snapshot_policy]
+
+  yaml_body = yamlencode({
+    apiVersion = "redhatcop.redhat.io/v1alpha1"
+    kind       = "KubernetesAuthEngineRole"
+    metadata = {
+      name      = "backup-snapshot"
+      namespace = kubernetes_namespace_v1.vault_config_operator["enabled"].metadata[0].name
+    }
+    spec = {
+      authentication        = local.vco_authentication
+      connection            = local.vco_connection
+      path                  = "kubernetes"
+      targetServiceAccounts = [var.snapshot_backup.service_account]
+      targetNamespaces      = { targetNamespaces = [var.snapshot_backup.namespace] }
+      policies              = ["backup-snapshot"]
+      tokenTTL              = 900 # 15m — one snapshot
+    }
+  })
+}
+
 # Per-tenant VSO identity: a policy limited to `tenants/<slug>/*` and a
 # kubernetes-auth role bound to that tenant's namespaces only. Projects
 # reference it through their own VaultAuth, so a VaultStaticSecret in one

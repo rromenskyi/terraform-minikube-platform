@@ -108,6 +108,9 @@ module "vault" {
     for slug in distinct([for p in values(local.projects) : p.slug]) :
     slug => [for p in values(local.projects) : p.namespace if p.slug == slug]
   }
+  # Raft snapshots for module.backup without the root token.
+  snapshot_backup = local.platform.services.backup.enabled ? { namespace = "backups", service_account = "backup-vault" } : null
+
   vso_shared_namespaces = distinct(concat(
     local.platform.services.argocd.enabled ? [local.platform.services.argocd.namespace] : [],
     [for s in values(local.platform.services.github_runners.scale_sets) : s.namespace if try(s.vault, false)],

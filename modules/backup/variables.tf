@@ -123,6 +123,13 @@ variable "vault_addr" {
   default     = ""
 }
 
+variable "vault_auth_role" {
+  description = "Vault kubernetes-auth role the snapshot Job logs in with, using ServiceAccount `backup-vault` in this namespace. Grant it only `read` on `sys/storage/raft/snapshot`. When set, `vault_token_secret` is not used."
+  type        = string
+  default     = ""
+  nullable    = false
+}
+
 variable "vault_token_secret" {
   description = "Name of the Secret in `var.namespace` holding the Vault root token under `VAULT_TOKEN`. Phase 0 sources from the bootstrap Secret; future phases will use a dedicated backup-policy AppRole so the root token isn't day-to-day exposed."
   type        = string

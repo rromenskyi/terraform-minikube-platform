@@ -187,3 +187,12 @@ variable "vso_shared_namespaces" {
   default     = []
   nullable    = false
 }
+
+variable "snapshot_backup" {
+  description = "ServiceAccount (`namespace`, `service_account`) of the backup Job that takes raft snapshots. Gets kubernetes-auth role `backup-snapshot` with read on `sys/storage/raft/snapshot` only. Null = no role."
+  type = object({
+    namespace       = string
+    service_account = string
+  })
+  default = null
+}

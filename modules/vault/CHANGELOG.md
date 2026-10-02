@@ -7,6 +7,10 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Security
+- `snapshot_backup`: kubernetes-auth role `backup-snapshot` with read on
+  `sys/storage/raft/snapshot` only, for the backup Job.
+
 ### Added
 - `vso_tenants`: per-tenant VSO policy (`tenants/<slug>/*`) and kubernetes-auth
   role `vso-tenant-<slug>` bound to the tenant's namespaces.

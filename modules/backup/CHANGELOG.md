@@ -7,6 +7,10 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Security
+- `vault_auth_role`: the Vault snapshot Job logs in with ServiceAccount
+  `backup-vault` (kubernetes auth) instead of a root-token Secret.
+
 ### Fixed
 - `pv_paths[].node`: one PV backup CronJob per node (`backup-pv-<node>`,
   restic host `platform-pv-<node>`), since hostPath data exists only on its

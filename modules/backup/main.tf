@@ -611,6 +611,18 @@ resource "kubernetes_cron_job_v1" "redis" {
 
 # ── Vault raft snapshot CronJob ───────────────────────────────────────────
 
+# Identity the Vault backup logs in with (kubernetes auth, see
+# `vault_auth_role`).
+resource "kubernetes_service_account_v1" "vault_backup" {
+  for_each = length(local.vault_set) > 0 && var.vault_auth_role != "" ? toset(["enabled"]) : toset([])
+
+  metadata {
+    name      = "backup-vault"
+    namespace = kubernetes_namespace_v1.backup["enabled"].metadata[0].name
+    labels    = local.tags
+  }
+}
+
 resource "kubernetes_cron_job_v1" "vault" {
   for_each = local.vault_set
 
@@ -639,7 +651,8 @@ resource "kubernetes_cron_job_v1" "vault" {
             labels = merge(local.tags, { "app.kubernetes.io/component" = "backup-vault" })
           }
           spec {
-            restart_policy = "OnFailure"
+            restart_policy       = "OnFailure"
+            service_account_name = var.vault_auth_role == "" ? null : kubernetes_service_account_v1.vault_backup["enabled"].metadata[0].name
 
             # The vault image runs unprivileged (2.x), so nothing can be
             # installed into it at runtime: the snapshot is taken by an
@@ -652,17 +665,26 @@ resource "kubernetes_cron_job_v1" "vault" {
                 name  = "VAULT_ADDR"
                 value = var.vault_addr
               }
-              env {
-                name = "VAULT_TOKEN"
-                value_from {
-                  secret_key_ref {
-                    name = var.vault_token_secret
-                    key  = "root-token"
+              dynamic "env" {
+                for_each = var.vault_auth_role == "" ? ["token"] : []
+                content {
+                  name = "VAULT_TOKEN"
+                  value_from {
+                    secret_key_ref {
+                      name = var.vault_token_secret
+                      key  = "root-token"
+                    }
                   }
                 }
               }
 
-              command = ["vault", "operator", "raft", "snapshot", "save", "/stage/vault.snap"]
+              # With `vault_auth_role` the Job logs in with its own
+              # ServiceAccount (kubernetes auth) and gets a token that can
+              # only take raft snapshots; otherwise the token Secret is used.
+              command = var.vault_auth_role == "" ? ["vault", "operator", "raft", "snapshot", "save", "/stage/vault.snap"] : [
+                "sh", "-ec",
+                "VAULT_TOKEN=$(vault write -field=token auth/kubernetes/login role=${var.vault_auth_role} jwt=@/var/run/secrets/kubernetes.io/serviceaccount/token) vault operator raft snapshot save /stage/vault.snap",
+              ]
 
               volume_mount {
                 name       = "stage"
