@@ -858,10 +858,24 @@ resource "kubernetes_deployment_v1" "acl_keeper" {
                 | sed 's/^"setuser": *"//; s/"$//' \
                 | while IFS= read -r b; do echo "$b" | base64 -d; echo; done)"
               if [ -n "$LINES" ]; then
+                WANT="$(printf '%s\n' "$LINES" | awk 'NF {print $1}')"
                 for node in $NODES; do
+                  # resetpass first: the Secret's hash replaces every older
+                  # password (rotation actually revokes), atomically within
+                  # one SETUSER.
                   printf '%s\n' "$LINES" | while IFS= read -r l; do
                     [ -z "$l" ] && continue
-                    timeout 5 redis-cli -h "$node" -p 6379 -a "$REDIS_PASSWORD" --no-auth-warning ACL SETUSER $l >/dev/null 2>&1 || true
+                    set -- $l
+                    u="$1"; shift
+                    timeout 5 redis-cli -h "$node" -p 6379 -a "$REDIS_PASSWORD" --no-auth-warning ACL SETUSER "$u" resetpass "$@" >/dev/null 2>&1 || true
+                  done
+                  # Offboarding: users no Secret declares any more lose access.
+                  # `default` (the operator/replication user) is never touched.
+                  for u in $(timeout 5 redis-cli -h "$node" -p 6379 -a "$REDIS_PASSWORD" --no-auth-warning ACL USERS 2>/dev/null); do
+                    [ "$u" = default ] && continue
+                    printf '%s\n' "$WANT" | grep -qx "$u" && continue
+                    echo "[keeper] $node: removing undeclared ACL user $u"
+                    timeout 5 redis-cli -h "$node" -p 6379 -a "$REDIS_PASSWORD" --no-auth-warning ACL DELUSER "$u" >/dev/null 2>&1 || true
                   done
                 done
               fi

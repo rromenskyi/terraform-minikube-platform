@@ -7,6 +7,11 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Security
+- ACL keeper: `SETUSER <user> resetpass ...` so a rotated password replaces
+  the old one instead of adding to it, and users no ACL Secret declares
+  (offboarded projects) are deleted (`default` excepted).
+
 ### Changed
 - Sentinel mode rejects `storage_class`: it runs as a cache with AOF/RDB
   off, so the PVC only suggested durability it doesn't have.
