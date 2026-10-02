@@ -8,6 +8,12 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- Bootstrap no longer wipes `data/` and `etc/` when the 0.16 sentinel is
+  missing. A non-empty volume without the sentinel (pre-0.16 state, or a
+  restore that lost the marker) now stops the pod with instructions; an
+  empty volume still initialises as a fresh install.
+
+### Fixed
 - **Mail-alias idempotency pass broke the whole boot-time plan apply.** The
   rendered plan has no trailing newline (`join("\n")`), so the `update
   MailingList` line the applier appends for an already-existing alias was

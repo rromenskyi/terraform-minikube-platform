@@ -1320,19 +1320,20 @@ resource "kubernetes_deployment_v1" "stalwart" {
           command = ["sh", "-eu", "-c", <<-EOT
             apk add --no-cache curl unzip zip xz >/dev/null
 
-            # ── One-time wipe before first 0.16 boot ───────────────
-            # 0.16 only migrates from 0.15.x (per UPGRADING/v0_16.md).
-            # Anything older — including the 0.10.5 TOML state we used
-            # to run — is unsupported and will leave the server in an
-            # unrecoverable state. The platform's mail PVC has no real
-            # mailboxes yet (we never made it past the wizard), so a
-            # wipe is the correct conversion. Sentinel file gates the
-            # operation: present after the first 0.16 bootstrap, absent
-            # on a v0.10-era hostPath.
+            # ── Volume layout guard ────────────────────────────────
+            # 0.16 only migrates from 0.15.x (per UPGRADING/v0_16.md);
+            # older state leaves the server unrecoverable. The sentinel
+            # marks a volume this bootstrap has already initialised for
+            # 0.16. Without it, an empty volume is a fresh install; a
+            # non-empty one is either pre-0.16 state or a restore that
+            # lost the marker — both need an operator decision, never an
+            # automatic wipe, so the pod refuses to start.
             SENTINEL=/opt/stalwart-mail/.v016-bootstrapped
-            if [ ! -f "$SENTINEL" ]; then
-              echo "[bootstrap] no v0.16 sentinel found — wiping legacy data dir before first boot"
-              rm -rf /opt/stalwart-mail/data /opt/stalwart-mail/etc
+            if [ ! -f "$SENTINEL" ] && [ -n "$(find /opt/stalwart-mail/data /opt/stalwart-mail/etc -type f 2>/dev/null | head -n 1)" ]; then
+              echo "[bootstrap] FATAL: data/etc present but no $SENTINEL." >&2
+              echo "[bootstrap] Restored 0.16 volume: touch $SENTINEL on the volume and restart." >&2
+              echo "[bootstrap] Pre-0.16 state: back it up, remove data/ and etc/ by hand, restart." >&2
+              exit 1
             fi
 
             # ── Datastore config (idempotent overwrite) ────────────
