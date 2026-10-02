@@ -9,7 +9,7 @@
 #   - environment specifics (hostname, zone id, pool VIP) live in the
 #     gitignored `config/platform.yaml` under `services.airllm`.
 #
-# Exposure is DIRECT (no Cloudflare tunnel/proxy, operator ruling 2026-07-08):
+# Exposure is DIRECT (no Cloudflare tunnel/proxy):
 # unproxied A record → traefik_public VIP → IngressRoute (websecure) with a
 # cert-manager Let's Encrypt certificate.
 

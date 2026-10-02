@@ -316,7 +316,7 @@ shared mysql instance — that data set survives the state wipe
 intact, but new credentials don't reach it.
 
 Same pattern as the per-tenant Vault-mode secrets that already
-landed (sipmesh-zadarma, sipmesh-twilio, mm-core-secrets, etc.):
+landed (per-tenant carrier / app credentials):
 operator places root password once in
 `secret/data/platform/mysql-root`, engine emits a
 `VaultStaticSecret` instead of `random_password +

@@ -1565,15 +1565,15 @@ check "zitadel_provider_authenticated_when_chart_oidc_used" {
 
 # Naming for chart_oidc_apps entries.
 #
-# The yaml key (e.g. `sipmesh-frontend-oidc`) is descriptive of the
+# The yaml key (e.g. `web-frontend-oidc`) is descriptive of the
 # Secret it produces (k8s Secret carrying `AUTH_ZITADEL_*`), but
 # defaulting the Zitadel project + app name to the same string
 # leaves operators reading the Zitadel UI unable to tell which
-# environment they're looking at — `sipmesh-frontend-oidc` could be
+# environment they're looking at — `web-frontend-oidc` could be
 # dev, prod, staging.
 #
 # Solution: route naming through `terraform-null-label` so the
-# Zitadel project + app name auto-include the env (`sipmesh-frontend
+# Zitadel project + app name auto-include the env (`web-frontend
 # -dev`), while the k8s Secret name keeps the descriptive `-oidc`
 # suffix the chart's `envFrom` references. Operators can override
 # every output via explicit `project_name` / `app_name` /

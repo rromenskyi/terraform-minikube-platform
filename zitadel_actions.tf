@@ -33,7 +33,7 @@ resource "zitadel_action" "groups_claim" {
   timeout = "10s"
   # `allowed_to_fail = true` — defensive default for an Action that
   # runs on EVERY Zitadel token / userinfo issue across every app
-  # in the org (Stalwart, Roundcube, platform-dash, sipmesh-frontend,
+  # in the org (Stalwart, Roundcube, platform-dash, tenant OIDC apps,
   # Argo CD, oauth2-proxy). A regression in the JS would otherwise
   # take down ALL logins simultaneously. With true, a script error
   # logs to Zitadel's audit trail and the token issues without the

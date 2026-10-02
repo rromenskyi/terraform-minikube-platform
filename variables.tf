@@ -153,5 +153,5 @@ variable "zitadel_login_client_pat" {
 # bit that doesn't fit yaml is the SMTP-AUTH password (when relaying
 # through an AUTH-required SaaS like Mailgun); operators on that path
 # can re-add a sensitive `smarthost_password` variable here and pipe
-# it through `mail.tf`. The home-cluster relay accepts by WG peer-ACL,
-# so no AUTH is needed and the var is unused.
+# it through `mail.tf`. A relay that authorizes by source network or
+# tunnel peer needs no AUTH, and then the var is unused.

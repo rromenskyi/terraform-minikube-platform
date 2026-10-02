@@ -100,9 +100,8 @@ module "addons" {
   # cannot satisfy HTTP-01 — direct LB endpoints with no port-80 listener
   # (UDP/raw-TCP services bound to a MetalLB VIP, e.g. SIP-over-WSS at
   # `sip.example.com`). HTTP-01 stays the default for every host
-  # outside the listed zones (sipmeshd, sfdev, sipuidev, all platform-side
-  # web routes — they sit behind Traefik on port 80 and resolve HTTP-01
-  # cleanly). Engine-emitted Secret carries the same CF API token the
+  # outside the listed zones (every web route behind Traefik on port 80
+  # resolves HTTP-01 cleanly). Engine-emitted Secret carries the same CF API token the
   # provider already uses for tunnel records.
   # Secret name is a literal string (not a TF reference) on purpose — avoids
   # a `module.addons` ↔ `kubernetes_secret_v1.cloudflare_acme_token` cycle

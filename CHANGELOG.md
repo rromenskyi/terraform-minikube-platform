@@ -13,6 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   remove the whole platform). `allow_missing_config = true` opts out for a
   first install or an intentional teardown.
 
+### Changed
+- `config/components/chat.yaml` no longer sets `DEFAULT_MODELS` — the chat
+  models depend on what each install's Ollama serves. Migration: set
+  `components.chat.env_static.DEFAULT_MODELS` in the domain yaml to keep a
+  default model.
+- Comments in tracked files no longer name the operator's hosts, tenants or
+  hardware.
+
 ### Added
 - **`modules/logging` — cluster log aggregation (VictoriaLogs + Vector).**
   New `services.logging` toggle stands up VictoriaLogs (single-binary store +

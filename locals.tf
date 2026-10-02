@@ -348,7 +348,7 @@ locals {
       # Speaches — self-hosted OpenAI-compatible STT/TTS server
       # (github.com/speaches-ai/speaches). CPU-only: upstream only ships
       # CPU/CUDA variants, no Intel GPU/Vulkan backend, so this doesn't
-      # compete with Ollama for the Arc B50. Internal-only by default (no
+      # compete with Ollama for the GPU. Internal-only by default (no
       # hostname) — reached in-cluster as an OpenAI-compatible audio
       # provider target, e.g. by AirLLM.
       speaches = {
