@@ -54,6 +54,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - README "Remote state": put the backend in the gitignored
   `_local_backend_override.tf` instead of editing the tracked `_backend.tf`;
   `*_override.tf` is now in `.gitignore`.
+- Redis ACL keeper and Stalwart applier log failed steps with the token
+  `RECONCILE-ERROR`, and a default `reconciler-error` log alert fires on it.
+  The keeper skips a round when the Secret list can't be read instead of
+  treating it as empty. The applier no longer re-creates existing
+  AllowedIp entries (it failed with primaryKeyViolation on every boot).
+- Probes: vmalert (`/health`), WordPress (static core file, so a MySQL
+  outage does not restart WordPress).
 - `modules/metallb`: every pool gets an L2Advertisement; a pool without
   `l2_node_selectors` was assigned but never announced.
 - `modules/minio`: the bucket Job is named by its input hash instead of

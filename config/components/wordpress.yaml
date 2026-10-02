@@ -10,7 +10,9 @@ replicas: 1
 resources:
   requests: { cpu: "100m", memory: "128Mi" }
   limits: { cpu: "500m", memory: "512Mi" }
-health_path: null   # WordPress setup returns 302 — disable HTTP probes
+# A static core file: proves Apache serves without tying liveness to MySQL
+# (a DB outage would otherwise restart every WordPress pod).
+health_path: /wp-includes/images/blank.gif
 db: true
 redis: true
 env:

@@ -862,8 +862,16 @@ resource "kubernetes_deployment_v1" "acl_keeper" {
             echo "[keeper] managing nodes: $NODES"
             while true; do
               TOK="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)"
-              LINES="$(curl -sf --max-time 8 --cacert "$CA" -H "Authorization: Bearer $TOK" \
-                "$API/api/v1/namespaces/$NS/secrets?labelSelector=platform.local%2Fredis-acl%3Dtrue" 2>/dev/null \
+              # Failures log `RECONCILE-ERROR` (platform log alert). An
+              # unreadable Secret list skips the round: deleting users on
+              # an empty answer would lock every tenant out.
+              if ! BODY="$(curl -sf --max-time 8 --cacert "$CA" -H "Authorization: Bearer $TOK" \
+                "$API/api/v1/namespaces/$NS/secrets?labelSelector=platform.local%2Fredis-acl%3Dtrue" 2>&1)"; then
+                echo "[keeper] RECONCILE-ERROR listing ACL Secrets failed: $BODY"
+                sleep 10
+                continue
+              fi
+              LINES="$(printf '%s' "$BODY" \
                 | grep -o '"setuser": *"[^"]*"' \
                 | sed 's/^"setuser": *"//; s/"$//' \
                 | while IFS= read -r b; do echo "$b" | base64 -d; echo; done)"
@@ -877,7 +885,9 @@ resource "kubernetes_deployment_v1" "acl_keeper" {
                     [ -z "$l" ] && continue
                     set -- $l
                     u="$1"; shift
-                    timeout 5 redis-cli -h "$node" -p 6379 -a "$REDIS_PASSWORD" --no-auth-warning ACL SETUSER "$u" resetpass "$@" >/dev/null 2>&1 || true
+                    out="$(timeout 5 redis-cli -h "$node" -p 6379 -a "$REDIS_PASSWORD" --no-auth-warning ACL SETUSER "$u" resetpass "$@" 2>&1)" \
+                      && [ "$out" = OK ] \
+                      || echo "[keeper] RECONCILE-ERROR $node: SETUSER $u failed: $out"
                   done
                   # Offboarding: users no Secret declares any more lose access.
                   # `default` (the operator/replication user) is never touched.
@@ -885,7 +895,8 @@ resource "kubernetes_deployment_v1" "acl_keeper" {
                     [ "$u" = default ] && continue
                     printf '%s\n' "$WANT" | grep -qx "$u" && continue
                     echo "[keeper] $node: removing undeclared ACL user $u"
-                    timeout 5 redis-cli -h "$node" -p 6379 -a "$REDIS_PASSWORD" --no-auth-warning ACL DELUSER "$u" >/dev/null 2>&1 || true
+                    timeout 5 redis-cli -h "$node" -p 6379 -a "$REDIS_PASSWORD" --no-auth-warning ACL DELUSER "$u" >/dev/null 2>&1 \
+                      || echo "[keeper] RECONCILE-ERROR $node: DELUSER $u failed"
                   done
                 done
               fi

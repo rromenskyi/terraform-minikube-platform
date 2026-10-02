@@ -308,8 +308,7 @@ locals {
     # silently locks EVERY IMAP/SMTP client out (2026-07-09 outage:
     # 100.72.0.1 banned indefinitely, every client dropped without a
     # banner). AllowedIp entries are exempt from auto-ban. Create-only
-    # like Domain — the duplicate create on re-apply fails with
-    # primaryKeyViolation, which --continue-on-error swallows.
+    # like Domain; the applier drops creates for existing addresses.
     [
       for i, cidr in var.allowed_networks : jsonencode({
         "@type" = "create"

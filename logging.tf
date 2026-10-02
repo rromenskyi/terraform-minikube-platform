@@ -23,6 +23,13 @@ locals {
       for     = "1m"
       summary = "{{ $value }} critical log line(s) (panic/fatal/OOM) from {{ $labels.src_namespace }}/{{ $labels.src_pod }} in 10m"
     }
+    # Platform reconcilers (Redis ACL keeper, Stalwart applier) keep running
+    # after a failed step; they mark it with this token instead.
+    reconciler-error = {
+      query   = "_time:10m \"RECONCILE-ERROR\" AND NOT kubernetes.container_name:\"vmalert\" | rename kubernetes.pod_namespace as src_namespace, kubernetes.pod_name as src_pod | stats by (src_namespace, src_pod) count() as hits | filter hits:>0"
+      for     = "5m"
+      summary = "{{ $value }} reconcile error(s) from {{ $labels.src_namespace }}/{{ $labels.src_pod }} in 10m"
+    }
   }
 }
 

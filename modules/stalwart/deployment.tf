@@ -316,7 +316,7 @@ resource "kubernetes_deployment_v1" "stalwart" {
               if [ -n "$${RID:-}" ]; then
                 echo "[applier] removing stale MtaRoute '$rname' (id $RID)"
                 /shared/bin/stalwart-cli delete MtaRoute --ids "$RID" \
-                  || echo "[applier] $rname delete returned non-zero — proceeding anyway"
+                  || echo "[applier] $rname delete returned non-zero — proceeding anyway (RECONCILE-ERROR)"
               fi
             done
             SID=$(/shared/bin/stalwart-cli query SieveSystemScript 2>/dev/null \
@@ -324,7 +324,7 @@ resource "kubernetes_deployment_v1" "stalwart" {
             if [ -n "$${SID:-}" ]; then
               echo "[applier] removing stale SieveSystemScript 'ingest-forwards' (id $SID)"
               /shared/bin/stalwart-cli delete SieveSystemScript --ids "$SID" \
-                || echo "[applier] ingest-forwards delete returned non-zero — proceeding anyway"
+                || echo "[applier] ingest-forwards delete returned non-zero — proceeding anyway (RECONCILE-ERROR)"
             fi
 
             # Domain idempotency. The plan declares
@@ -387,6 +387,20 @@ resource "kubernetes_deployment_v1" "stalwart" {
               fi
             done
 
+            # AllowedIp idempotency: the address is the primary key, so a
+            # re-apply's create would fail with primaryKeyViolation. Drop
+            # creates for addresses that already exist.
+            ALLOWED=$(/shared/bin/stalwart-cli query AllowedIp 2>/dev/null \
+              | awk 'NR>1 {print $2}')
+            grep '"object":"AllowedIp","value":' /tmp/plan.ndjson | while IFS= read -r line; do
+              fid=$(printf '%s' "$line" | sed 's/.*"object":"AllowedIp","value":{"\([^"]*\)":.*/\1/')
+              addr=$(printf '%s' "$line" | sed 's/.*"address":"\([^"]*\)".*/\1/')
+              if printf '%s\n' "$ALLOWED" | grep -qxF "$addr"; then
+                echo "[applier] AllowedIp '$addr' already exists — skip create '$fid'"
+                sed -i "/\"object\":\"AllowedIp\",\"value\":{\"$fid\"/d" /tmp/plan.ndjson
+              fi
+            done
+
             # Directory idempotency — same rewrite as Domain. The plan no
             # longer destroys the OIDC Directory (so its id stays stable and
             # the running server's directory cache never dangles), so on
@@ -439,7 +453,7 @@ resource "kubernetes_deployment_v1" "stalwart" {
             if /shared/bin/stalwart-cli apply --file /tmp/plan.ndjson --continue-on-error; then
               echo "[applier] plan applied OK"
             else
-              echo "[applier] apply finished with errors — see above; main server stays up"
+              echo "[applier] RECONCILE-ERROR apply finished with errors — see above; main server stays up"
             fi
 
             # The webadmin (Application) is (re)created by the plan AFTER the
@@ -450,7 +464,7 @@ resource "kubernetes_deployment_v1" "stalwart" {
             # always served at its urlPrefix.
             echo "[applier] mounting web applications on the live HTTP listener (UpdateApps)"
             /shared/bin/stalwart-cli create Action --json '{"@type":"UpdateApps"}' \
-              || echo "[applier] UpdateApps returned non-zero — proceeding anyway"
+              || echo "[applier] UpdateApps returned non-zero — proceeding anyway (RECONCILE-ERROR)"
 
             # Settings-class objects (MtaStageData.script) are cached by
             # the running server at startup; the applier mutates them in
@@ -463,7 +477,7 @@ resource "kubernetes_deployment_v1" "stalwart" {
             if [ -n "$${INGEST_RELOAD:-}" ]; then
               echo "[applier] reloading settings (ingest DATA-stage script binding)"
               /shared/bin/stalwart-cli create Action --json '{"@type":"ReloadSettings"}' \
-                || echo "[applier] ReloadSettings returned non-zero — proceeding anyway"
+                || echo "[applier] ReloadSettings returned non-zero — proceeding anyway (RECONCILE-ERROR)"
             fi
 
             sleep infinity

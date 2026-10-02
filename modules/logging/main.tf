@@ -511,6 +511,23 @@ resource "kubernetes_deployment_v1" "vmalert" {
             container_port = 8880
           }
 
+          readiness_probe {
+            http_get {
+              path = "/health"
+              port = 8880
+            }
+            period_seconds = 10
+          }
+          liveness_probe {
+            http_get {
+              path = "/health"
+              port = 8880
+            }
+            initial_delay_seconds = 10
+            period_seconds        = 20
+            failure_threshold     = 3
+          }
+
           volume_mount {
             name       = "rules"
             mount_path = "/etc/vmalert"
