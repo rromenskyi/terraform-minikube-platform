@@ -7,6 +7,10 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Postgres dump runs with `pipefail`: a failing `pg_dump` piped into gzip
+  used to upload an empty archive and report success.
+
 ### Changed
 - `image_alpine` default `alpine:3.22` -> `alpine:3.24`; the Postgres dump
   installs `postgresql18-client` (a 16 client cannot dump an 18 server).

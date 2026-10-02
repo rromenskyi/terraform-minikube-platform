@@ -92,8 +92,9 @@ locals {
   pv_set       = var.enabled && var.pv_enabled && length(var.pv_paths) > 0 ? toset(["enabled"]) : toset([])
 
   # Common shell preamble all CronJob containers share. `set -e`
-  # so a failing pg_dump / restic backup propagates to the Pod
-  # status. `apk add restic` lands the binary at /usr/bin/restic.
+  # so a failing restic backup propagates to the Pod status; jobs that
+  # pipe a dump into gzip also need `pipefail`, otherwise the pipeline
+  # reports gzip's success and an empty dump gets uploaded. `apk add restic` lands the binary at /usr/bin/restic.
   # The retention CronJob only needs restic; the dump CronJobs
   # additionally apk-install the per-target client.
   restic_env = "RESTIC_REPOSITORY=$RESTIC_REPOSITORY RESTIC_PASSWORD=$RESTIC_PASSWORD AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY"
@@ -358,7 +359,9 @@ resource "kubernetes_cron_job_v1" "postgres" {
 
               command = ["sh", "-c"]
               args = [<<-EOT
-                set -e
+                # pipefail: without it `pg_dump | gzip` takes gzip's exit
+                # status, and a failed dump uploads as a valid empty archive.
+                set -eo pipefail
                 apk add --no-cache restic postgresql18-client >/dev/null
 
                 STAGE=$(mktemp -d)
