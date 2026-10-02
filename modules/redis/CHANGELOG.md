@@ -7,6 +7,10 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- Sentinel mode rejects `storage_class`: it runs as a cache with AOF/RDB
+  off, so the PVC only suggested durability it doesn't have.
+
 ### Added
 - `sentinel.no_primary_nodes`: replicas on listed nodes never get promoted
   (`replica-priority 0`); HAProxy runs only next to Valkey pods, off those nodes.

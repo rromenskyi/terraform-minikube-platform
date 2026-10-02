@@ -350,6 +350,13 @@ resource "kubernetes_service_v1" "redis" {
 resource "helm_release" "valkey_sentinel" {
   for_each = local.sentinel_instances
 
+  lifecycle {
+    precondition {
+      condition     = var.storage_class == ""
+      error_message = "Sentinel mode runs Valkey as a cache: AOF and RDB are off (see commonConfiguration), so a PVC from storage_class would hold nothing. Leave storage_class empty, or add a durable mode before relying on persistence."
+    }
+  }
+
   name       = "redis"
   repository = "https://charts.bitnami.com/bitnami"
   chart      = "valkey"
