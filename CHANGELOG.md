@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `config_guard.tf`: plan fails when `config/platform.yaml` or every
+  `config/domains/*.yaml` is missing (the empty-default fallback planned to
+  remove the whole platform). `allow_missing_config = true` opts out for a
+  first install or an intentional teardown.
+
+### Added
 - **`modules/logging` — cluster log aggregation (VictoriaLogs + Vector).**
   New `services.logging` toggle stands up VictoriaLogs (single-binary store +
   LogsQL query API, data on a Longhorn PV, time-based `retention_period`) and a
