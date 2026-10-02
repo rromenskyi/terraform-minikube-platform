@@ -85,11 +85,12 @@ locals {
   # tfstate backend uses for B2.
   repository_url = "s3:${var.b2_endpoint}/${var.b2_bucket}"
 
-  postgres_set = var.enabled && var.postgres_enabled ? toset(["enabled"]) : toset([])
-  mysql_set    = var.enabled && var.mysql_enabled ? toset(["enabled"]) : toset([])
-  redis_set    = var.enabled && var.redis_enabled ? toset(["enabled"]) : toset([])
-  vault_set    = var.enabled && var.vault_enabled ? toset(["enabled"]) : toset([])
-  pv_set       = var.enabled && var.pv_enabled && length(var.pv_paths) > 0 ? toset(["enabled"]) : toset([])
+  postgres_set      = var.enabled && var.postgres_enabled ? toset(["enabled"]) : toset([])
+  mysql_set         = var.enabled && var.mysql_enabled ? toset(["enabled"]) : toset([])
+  redis_set         = var.enabled && var.redis_enabled ? toset(["enabled"]) : toset([])
+  vault_set         = var.enabled && var.vault_enabled ? toset(["enabled"]) : toset([])
+  pv_set            = var.enabled && var.pv_enabled && length(var.pv_paths) > 0 ? toset(["enabled"]) : toset([])
+  pv_sqlite_entries = [for p in var.pv_paths : p.name if length(p.sqlite) > 0]
 
   # Common shell preamble all CronJob containers share. `set -e`
   # so a failing restic backup propagates to the Pod status; jobs that
@@ -750,7 +751,7 @@ resource "kubernetes_cron_job_v1" "pv" {
 
             container {
               name  = "tar"
-              image = var.image_restic
+              image = var.image_alpine
 
               env_from {
                 secret_ref {
@@ -766,6 +767,12 @@ resource "kubernetes_cron_job_v1" "pv" {
                 value = join(",", [for p in var.pv_paths : "${p.name}:${p.path}"])
               }
 
+              # `<name>:<file>|<file>` per entry with SQLite databases.
+              env {
+                name  = "PV_SQLITE"
+                value = join(",", [for p in var.pv_paths : "${p.name}:${join("|", p.sqlite)}" if length(p.sqlite) > 0])
+              }
+
               security_context {
                 # Tar of host-mount paths needs root to read every
                 # file regardless of UIDs the apps run as.
@@ -773,16 +780,30 @@ resource "kubernetes_cron_job_v1" "pv" {
                 allow_privilege_escalation = false
                 capabilities {
                   drop = ["ALL"]
-                  add  = ["DAC_READ_SEARCH"]
+                  # DAC_OVERRIDE + CHOWN only when a SQLite database is read:
+                  # its -shm index belongs to the app's UID and must be
+                  # writable, and files SQLite creates go back to that UID.
+                  add = length(local.pv_sqlite_entries) > 0 ? ["DAC_READ_SEARCH", "DAC_OVERRIDE", "CHOWN"] : ["DAC_READ_SEARCH"]
                 }
               }
 
               command = ["sh", "-c"]
               args = [<<-EOT
-                set -e
+                set -eo pipefail
+                # GNU tar for `-r` (append the consistent SQLite copies).
+                apk add --no-cache restic sqlite tar >/dev/null
 
                 STAGE=$(mktemp -d)
                 trap 'rm -rf "$STAGE"' EXIT
+
+                # sqlite_of <name> → the `|`-separated SQLite files of that entry.
+                sqlite_of() {
+                  old="$IFS"; IFS=','
+                  for e in $PV_SQLITE; do
+                    if [ "$${e%%:*}" = "$1" ]; then IFS="$old"; echo "$${e#*:}"; return; fi
+                  done
+                  IFS="$old"
+                }
 
                 # POSIX iteration over comma-separated `name:path`
                 # pairs. busybox sh doesn't have bash arrays.
@@ -792,8 +813,52 @@ resource "kubernetes_cron_job_v1" "pv" {
                   IFS="$old_ifs"
                   name="$${entry%%:*}"
                   path="$${entry#*:}"
+                  dbs="$(sqlite_of "$name")"
+                  excl=""
+                  if [ -n "$dbs" ]; then
+                    mkdir -p "$STAGE/sqlite/$name"
+                    old="$IFS"; IFS='|'
+                    for f in $dbs; do
+                      IFS="$old"
+                      echo "[pv] sqlite VACUUM INTO $name/$f"
+                      copy="$STAGE/sqlite/$name/$f"
+                      mkdir -p "$(dirname "$copy")"
+                      # VACUUM INTO reads one consistent snapshot and, unlike
+                      # the CLI's .backup, honours .timeout while the app
+                      # holds a lock. Retried in case the lock outlives it.
+                      n=0
+                      until sqlite3 "$path/$f" ".timeout 30000" "VACUUM INTO '$copy'"; do
+                        n=$((n + 1)); rm -f "$copy"
+                        [ "$n" -lt 3 ] || { echo "[pv] $name/$f: copy failed $n times" >&2; exit 1; }
+                        sleep 10
+                      done
+                      # Opening the database may create -wal/-shm as root (if the
+                      # app is stopped); hand them to the database's owner so
+                      # the app can still write them.
+                      own="$(stat -c %u "$path/$f")"
+                      for x in -wal -shm; do
+                        if [ -e "$path/$f$x" ] && [ "$(stat -c %u "$path/$f$x")" != "$own" ]; then
+                          chown "$own" "$path/$f$x"
+                        fi
+                      done
+                      check="$(sqlite3 "$copy" 'PRAGMA quick_check')"
+                      [ "$check" = "ok" ] || { echo "[pv] $name/$f: copy failed quick_check: $check" >&2; exit 1; }
+                      excl="$excl --exclude=./$f --exclude=./$f-wal --exclude=./$f-shm --exclude=./$f-journal"
+                      IFS='|'
+                    done
+                    IFS="$old"
+                  fi
                   echo "[pv] tar $name from $path"
-                  tar -czf "$STAGE/$name.tar.gz" -C "$path" .
+                  if [ -n "$dbs" ]; then
+                    # Two steps: --exclude would also drop the copies if both
+                    # roots went into one tar invocation.
+                    # shellcheck disable=SC2086 # $excl is a list of flags
+                    tar -cf "$STAGE/$name.tar" $excl -C "$path" .
+                    tar -rf "$STAGE/$name.tar" -C "$STAGE/sqlite/$name" .
+                    gzip "$STAGE/$name.tar"
+                  else
+                    tar -czf "$STAGE/$name.tar.gz" -C "$path" .
+                  fi
                   IFS=','
                 done
                 IFS="$old_ifs"
@@ -809,7 +874,7 @@ resource "kubernetes_cron_job_v1" "pv" {
                 content {
                   name       = "pv-${replace(volume_mount.value.name, "/", "-")}"
                   mount_path = volume_mount.value.path
-                  read_only  = true
+                  read_only  = length(volume_mount.value.sqlite) == 0
                 }
               }
 

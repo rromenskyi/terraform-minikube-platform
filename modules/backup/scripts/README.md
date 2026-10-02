@@ -58,6 +58,7 @@ weekly.
            mysql_databases: []                  # empty = all
            pv_paths:
              - { name: <stable-id>, path: <absolute-host-path> }
+             - { name: <stable-id>, path: <path>, sqlite: [<db-file>] }  # SQLite inside
            pv_node_selector:
              <key>: <value>                     # for hostPath PV node-pinning
 
@@ -223,12 +224,15 @@ Steps:
 
 ## Things to know
 
-- **Live-tar of stateful PV directories** trades a tiny window
-  of in-flight writes against zero downtime on the source
-  workload. RocksDB / SQLite / etc. that ship a write-ahead log
-  recover cleanly to the most recent fsync; cooperative apps
-  with a snapshot API (Vault) are backed up via that API
-  instead.
+- **PV directories are tarred live**, which is fine for plain
+  files (uploads, themes) but not for databases: a tar of a
+  SQLite file and its WAL taken at different moments can restore
+  corrupt. List such files under the entry's `sqlite:` — they are
+  captured with `VACUUM INTO` (one consistent snapshot, checked
+  with `PRAGMA quick_check`) and stored in the archive in place of
+  the live db/-wal/-shm. Other embedded stores (RocksDB, LMDB, …)
+  have no such hook here; back them up through the app or stop the
+  writer. Vault uses its own snapshot API.
 - **`./tf backup-config` runs `terraform state pull` first** and
   bundles the JSON snapshot into the `operator-config` tag. Same
   encryption, separate B2 key. Disaster recovery doesn't have to

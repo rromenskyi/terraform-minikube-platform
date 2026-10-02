@@ -8,6 +8,10 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- PV backups capture SQLite databases listed under the entry's `sqlite:`
+  with `VACUUM INTO` (+ `PRAGMA quick_check`) instead of tarring the live
+  db/-wal/-shm, which could restore corrupt. The README no longer claims
+  live tars of WAL stores recover cleanly.
 - Restore scripts rewritten after a restore drill: Postgres/MySQL restore
   one database from the combined `all.sql.gz` (they only looked for
   `<db>.sql.gz`), Postgres gains `--all`; `restore-pv.sh` validates the
