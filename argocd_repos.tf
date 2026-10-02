@@ -167,7 +167,7 @@ resource "kubernetes_secret_v1" "argocd_repo" {
 # Engine emits the SA on demand: only when at least one repo cred is
 # in any Vault mode (ssh or app), no SA otherwise.
 resource "kubernetes_service_account_v1" "argocd_vso_proxy" {
-  count = local.platform.services.argocd.enabled && local._argocd_has_any_vault_creds ? 1 : 0
+  for_each = local.platform.services.argocd.enabled && local._argocd_has_any_vault_creds ? toset(["enabled"]) : toset([])
 
   depends_on = [kubernetes_namespace_v1.argocd]
 
@@ -275,4 +275,9 @@ resource "kubectl_manifest" "argocd_repo_app_vault" {
       refreshAfter = "30s"
     }
   })
+}
+
+moved {
+  from = kubernetes_service_account_v1.argocd_vso_proxy[0]
+  to   = kubernetes_service_account_v1.argocd_vso_proxy["enabled"]
 }

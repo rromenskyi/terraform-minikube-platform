@@ -22,6 +22,15 @@ terraform {
 # ── Locals ────────────────────────────────────────────────────────────────────
 
 locals {
+  # Object labels. Selectors and the pod template keep only `app`: a
+  # Deployment selector is immutable and template changes roll pods.
+  labels = {
+    app                            = var.name
+    "app.kubernetes.io/name"       = var.name
+    "app.kubernetes.io/instance"   = "${var.namespace}-${var.name}"
+    "app.kubernetes.io/managed-by" = "terraform"
+  }
+
   # Map slug → volume spec. Slug is the PV/PVC name suffix and k8s volume name.
   volumes = {
     for v in var.storage :
@@ -198,7 +207,7 @@ resource "kubernetes_config_map_v1" "files" {
   metadata {
     name      = "${var.name}-config"
     namespace = var.namespace
-    labels    = { app = var.name }
+    labels    = local.labels
   }
 
   data = {
@@ -221,7 +230,7 @@ resource "kubernetes_service_account_v1" "this" {
   metadata {
     name      = var.name
     namespace = var.namespace
-    labels    = { app = var.name }
+    labels    = local.labels
   }
 }
 
@@ -230,7 +239,7 @@ resource "kubernetes_cluster_role_v1" "this" {
 
   metadata {
     name   = "${var.namespace}-${var.name}"
-    labels = { app = var.name }
+    labels = local.labels
   }
 
   dynamic "rule" {
@@ -248,7 +257,7 @@ resource "kubernetes_cluster_role_binding_v1" "this" {
 
   metadata {
     name   = "${var.namespace}-${var.name}"
-    labels = { app = var.name }
+    labels = local.labels
   }
 
   role_ref {
@@ -270,7 +279,7 @@ resource "kubernetes_deployment_v1" "this" {
   metadata {
     name      = var.name
     namespace = var.namespace
-    labels    = { app = var.name }
+    labels    = local.labels
   }
 
   spec {
@@ -976,7 +985,7 @@ resource "kubernetes_service_v1" "this" {
   metadata {
     name      = var.name
     namespace = var.namespace
-    labels    = { app = var.name }
+    labels    = local.labels
   }
 
   spec {

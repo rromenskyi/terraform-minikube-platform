@@ -1,21 +1,26 @@
 output "enabled" {
-  value = var.enabled
+  description = "Whether the module deployed Vault."
+  value       = var.enabled
 }
 
 output "namespace" {
-  value = var.namespace
+  description = "Namespace of the Vault Service; null when disabled."
+  value       = var.enabled ? var.namespace : null
 }
 
 output "hostname" {
-  value = var.hostname
+  description = "Public Vault hostname; null when disabled or not exposed."
+  value       = var.enabled && var.hostname != "" ? var.hostname : null
 }
 
 output "service_name" {
-  value = var.enabled ? kubernetes_service_v1.vault["enabled"].metadata[0].name : null
+  description = "In-cluster Vault Service name; null when disabled."
+  value       = var.enabled ? kubernetes_service_v1.vault["enabled"].metadata[0].name : null
 }
 
 output "port" {
-  value = 8200
+  description = "Vault API port on the Service; null when disabled."
+  value       = var.enabled ? 8200 : null
 }
 
 output "url" {

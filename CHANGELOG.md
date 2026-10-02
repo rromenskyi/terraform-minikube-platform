@@ -22,6 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hardware.
 - `tools/check-scrub.sh` checks every changed file, not only
   `.tf`/`.md`/`.example`; `--all` audits the whole tracked tree.
+- `prometheus_rules.tf` and `argocd_repos.tf` toggle with `for_each` instead
+  of `count` (`moved` blocks carry the state over).
+- `modules/vault`: `namespace`, `hostname` and `port` outputs are null when
+  the module is disabled.
+- `modules/component` objects carry `app.kubernetes.io/name`, `/instance`
+  and `/managed-by` labels; selectors and pod templates keep `app` only.
 
 ### Added
 - **`modules/logging` — cluster log aggregation (VictoriaLogs + Vector).**

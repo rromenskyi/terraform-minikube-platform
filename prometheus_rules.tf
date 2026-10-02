@@ -24,7 +24,7 @@ locals {
 }
 
 resource "kubectl_manifest" "operator_prometheus_rules" {
-  count      = length(local._prometheus_rule_groups) > 0 ? 1 : 0
+  for_each   = length(local._prometheus_rule_groups) > 0 ? toset(["enabled"]) : toset([])
   depends_on = [module.addons]
 
   yaml_body = yamlencode({
@@ -47,4 +47,9 @@ resource "kubectl_manifest" "operator_prometheus_rules" {
       ]
     }
   })
+}
+
+moved {
+  from = kubectl_manifest.operator_prometheus_rules[0]
+  to   = kubectl_manifest.operator_prometheus_rules["enabled"]
 }
