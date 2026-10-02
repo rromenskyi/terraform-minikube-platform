@@ -540,6 +540,20 @@ resource "random_password" "db" {
 # The Job runs a mysql client container in-cluster — no dependency on local
 # kubectl or shell escaping. Database is intentionally NOT dropped on destroy
 # to preserve data.
+resource "kubernetes_secret_v1" "mysql_setup_env" {
+  for_each = local.needs_db ? toset(["enabled"]) : toset([])
+
+  metadata {
+    name      = "db-setup-${local.namespace}"
+    namespace = var.mysql_namespace
+    labels    = module.project_label.tags
+  }
+
+  data = {
+    SETUP_PASSWORD = "${values(random_password.db)[0].result}"
+  }
+}
+
 resource "kubernetes_job_v1" "mysql_setup" {
   for_each = local.needs_db ? toset(["enabled"]) : toset([])
 
@@ -571,6 +585,18 @@ resource "kubernetes_job_v1" "mysql_setup" {
           name  = "mysql-setup"
           image = "mysql:8.4.11"
 
+          # Password from a Secret, not the command line: Job specs are
+          # readable far more widely than Secrets.
+          env {
+            name = "SETUP_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret_v1.mysql_setup_env[each.key].metadata[0].name
+                key  = "SETUP_PASSWORD"
+              }
+            }
+          }
+
           env_from {
             secret_ref {
               name = "mysql-root"
@@ -598,10 +624,10 @@ resource "kubernetes_job_v1" "mysql_setup" {
               "-p\"$MYSQL_ROOT_PASSWORD\" -e \"",
               "CREATE DATABASE IF NOT EXISTS \\`${local.db_name}\\`;",
               "CREATE USER IF NOT EXISTS '${local.db_user}'@'%' ",
-              "IDENTIFIED BY '${values(random_password.db)[0].result}';",
+              "IDENTIFIED BY '$SETUP_PASSWORD';",
               # Re-assert the password: CREATE ... IF NOT EXISTS leaves an
               # existing user's old one (e.g. after state was regenerated).
-              "ALTER USER '${local.db_user}'@'%' IDENTIFIED BY '${values(random_password.db)[0].result}';",
+              "ALTER USER '${local.db_user}'@'%' IDENTIFIED BY '$SETUP_PASSWORD';",
               "GRANT ALL PRIVILEGES ON \\`${local.db_name}\\`.* TO '${local.db_user}'@'%';",
               "FLUSH PRIVILEGES;\"",
             ])
@@ -650,6 +676,20 @@ resource "random_password" "postgres" {
 # Provisions the DB and user via a Kubernetes Job that runs psql
 # in-cluster. Database is NOT dropped on destroy — data preservation
 # matches the MySQL behaviour.
+resource "kubernetes_secret_v1" "postgres_setup_env" {
+  for_each = local.pg_default_instances
+
+  metadata {
+    name      = "postgres-setup-${local.namespace}"
+    namespace = var.postgres_namespace
+    labels    = module.project_label.tags
+  }
+
+  data = {
+    SETUP_PASSWORD = "${values(random_password.postgres)[0].result}"
+  }
+}
+
 resource "kubernetes_job_v1" "postgres_setup" {
   for_each = local.pg_default_instances
 
@@ -680,6 +720,18 @@ resource "kubernetes_job_v1" "postgres_setup" {
         container {
           name  = "postgres-setup"
           image = "postgres:18.6-alpine"
+
+          # Password from a Secret, not the command line: Job specs are
+          # readable far more widely than Secrets.
+          env {
+            name = "SETUP_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret_v1.postgres_setup_env[each.key].metadata[0].name
+                key  = "SETUP_PASSWORD"
+              }
+            }
+          }
 
           env_from {
             secret_ref {
@@ -714,8 +766,8 @@ resource "kubernetes_job_v1" "postgres_setup" {
             "sh", "-c",
             join(" && ", [
               "psql -h ${var.postgres_host} -U postgres -tc \"SELECT 1 FROM pg_database WHERE datname = '${local.pg_database}'\" | grep -q 1 || psql -h ${var.postgres_host} -U postgres -c \"CREATE DATABASE \\\"${local.pg_database}\\\"\"",
-              "psql -h ${var.postgres_host} -U postgres -tc \"SELECT 1 FROM pg_roles WHERE rolname = '${local.pg_user}'\" | grep -q 1 || psql -h ${var.postgres_host} -U postgres -c \"CREATE ROLE \\\"${local.pg_user}\\\" WITH LOGIN PASSWORD '${values(random_password.postgres)[0].result}'\"",
-              "psql -h ${var.postgres_host} -U postgres -c \"ALTER ROLE \\\"${local.pg_user}\\\" WITH PASSWORD '${values(random_password.postgres)[0].result}'\"",
+              "psql -h ${var.postgres_host} -U postgres -tc \"SELECT 1 FROM pg_roles WHERE rolname = '${local.pg_user}'\" | grep -q 1 || psql -h ${var.postgres_host} -U postgres -c \"CREATE ROLE \\\"${local.pg_user}\\\" WITH LOGIN PASSWORD '$SETUP_PASSWORD'\"",
+              "psql -h ${var.postgres_host} -U postgres -c \"ALTER ROLE \\\"${local.pg_user}\\\" WITH PASSWORD '$SETUP_PASSWORD'\"",
               "psql -h ${var.postgres_host} -U postgres -c \"GRANT ALL PRIVILEGES ON DATABASE \\\"${local.pg_database}\\\" TO \\\"${local.pg_user}\\\"\"",
               "psql -h ${var.postgres_host} -U postgres -d ${local.pg_database} -c \"GRANT ALL ON SCHEMA public TO \\\"${local.pg_user}\\\"\"",
             ])
@@ -812,6 +864,20 @@ resource "random_password" "postgres_extra" {
   special = false
 }
 
+resource "kubernetes_secret_v1" "postgres_setup_extra_env" {
+  for_each = local.pg_extra_databases
+
+  metadata {
+    name      = "postgres-setup-${local.namespace}-${each.key}"
+    namespace = var.postgres_namespace
+    labels    = module.project_label.tags
+  }
+
+  data = {
+    SETUP_PASSWORD = "${random_password.postgres_extra[each.key].result}"
+  }
+}
+
 resource "kubernetes_job_v1" "postgres_setup_extra" {
   for_each = local.pg_extra_databases
 
@@ -840,6 +906,18 @@ resource "kubernetes_job_v1" "postgres_setup_extra" {
           name  = "postgres-setup"
           image = "postgres:18.6-alpine"
 
+          # Password from a Secret, not the command line: Job specs are
+          # readable far more widely than Secrets.
+          env {
+            name = "SETUP_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret_v1.postgres_setup_extra_env[each.key].metadata[0].name
+                key  = "SETUP_PASSWORD"
+              }
+            }
+          }
+
           env_from {
             secret_ref {
               name = var.postgres_superuser_secret
@@ -866,8 +944,8 @@ resource "kubernetes_job_v1" "postgres_setup_extra" {
             "sh", "-c",
             join(" && ", [
               "psql -h ${var.postgres_host} -U postgres -tc \"SELECT 1 FROM pg_database WHERE datname = '${module.pg_extra_label[each.key].id}'\" | grep -q 1 || psql -h ${var.postgres_host} -U postgres -c \"CREATE DATABASE \\\"${module.pg_extra_label[each.key].id}\\\"\"",
-              "psql -h ${var.postgres_host} -U postgres -tc \"SELECT 1 FROM pg_roles WHERE rolname = '${module.pg_extra_label[each.key].id}'\" | grep -q 1 || psql -h ${var.postgres_host} -U postgres -c \"CREATE ROLE \\\"${module.pg_extra_label[each.key].id}\\\" WITH LOGIN PASSWORD '${random_password.postgres_extra[each.key].result}'\"",
-              "psql -h ${var.postgres_host} -U postgres -c \"ALTER ROLE \\\"${module.pg_extra_label[each.key].id}\\\" WITH PASSWORD '${random_password.postgres_extra[each.key].result}'\"",
+              "psql -h ${var.postgres_host} -U postgres -tc \"SELECT 1 FROM pg_roles WHERE rolname = '${module.pg_extra_label[each.key].id}'\" | grep -q 1 || psql -h ${var.postgres_host} -U postgres -c \"CREATE ROLE \\\"${module.pg_extra_label[each.key].id}\\\" WITH LOGIN PASSWORD '$SETUP_PASSWORD'\"",
+              "psql -h ${var.postgres_host} -U postgres -c \"ALTER ROLE \\\"${module.pg_extra_label[each.key].id}\\\" WITH PASSWORD '$SETUP_PASSWORD'\"",
               "psql -h ${var.postgres_host} -U postgres -c \"GRANT ALL PRIVILEGES ON DATABASE \\\"${module.pg_extra_label[each.key].id}\\\" TO \\\"${module.pg_extra_label[each.key].id}\\\"\"",
               "psql -h ${var.postgres_host} -U postgres -d ${module.pg_extra_label[each.key].id} -c \"GRANT ALL ON SCHEMA public TO \\\"${module.pg_extra_label[each.key].id}\\\"\"",
             ])

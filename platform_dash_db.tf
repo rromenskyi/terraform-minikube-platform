@@ -88,6 +88,19 @@ resource "random_password" "dashboard_ro_mysql" {
 # CONNECT to the system `postgres` db is the only data-path access we
 # need (all stat queries can run against any single db on a
 # pg_monitor connection).
+resource "kubernetes_secret_v1" "pg_dashboard_ro_setup_env" {
+  for_each = local.dash_pg_enabled ? toset(["enabled"]) : toset([])
+
+  metadata {
+    name      = "pg-dashboard-ro-setup"
+    namespace = module.postgres.namespace
+  }
+
+  data = {
+    RO_PASSWORD = random_password.dashboard_ro_pg["enabled"].result
+  }
+}
+
 resource "kubernetes_job_v1" "pg_dashboard_ro_setup" {
   for_each   = local.dash_pg_enabled ? toset(["enabled"]) : toset([])
   depends_on = [module.postgres]
@@ -125,9 +138,15 @@ resource "kubernetes_job_v1" "pg_dashboard_ro_setup" {
             name  = "PGPASSWORD"
             value = "$(POSTGRES_PASSWORD)"
           }
+          # From a Secret: Job specs are readable far more widely.
           env {
-            name  = "RO_PASSWORD"
-            value = random_password.dashboard_ro_pg["enabled"].result
+            name = "RO_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret_v1.pg_dashboard_ro_setup_env["enabled"].metadata[0].name
+                key  = "RO_PASSWORD"
+              }
+            }
           }
 
           resources {
@@ -189,6 +208,19 @@ resource "kubernetes_secret_v1" "redis_dashboard_ro_acl" {
 # + status counters. No data-table grants — dashboard reads metadata
 # only. dashboard_ro@'%' so the role works from the dashboard pod
 # regardless of source IP.
+resource "kubernetes_secret_v1" "mysql_dashboard_ro_setup_env" {
+  for_each = local.dash_mysql_enabled ? toset(["enabled"]) : toset([])
+
+  metadata {
+    name      = "mysql-dashboard-ro-setup"
+    namespace = module.mysql.namespace
+  }
+
+  data = {
+    RO_PASSWORD = random_password.dashboard_ro_mysql["enabled"].result
+  }
+}
+
 resource "kubernetes_job_v1" "mysql_dashboard_ro_setup" {
   for_each   = local.dash_mysql_enabled ? toset(["enabled"]) : toset([])
   depends_on = [module.mysql]
@@ -222,9 +254,15 @@ resource "kubernetes_job_v1" "mysql_dashboard_ro_setup" {
               name = "mysql-root"
             }
           }
+          # From a Secret: Job specs are readable far more widely.
           env {
-            name  = "RO_PASSWORD"
-            value = random_password.dashboard_ro_mysql["enabled"].result
+            name = "RO_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret_v1.mysql_dashboard_ro_setup_env["enabled"].metadata[0].name
+                key  = "RO_PASSWORD"
+              }
+            }
           }
 
           resources {

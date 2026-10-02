@@ -77,16 +77,22 @@ locals {
         "server.insecure" = "true"
       }
 
+      secret = {
+        extra = local.oidc_complete ? { "oidc.clientSecret" = var.oidc_client_secret } : {}
+      }
+
       cm = merge(
         {
           url = "https://${var.hostname}"
         },
         local.oidc_complete ? {
           "oidc.config" = yamlencode({
-            name         = "OIDC"
-            issuer       = var.oidc_issuer
-            clientID     = var.oidc_client_id
-            clientSecret = var.oidc_client_secret
+            name     = "OIDC"
+            issuer   = var.oidc_issuer
+            clientID = var.oidc_client_id
+            # Reference into argocd-secret (configs.secret.extra below):
+            # ConfigMaps are readable far more widely than Secrets.
+            clientSecret = "$oidc.clientSecret"
             requestedScopes = [
               "openid",
               "profile",

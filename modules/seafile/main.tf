@@ -229,6 +229,20 @@ resource "kubernetes_persistent_volume_claim_v1" "data" {
 # root password from the bootstrap secret entirely (so the running
 # pod only knows its scoped `seafile` user creds).
 
+resource "kubernetes_secret_v1" "mysql_setup_env" {
+  for_each = local.set
+
+  metadata {
+    name      = "seafile-mysql-setup"
+    namespace = kubernetes_namespace_v1.this["enabled"].metadata[0].name
+    labels    = local.tags
+  }
+
+  data = {
+    SETUP_PASSWORD = "${random_password.db["enabled"].result}"
+  }
+}
+
 resource "kubernetes_job_v1" "mysql_setup" {
   for_each = local.set
 
@@ -252,6 +266,18 @@ resource "kubernetes_job_v1" "mysql_setup" {
           name  = "mysql-setup"
           image = "mysql:8.4.11"
 
+          # Password from a Secret, not the command line: Job specs are
+          # readable far more widely than Secrets.
+          env {
+            name = "SETUP_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret_v1.mysql_setup_env[each.key].metadata[0].name
+                key  = "SETUP_PASSWORD"
+              }
+            }
+          }
+
           env {
             name  = "MYSQL_PWD"
             value = var.mysql_root_password
@@ -266,8 +292,8 @@ resource "kubernetes_job_v1" "mysql_setup" {
               CREATE DATABASE IF NOT EXISTS ccnet_db   CHARACTER SET utf8mb4;
               CREATE DATABASE IF NOT EXISTS seafile_db CHARACTER SET utf8mb4;
               CREATE DATABASE IF NOT EXISTS seahub_db  CHARACTER SET utf8mb4;
-              CREATE USER IF NOT EXISTS 'seafile'@'%' IDENTIFIED BY '${random_password.db["enabled"].result}';
-              ALTER USER 'seafile'@'%' IDENTIFIED BY '${random_password.db["enabled"].result}';
+              CREATE USER IF NOT EXISTS 'seafile'@'%' IDENTIFIED BY '$SETUP_PASSWORD';
+              ALTER USER 'seafile'@'%' IDENTIFIED BY '$SETUP_PASSWORD';
               GRANT ALL PRIVILEGES ON ccnet_db.*   TO 'seafile'@'%';
               GRANT ALL PRIVILEGES ON seafile_db.* TO 'seafile'@'%';
               GRANT ALL PRIVILEGES ON seahub_db.*  TO 'seafile'@'%';

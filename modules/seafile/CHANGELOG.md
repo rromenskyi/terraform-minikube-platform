@@ -8,6 +8,9 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Security
+- MySQL setup Job reads the password from a Secret instead of the script.
+
+### Security
 - The running pod no longer receives the MySQL root password: it was still
   in the env_from bootstrap Secret despite the comment saying otherwise;
   only the setup Job uses it.

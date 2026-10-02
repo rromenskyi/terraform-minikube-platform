@@ -109,6 +109,20 @@ resource "kubernetes_secret_v1" "login_client_pat" {
 # in the `public` schema. Mirrors the per-tenant pattern in
 # modules/project — DO-block-style idempotent SQL so re-applies are
 # safe and the DB survives `terraform destroy` → re-apply.
+resource "kubernetes_secret_v1" "postgres_setup_env" {
+  for_each = local.instances
+
+  metadata {
+    name      = "zitadel-postgres-setup"
+    namespace = var.namespace
+    labels    = local.tags
+  }
+
+  data = {
+    SETUP_PASSWORD = "${random_password.db["enabled"].result}"
+  }
+}
+
 resource "kubernetes_job_v1" "postgres_setup" {
   for_each = local.instances
 
@@ -149,6 +163,18 @@ resource "kubernetes_job_v1" "postgres_setup" {
           name  = "postgres-setup"
           image = "postgres:18.6-alpine"
 
+          # Password from a Secret, not the command line: Job specs are
+          # readable far more widely than Secrets.
+          env {
+            name = "SETUP_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret_v1.postgres_setup_env[each.key].metadata[0].name
+                key  = "SETUP_PASSWORD"
+              }
+            }
+          }
+
           env_from {
             secret_ref {
               name = var.postgres_superuser_secret
@@ -171,8 +197,8 @@ resource "kubernetes_job_v1" "postgres_setup" {
             "sh", "-c",
             join(" && ", [
               "psql -h ${var.postgres_host} -U postgres -tc \"SELECT 1 FROM pg_database WHERE datname = '${local.db_name}'\" | grep -q 1 || psql -h ${var.postgres_host} -U postgres -c \"CREATE DATABASE \\\"${local.db_name}\\\"\"",
-              "psql -h ${var.postgres_host} -U postgres -tc \"SELECT 1 FROM pg_roles WHERE rolname = '${local.db_user}'\" | grep -q 1 || psql -h ${var.postgres_host} -U postgres -c \"CREATE ROLE \\\"${local.db_user}\\\" WITH LOGIN PASSWORD '${random_password.db["enabled"].result}'\"",
-              "psql -h ${var.postgres_host} -U postgres -c \"ALTER ROLE \\\"${local.db_user}\\\" WITH PASSWORD '${random_password.db["enabled"].result}'\"",
+              "psql -h ${var.postgres_host} -U postgres -tc \"SELECT 1 FROM pg_roles WHERE rolname = '${local.db_user}'\" | grep -q 1 || psql -h ${var.postgres_host} -U postgres -c \"CREATE ROLE \\\"${local.db_user}\\\" WITH LOGIN PASSWORD '$SETUP_PASSWORD'\"",
+              "psql -h ${var.postgres_host} -U postgres -c \"ALTER ROLE \\\"${local.db_user}\\\" WITH PASSWORD '$SETUP_PASSWORD'\"",
               "psql -h ${var.postgres_host} -U postgres -c \"GRANT ALL PRIVILEGES ON DATABASE \\\"${local.db_name}\\\" TO \\\"${local.db_user}\\\"\"",
               "psql -h ${var.postgres_host} -U postgres -d ${local.db_name} -c \"GRANT ALL ON SCHEMA public TO \\\"${local.db_user}\\\"\"",
             ])

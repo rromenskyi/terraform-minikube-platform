@@ -7,6 +7,9 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Security
+- Postgres setup Job reads the password from a Secret instead of the command.
+
 ### Changed
 - File layout split into `main.tf` / `variables.tf` / `outputs.tf` per AGENT.md
   module conventions. Pure file reorganisation — no resource, input, output, or

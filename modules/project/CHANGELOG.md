@@ -7,6 +7,10 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Security
+- DB setup Jobs read the tenant password from a Secret (`secretKeyRef`)
+  instead of embedding it in the command line.
+
 ### Changed
 - **BREAKING (behaviour):** the tenant AppProject no longer allows Argo CD's
   namespace. Bootstrap Applications move to a new `<ns>-bootstrap` project

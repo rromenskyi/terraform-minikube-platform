@@ -67,6 +67,20 @@ resource "random_password" "airllm_db" {
   special = false
 }
 
+resource "kubernetes_secret_v1" "airllm_postgres_setup_env" {
+  for_each = local.airllm_instances
+
+  metadata {
+    name      = "airllm-postgres-setup"
+    namespace = kubernetes_namespace_v1.platform.metadata[0].name
+    labels    = module.platform_label.tags
+  }
+
+  data = {
+    SETUP_PASSWORD = "${random_password.airllm_db["enabled"].result}"
+  }
+}
+
 resource "kubernetes_job_v1" "airllm_postgres_setup" {
   for_each = local.airllm_instances
 
@@ -93,6 +107,18 @@ resource "kubernetes_job_v1" "airllm_postgres_setup" {
           name  = "psql"
           image = "postgres:18.6-alpine"
 
+          # Password from a Secret, not the command line: Job specs are
+          # readable far more widely than Secrets.
+          env {
+            name = "SETUP_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret_v1.airllm_postgres_setup_env[each.key].metadata[0].name
+                key  = "SETUP_PASSWORD"
+              }
+            }
+          }
+
           env {
             name = "PGPASSWORD"
             value_from {
@@ -107,8 +133,8 @@ resource "kubernetes_job_v1" "airllm_postgres_setup" {
           args = [
             join("\n", [
               "until pg_isready -h ${module.postgres.host} -U postgres; do sleep 2; done",
-              "psql -h ${module.postgres.host} -U postgres -tc \"SELECT 1 FROM pg_roles WHERE rolname = '${local.airllm_db}'\" | grep -q 1 || psql -h ${module.postgres.host} -U postgres -c \"CREATE ROLE \\\"${local.airllm_db}\\\" WITH LOGIN PASSWORD '${random_password.airllm_db["enabled"].result}'\"",
-              "psql -h ${module.postgres.host} -U postgres -c \"ALTER ROLE \\\"${local.airllm_db}\\\" WITH PASSWORD '${random_password.airllm_db["enabled"].result}'\"",
+              "psql -h ${module.postgres.host} -U postgres -tc \"SELECT 1 FROM pg_roles WHERE rolname = '${local.airllm_db}'\" | grep -q 1 || psql -h ${module.postgres.host} -U postgres -c \"CREATE ROLE \\\"${local.airllm_db}\\\" WITH LOGIN PASSWORD '$SETUP_PASSWORD'\"",
+              "psql -h ${module.postgres.host} -U postgres -c \"ALTER ROLE \\\"${local.airllm_db}\\\" WITH PASSWORD '$SETUP_PASSWORD'\"",
               "psql -h ${module.postgres.host} -U postgres -tc \"SELECT 1 FROM pg_database WHERE datname = '${local.airllm_db}'\" | grep -q 1 || psql -h ${module.postgres.host} -U postgres -c \"CREATE DATABASE \\\"${local.airllm_db}\\\" OWNER \\\"${local.airllm_db}\\\"\"",
               "psql -h ${module.postgres.host} -U postgres -c \"ALTER DATABASE \\\"${local.airllm_db}\\\" OWNER TO \\\"${local.airllm_db}\\\"\"",
             ]),

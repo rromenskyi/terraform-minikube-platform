@@ -7,6 +7,10 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Security
+- OIDC client secret moved from `argocd-cm` (ConfigMap) to `argocd-secret`;
+  the config references `$oidc.clientSecret`.
+
 ### Changed
 - `default` AppProject is emptied (it allowed everything to any Application
   naming it); platform-owned apps use the new `platform` project
