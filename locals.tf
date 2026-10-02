@@ -335,6 +335,8 @@ locals {
         # the app repo — no TF touch. Pin a tag/version here to freeze.
         chart_revision = "main"
         image_tag      = ""
+        # Upstream chart repository (public). Override to run a fork.
+        repo_url = "https://github.com/ipsupport-llc/ipsupport-airllm.git"
         # GCP Workload Identity Federation: the SA the pod impersonates so the
         # gateway's `vertex` provider mints OAuth2 tokens as its own cloud
         # identity, with no service-account key stored anywhere. Empty (default)

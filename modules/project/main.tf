@@ -1945,26 +1945,55 @@ resource "kubectl_manifest" "argocd_app_project" {
         for _, b in var.argocd_bootstraps : try(b.repo_url, "")
       ]))
 
+      # Workloads only. The bootstrap's child Application objects go to
+      # Argo CD's namespace through the separate `-bootstrap` project
+      # below, so this project never grants anything else there.
       destinations = [
-        # Workload destination — every chart-rendered resource the
-        # sub-Applications spawn lands here.
         {
           server    = "https://kubernetes.default.svc"
           namespace = local.namespace
-        },
-        # Argo CD's own namespace — App-of-Apps materialises sub-
-        # Application CRDs here. Without this entry the bootstrap
-        # Application fails its own destination check ("destination
-        # server ... and namespace 'argocd' do not match allowed
-        # destinations") and never even reaches sync.
-        {
-          server    = "https://kubernetes.default.svc"
-          namespace = var.argocd_namespace
         },
       ]
 
       namespaceResourceWhitelist = [
         { group = "*", kind = "*" },
+      ]
+      clusterResourceWhitelist = []
+    }
+  })
+}
+
+# Project of the bootstrap (App-of-Apps) Applications: may create only
+# Argo CD `Application` objects, and only in Argo CD's namespace. With the
+# workload project above, a tenant repo can't put ConfigMaps, Secrets or
+# Pods into Argo CD's namespace.
+resource "kubectl_manifest" "argocd_bootstrap_project" {
+  for_each = length(var.argocd_bootstraps) > 0 ? toset(["enabled"]) : toset([])
+
+  yaml_body = yamlencode({
+    apiVersion = "argoproj.io/v1alpha1"
+    kind       = "AppProject"
+    metadata = {
+      name      = "${local.namespace}-bootstrap"
+      namespace = var.argocd_namespace
+      labels = merge(module.project_label.tags, {
+        "app.kubernetes.io/managed-by" = "terraform"
+        "platform.tenant"              = local.namespace
+      })
+    }
+    spec = {
+      description = "Auto-managed bootstrap project for TF project ${local.namespace}: Application objects only, in Argo CD's namespace."
+      sourceRepos = distinct(compact([
+        for _, b in var.argocd_bootstraps : try(b.repo_url, "")
+      ]))
+      destinations = [
+        {
+          server    = "https://kubernetes.default.svc"
+          namespace = var.argocd_namespace
+        },
+      ]
+      namespaceResourceWhitelist = [
+        { group = "argoproj.io", kind = "Application" },
       ]
       clusterResourceWhitelist = []
     }
@@ -1979,7 +2008,7 @@ resource "kubectl_manifest" "argocd_app_project" {
 resource "kubectl_manifest" "argocd_bootstrap" {
   for_each = var.argocd_bootstraps
 
-  depends_on = [kubectl_manifest.argocd_app_project]
+  depends_on = [kubectl_manifest.argocd_app_project, kubectl_manifest.argocd_bootstrap_project]
 
   yaml_body = yamlencode({
     apiVersion = "argoproj.io/v1alpha1"
@@ -1998,7 +2027,7 @@ resource "kubectl_manifest" "argocd_bootstrap" {
       })
     }
     spec = {
-      project = local.namespace
+      project = "${local.namespace}-bootstrap"
 
       source = {
         repoURL        = each.value.repo_url

@@ -91,8 +91,12 @@ module "argocd" {
   source     = "./modules/argocd"
   depends_on = [module.argocd_oidc, module.addons]
 
-  enabled  = local.platform.services.argocd.enabled
-  hostname = local.platform.services.argocd.hostname
+  enabled   = local.platform.services.argocd.enabled
+  namespace = local.platform.services.argocd.namespace
+  hostname  = local.platform.services.argocd.hostname
+
+  # Platform-owned Applications → the `platform` AppProject.
+  platform_apps = local.airllm_enabled ? [{ repo_url = local.airllm_repo_url, namespace = local.airllm.namespace }] : []
 
   oidc_issuer        = local.platform.services.zitadel.enabled ? "https://${local.platform.services.zitadel.external_domain}" : ""
   oidc_client_id     = try(module.argocd_oidc["enabled"].client_id, "")

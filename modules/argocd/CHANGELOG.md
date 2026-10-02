@@ -8,6 +8,11 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- `default` AppProject is emptied (it allowed everything to any Application
+  naming it); platform-owned apps use the new `platform` project
+  (`platform_apps`). The configured namespace is now passed in.
+
+### Changed
 - File layout split into `main.tf` / `variables.tf` / `outputs.tf` per AGENT.md
   module conventions. Pure file reorganisation — no resource, input, output, or
   default value changed; `terraform plan` is identical before and after.

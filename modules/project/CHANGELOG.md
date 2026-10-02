@@ -7,6 +7,12 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- **BREAKING (behaviour):** the tenant AppProject no longer allows Argo CD's
+  namespace. Bootstrap Applications move to a new `<ns>-bootstrap` project
+  that may create only `Application` objects there. Child Applications keep
+  `spec.project: <ns>` and deploy to the tenant namespace only.
+
 ### Added
 - `vault_tenant_role`: the project's VaultStaticSecrets authenticate through
   its own VaultAuth `vault-tenant` with the tenant-scoped role instead of

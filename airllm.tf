@@ -17,6 +17,8 @@ locals {
   airllm = local.platform.services.airllm # defaults + gitignored overrides, normalized in locals.tf
 
   airllm_instances = local.airllm.enabled ? toset(["enabled"]) : toset([])
+  airllm_enabled   = local.airllm.enabled
+  airllm_repo_url  = local.airllm.repo_url
   airllm_db        = "airllm"
 
   # ── GCP Workload Identity Federation ──────────────────────────────────────
@@ -183,17 +185,17 @@ resource "kubectl_manifest" "airllm_application" {
     kind       = "Application"
     metadata = {
       name       = "airllm"
-      namespace  = "argocd"
+      namespace  = local.platform.services.argocd.namespace
       finalizers = ["resources-finalizer.argocd.argoproj.io"]
       labels = merge(module.platform_label.tags, {
         "app.kubernetes.io/managed-by" = "terraform"
       })
     }
     spec = {
-      project = "default"
+      project = "platform"
 
       source = {
-        repoURL        = "https://github.com/ipsupport-llc/ipsupport-airllm.git"
+        repoURL        = local.airllm_repo_url
         path           = "deploy/helm/airllm"
         targetRevision = local.airllm.chart_revision
         helm = {

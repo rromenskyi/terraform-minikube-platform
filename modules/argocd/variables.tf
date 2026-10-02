@@ -77,3 +77,13 @@ variable "built_from_apps" {
   default     = []
   nullable    = false
 }
+
+variable "platform_apps" {
+  description = "Platform-owned Argo CD Applications (`repo_url`, `namespace`). They get the `platform` AppProject, limited to these repositories and namespaces; the `default` project is emptied."
+  type = list(object({
+    repo_url  = string
+    namespace = string
+  }))
+  default  = []
+  nullable = false
+}
