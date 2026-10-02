@@ -1,6 +1,6 @@
 # oauth2-proxy
 
-OAuth2 Proxy sidecar wiring for components that opt into auth offloading. Pairs with a `modules/zitadel-app` instance per protected component.
+Cluster-wide Zitadel login gate: one traefik-forward-auth Deployment in the ingress-controller namespace plus a Traefik ForwardAuth Middleware. A route opts in with `auth: zitadel` in its component yaml; `modules/project` attaches the Middleware.
 
 <!-- BEGIN_TF_DOCS -->
 ## Requirements

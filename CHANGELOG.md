@@ -35,6 +35,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   wrong config fails the plan instead of printing a warning. The two Zitadel
   PAT checks stay warnings (the PAT only exists after Zitadel is up). An
   unknown component `kind` is rejected instead of rendering as a Deployment.
+- **BREAKING** `services.alert_llm_enrichment.ollama_model` has no default and
+  is required when the enricher is enabled. The enricher's email and prompt
+  are English; the new `language` setting (default `English`) picks the
+  language of the diagnosis. Migration: set `ollama_model` (and `language` if
+  needed) under `services.alert_llm_enrichment` in `config/platform.yaml`.
+
+### Fixed
+- Docs: the chat `open-terminal` sidecar was described as egress-limited by a
+  NetworkPolicy; no such policy exists for tenant namespaces. The component
+  yaml now says so, and the sidecar image is pinned by digest. Argo CD docs
+  no longer describe SSO via Dex (it is direct OIDC, Dex disabled);
+  `docs/architecture.md` lists every module; the `oauth2-proxy` README and the
+  re-bootstrap section describe what the code does.
 
 ### Added
 - **`modules/logging` — cluster log aggregation (VictoriaLogs + Vector).**

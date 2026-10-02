@@ -26,7 +26,8 @@ K8S_API_URL = os.environ.get("K8S_API_URL", "https://kubernetes.default.svc")
 K8S_TOKEN_FILE = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 K8S_CA_FILE = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://ollama.platform.svc.cluster.local:11434")
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "gemma4:26b-a4b-q3km")
+OLLAMA_MODEL = os.environ["OLLAMA_MODEL"]
+DIAGNOSIS_LANGUAGE = os.environ.get("DIAGNOSIS_LANGUAGE", "English")
 SMTP_HOST = os.environ.get("SMTP_HOST", "stalwart-smtp.mail.svc.cluster.local")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "25"))
 SMTP_HELLO = os.environ["SMTP_HELLO"]
@@ -48,7 +49,7 @@ def scope_to_source(query: str, labels: dict) -> str:
     """Best-effort narrowing to the specific namespace/pod this alert
     instance is about, when the rule's grouping produced those labels
     (the _default_alert_rules convention: src_namespace/src_pod). Rules that
-    don't group by pod (e.g. the sipmesh-style rules) won't have these
+    don't group by pod (e.g. rules that aggregate across pods) won't have these
     labels — the base query alone is used as-is in that case."""
     extra = []
     if labels.get("src_namespace"):
@@ -94,12 +95,12 @@ def query_pod_status(namespace: str, name: str) -> str:
     try:
         pod = _k8s_get(f"/api/v1/namespaces/{namespace}/pods/{name}")
     except (urllib.error.URLError, OSError, json.JSONDecodeError) as e:
-        return f"(не удалось получить статус пода: {e})"
+        return f"(could not read pod status: {e})"
 
     lines = []
     for cs in pod.get("status", {}).get("containerStatuses", []):
         cname = cs.get("name")
-        for label, state in (("текущее", cs.get("state", {})), ("предыдущее", cs.get("lastState", {}))):
+        for label, state in (("current", cs.get("state", {})), ("previous", cs.get("lastState", {}))):
             for kind, info in state.items():
                 if kind == "terminated":
                     lines.append(
@@ -107,7 +108,7 @@ def query_pod_status(namespace: str, name: str) -> str:
                     )
                 elif kind == "waiting":
                     lines.append(f"{cname} ({label}): waiting, reason={info.get('reason')}")
-    return "\n".join(lines) if lines else "(нет данных о статусе контейнеров)"
+    return "\n".join(lines) if lines else "(no container status)"
 
 
 def query_pod_events(namespace: str, name: str) -> str:
@@ -117,24 +118,24 @@ def query_pod_events(namespace: str, name: str) -> str:
             + urllib.parse.urlencode({"fieldSelector": f"involvedObject.name={name}"})
         )
     except (urllib.error.URLError, OSError, json.JSONDecodeError) as e:
-        return f"(не удалось получить события: {e})"
+        return f"(could not read events: {e})"
 
     events = sorted(data.get("items", []), key=lambda e: e.get("lastTimestamp") or "", reverse=True)
     lines = [f"{e.get('reason')}: {e.get('message')}" for e in events[:10] if e.get("type") == "Warning"]
-    return "\n".join(lines) if lines else "(нет предупреждающих событий)"
+    return "\n".join(lines) if lines else "(no warning events)"
 
 
 def ask_ollama(alertname: str, summary: str, log_lines: list[str], k8s_context: str) -> str:
-    log_excerpt = "\n".join(log_lines[:LOG_CONTEXT_LINES]) if log_lines else "(нет строк лога — запрос контекста не вернул совпадений)"
-    k8s_block = f"\nСтатус пода и события Kubernetes:\n{k8s_context}\n" if k8s_context else ""
+    log_excerpt = "\n".join(log_lines[:LOG_CONTEXT_LINES]) if log_lines else "(no log lines — the context query matched nothing)"
+    k8s_block = f"\nKubernetes pod status and events:\n{k8s_context}\n" if k8s_context else ""
     prompt = (
-        f"Сработал алерт мониторинга кластера: {alertname}\n"
-        f"Описание: {summary}\n"
+        f"A cluster monitoring alert fired: {alertname}\n"
+        f"Summary: {summary}\n"
         f"{k8s_block}\n"
-        f"Соответствующие строки логов:\n{log_excerpt}\n\n"
-        "Кратко (3-6 предложений) объясни вероятную причину произошедшего и дай "
-        "конкретный план действий (2-4 шага) — что оператору проверить или сделать "
-        "в первую очередь. Пиши по-русски, по делу, без общих фраз и без воды."
+        f"Matching log lines:\n{log_excerpt}\n\n"
+        "In 3-6 sentences explain the likely cause, then give a concrete action "
+        "plan (2-4 steps): what the operator should check or do first. Be "
+        f"specific, no filler. Write the answer in {DIAGNOSIS_LANGUAGE}."
     )
     payload = json.dumps(
         {
@@ -196,21 +197,21 @@ def handle_alert(alert: dict) -> None:
     if src_namespace and src_pod:
         status = query_pod_status(src_namespace, src_pod)
         events = query_pod_events(src_namespace, src_pod)
-        k8s_context = f"Статус контейнеров:\n{status}\n\nПоследние Warning-события:\n{events}"
+        k8s_context = f"Container status:\n{status}\n\nRecent warning events:\n{events}"
 
     try:
         diagnosis = ask_ollama(alertname, summary, log_lines, k8s_context)
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as e:
         print(f"ollama request failed for {alertname}: {e}", file=sys.stderr)
-        diagnosis = f"(LLM-разбор недоступен: {e})"
+        diagnosis = f"(LLM diagnosis unavailable: {e})"
 
-    subject = f"[AI-разбор] {alertname}: {summary}"[:200]
-    k8s_section = f"\n--- Статус пода / события Kubernetes ---\n{k8s_context}\n" if k8s_context else ""
+    subject = f"[AI diagnosis] {alertname}: {summary}"[:200]
+    k8s_section = f"\n--- Kubernetes pod status / events ---\n{k8s_context}\n" if k8s_context else ""
     body = (
         f"{summary}\n\n"
-        f"--- Разбор от локальной LLM ({OLLAMA_MODEL}) ---\n{diagnosis}\n"
+        f"--- Diagnosis by the local LLM ({OLLAMA_MODEL}) ---\n{diagnosis}\n"
         f"{k8s_section}\n"
-        f"--- Контекст логов ({len(log_lines)} строк, показаны первые 30) ---\n"
+        f"--- Log context ({len(log_lines)} lines, first 30 shown) ---\n"
         + "\n".join(log_lines[:30])
     )
     send_email(subject, body)

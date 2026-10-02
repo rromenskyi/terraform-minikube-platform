@@ -162,14 +162,17 @@ env_static:
 # as the slim build; we just can't install extra apt/pip/npm packages at
 # startup there. We deliberately skip the image's hardened entrypoint
 # (tini + entrypoint-slim.sh) by overriding `command:` — that entrypoint
-# needs to start as root to set up an iptables egress firewall we don't
-# need (Kubernetes NetworkPolicy is our egress boundary). Bypassing it
-# lets the sidecar run cleanly as UID 1000 under the Pod's restricted
+# needs to start as root to set up an iptables egress firewall. Bypassing
+# it lets the sidecar run cleanly as UID 1000 under the Pod's restricted
 # securityContext without `su-exec` privilege gymnastics. `/home/user` is
 # declared writable so shell history, session state and uploaded files
 # can land somewhere despite `readOnlyRootFilesystem: true`; emptyDir
 # means they don't outlive the Pod, which is acceptable for a terminal
 # scratchpad that belongs to the chat session.
+#
+# Egress is NOT restricted: the platform emits no NetworkPolicy for tenant
+# namespaces, so commands run here reach the internet and every in-cluster
+# Service the Pod can resolve. Grant the terminal only to trusted users.
 sidecars:
   mcp-weather:
     # Pinned to v1.2.0 — adds the `web` domain (search / news /
@@ -200,7 +203,7 @@ sidecars:
       read_only_root_filesystem: true
 
   open-terminal:
-    image:   ghcr.io/open-webui/open-terminal:alpine
+    image:   ghcr.io/open-webui/open-terminal:sha-2982fe9-alpine@sha256:31ec8eafefc8cdf9cf6bd61bc1d6664b14e894e9fde73e960a90847875c09059
     port:    8001
     command: ["open-terminal"]
     args:    ["run", "--host", "127.0.0.1", "--port", "8001"]

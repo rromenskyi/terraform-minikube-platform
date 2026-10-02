@@ -380,10 +380,12 @@ locals {
       # built image — see scripts/alert-llm-enricher.py.
       alert_llm_enrichment = {
         enabled = false
-        # Must match the chat default (config/components/chat.yaml
-        # DEFAULT_MODELS): OLLAMA_MAX_LOADED_MODELS=1, so a different model
-        # here evicts the chat model from VRAM on every alert.
-        ollama_model   = "gemma4:26b-a4b-jang-iq3s"
+        # Required when enabled. Use the chat default model: with
+        # OLLAMA_MAX_LOADED_MODELS=1 a different model evicts it from VRAM
+        # on every alert.
+        ollama_model = ""
+        # Language the diagnosis is written in (the email itself is English).
+        language       = "English"
         cpu_request    = "50m"
         cpu_limit      = "500m"
         memory_request = "64Mi"

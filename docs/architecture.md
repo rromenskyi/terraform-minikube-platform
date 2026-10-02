@@ -22,13 +22,7 @@ terraform-minikube-platform/
 │   ├── domains/             # One YAML per tenant domain (gitignored — contains zone IDs)
 │   ├── components/          # Reusable component definitions (tracked)
 │   └── limits/<ns>.yaml     # Per-namespace ResourceQuota; `default.yaml` is the fallback
-└── modules/
-    ├── project/             # Namespace + quota + DB/Postgres/Redis/Ollama hookup + components + IR + BasicAuth Middleware
-    ├── component/           # Deployment + Service + PV/PVC + ConfigMap + chown init
-    ├── mysql/               # MySQL StatefulSet + Secret + PV (toggle: services.mysql.enabled)
-    ├── postgres/            # PostgreSQL StatefulSet + Secret + PV (toggle: services.postgres.enabled)
-    ├── redis/               # Redis StatefulSet + PV, ACL-ready (toggle: services.redis.enabled)
-    └── ollama/              # Ollama StatefulSet + PV + model-pull Job (toggle: services.ollama.enabled)
+└── modules/                 # One directory per module — see "Module Responsibility Split"
 ```
 
 ## Three-Layer Module Stack
@@ -95,11 +89,30 @@ modules/component/main.tf
 | Module | Responsibility |
 |---|---|
 | `platform.tf` (root) | Owns the `platform` namespace + its ResourceQuota. |
-| `modules/mysql` | MySQL StatefulSet + Secret + PV/PVC. No namespace. |
-| `modules/redis` | Redis StatefulSet + PV/PVC + default-user Secret. No namespace. |
-| `modules/ollama` | Ollama StatefulSet + PV/PVC + model-pull Job. No namespace. |
-| `modules/project` | Tenant namespace + quota + DB/Redis/Ollama hookup + component orchestration + BasicAuth middleware + IngressRoutes. |
+| `modules/project` | Tenant namespace + quota + PSS labels + DB/Redis/Ollama hookup + component orchestration + BasicAuth middleware + IngressRoutes + Argo CD AppProjects + Vault tenant auth. |
 | `modules/component` | Deployment + Service + PV/PVC + ConfigMap + chown init. No routing, no namespace. |
+| `modules/mysql` | Shared MySQL StatefulSet + root Secret + PV/PVC. Tenant databases are created by `modules/project`. |
+| `modules/postgres` | Shared PostgreSQL StatefulSet + superuser Secret + PV/PVC. Tenant databases are created by `modules/project`. |
+| `modules/redis` | Shared Valkey (single instance or Sentinel) + ACL keeper; per-tenant ACL users come from `modules/project`. |
+| `modules/ollama` | Shared Ollama StatefulSet + PV/PVC + model-pull Job, optional GPU offload. |
+| `modules/minio` | S3-compatible object store, standalone or distributed. |
+| `modules/longhorn` | Longhorn block storage and its backup target. |
+| `modules/metallb` | MetalLB address pools and L2 announcements for LoadBalancer Services. |
+| `modules/backup` | Scheduled restic backups (databases, Redis, Vault snapshot, hostPath volumes) to B2, plus restore scripts. |
+| `modules/vault` | Vault StatefulSet, auto-init/unseal, Vault Secrets Operator and vault-config-operator wiring (policies, Kubernetes auth roles). |
+| `modules/zitadel` | Zitadel identity provider, its Postgres database, login UI and the Terraform PAT bootstrap. |
+| `modules/zitadel-app` | One Zitadel project + OIDC application + Kubernetes Secret per protected app. |
+| `modules/oauth2-proxy` | Cluster-wide Zitadel login gate (traefik-forward-auth + ForwardAuth Middleware). |
+| `modules/argocd` | Argo CD with Zitadel SSO, the locked `default` project and the `platform` project. |
+| `modules/stalwart` | Stalwart mail server (SMTP/IMAP/JMAP), relay, routes, DNS records and its config applier. |
+| `modules/roundcube` | Roundcube webmail in front of Stalwart. |
+| `modules/seafile` | Seafile CE file storage with Zitadel SSO. |
+| `modules/platform-dash` | Operator dashboard Deployment + Service. |
+| `modules/logging` | VictoriaLogs + Vector log pipeline and its Grafana datasource. |
+| `modules/security-scan` | trivy-operator image CVE scanning reported through monitoring. |
+| `modules/github-runners` | GitHub Actions self-hosted runners (ARC). |
+| `modules/buildkitd` | Shared BuildKit daemon for runner image builds. |
+| `modules/redirect-domain` | Zone-wide 308 redirect to a canonical host, served by Traefik. |
 | `cloudflare.tf` | Tunnel resource, ingress rules (for each hostname from `module.project[*].hostnames`), DNS CNAME records, force-delete-on-destroy fallback. |
 | `cloudflared.tf` | cloudflared Deployment + token Secret in the `ops` namespace (created by the addons module). |
 

@@ -119,7 +119,7 @@ terraform-minikube-platform/
     ├── vault/                                  # Vault CE raft single-node + auto-unseal + optional Zitadel OIDC
     ├── zitadel/                                # Zitadel IdP + Login UI v2 sidecar + provider transport modes
     ├── zitadel-app/                            # Reusable Project + Application + Roles + Secret (one per protected app)
-    ├── argocd/                                 # Argo CD core + Zitadel OIDC SSO via Dex
+    ├── argocd/                                 # Argo CD core + Zitadel OIDC SSO (direct OIDC)
     ├── github-runners/                         # ARC controller + N scale sets with engine-emit or external Secret auth
     ├── buildkitd/                              # CERN userns BuildKit daemon (kubectl_manifest, hostUsers: false + privileged)
     ├── minio/                                  # Single-replica or distributed; per-bucket consumer Secrets
@@ -291,7 +291,7 @@ Every service collapses to zero resources when its `enabled` flag is off — dis
 | `ollama` | StatefulSet for shared LLM inference; CPU-only or GPU-offloaded (Vulkan / CUDA) | `ollama: true` (auto-injects `OLLAMA_HOST` / `OLLAMA_BASE_URL`) |
 | `vault` | Vault CE StatefulSet with raft single-node, auto-unseal init Job, `vault-config-operator` (vco) for declarative CRD-managed config, Vault Secrets Operator (VSO) for k8s Secret materialisation, Zitadel OIDC for operator + per-tenant SSO | per-tenant subtree at `secret/data/tenants/<slug>/...`; tenants self-serve via Zitadel `tenant_<slug>` role, k8s Secrets emitted by `VaultStaticSecret` CRs the engine renders for any `secrets.<name>: { vault: true }` entry plus the `argocd_repo_ssh_keys` / `git_deploy_keys` flows |
 | `zitadel` | Identity provider — Postgres-backed StatefulSet + init Job + Login UI v2 sidecar | OIDC issuer for `oidc:` components, Argo CD, platform-dash |
-| `argocd` | GitOps controller (upstream chart) with Dex+Zitadel SSO; route emitted as `kind: external` | manual app sync via Argo UI / CLI |
+| `argocd` | GitOps controller (upstream chart) with Zitadel OIDC SSO; route emitted as `kind: external` | manual app sync via Argo UI / CLI |
 | `kured` | Kubernetes Reboot Daemon — drains + reboots a node when `/var/run/reboot-required` appears | n/a (cluster maintenance) |
 | `longhorn` | Distributed block-storage StorageClass(es) replicated across cluster nodes; native B2 backup | use `longhorn-<pool>` SC name on `storage:` of a component |
 | `metallb` | Bare-metal `LoadBalancer` controller in L2 mode + per-pool address pools + L2 advertisements | tenant Services with `type: LoadBalancer` + `spec.loadBalancerIP` |
@@ -897,7 +897,7 @@ kubectl get secret redis-credentials    -n <namespace> -o json | jq '.data | map
 ./tf bootstrap-k3s     # or bootstrap-minikube
 ```
 
-Deletes the cluster, resets Terraform state, purges Cloudflare tunnel + DNS records, rebuilds everything. Host volumes preserved.
+Deletes the cluster, resets Terraform state and rebuilds everything. Host volumes are preserved. `bootstrap-k3s` runs `terraform destroy` first, which also removes the Cloudflare tunnel and its DNS records (recreated with a new tunnel ID); `bootstrap-minikube` leaves Cloudflare alone and aborts if the tunnel already exists (`./tf cloudflare-purge` or `terraform import`).
 
 ## Variables reference
 

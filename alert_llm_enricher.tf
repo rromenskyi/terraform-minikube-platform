@@ -91,6 +91,13 @@ resource "kubernetes_cluster_role_binding_v1" "alert_llm_enricher" {
 resource "kubernetes_deployment_v1" "alert_llm_enricher" {
   for_each = local.alert_llm_enrichment_instances
 
+  lifecycle {
+    precondition {
+      condition     = local.alert_llm_enrichment.ollama_model != ""
+      error_message = "services.alert_llm_enrichment.ollama_model must be set when the enricher is enabled (use the chat default model)."
+    }
+  }
+
   metadata {
     name      = local.alert_llm_enricher_name
     namespace = local.platform.services.logging.namespace
@@ -149,6 +156,10 @@ resource "kubernetes_deployment_v1" "alert_llm_enricher" {
           env {
             name  = "OLLAMA_MODEL"
             value = local.alert_llm_enrichment.ollama_model
+          }
+          env {
+            name  = "DIAGNOSIS_LANGUAGE"
+            value = local.alert_llm_enrichment.language
           }
 
           port {

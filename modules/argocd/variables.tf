@@ -22,7 +22,7 @@ variable "hostname" {
 }
 
 variable "oidc_issuer" {
-  description = "OIDC issuer URL. When set together with `oidc_client_id` and `oidc_client_secret`, the chart wires Dex with an OIDC connector and the UI gets a `Sign in with OIDC` button. Empty inputs disable the integration; only the chart-generated local admin remains."
+  description = "OIDC issuer URL. When set together with `oidc_client_id` and `oidc_client_secret`, the chart renders a direct `oidc.config` and the UI gets a `Sign in with OIDC` button. Empty inputs disable the integration; only the chart-generated local admin remains."
   type        = string
   default     = ""
 }
@@ -47,7 +47,7 @@ variable "oidc_admin_groups" {
 }
 
 variable "node_selector" {
-  description = "Node-selector applied to every Argo CD pod the chart creates (server, repo-server, application-controller, redis, dex). Empty = scheduler picks. Set on multi-node clusters where a specific tier should host the GitOps controller."
+  description = "Node-selector applied to every Argo CD pod the chart creates (server, repo-server, application-controller, redis). Empty = scheduler picks. Set on multi-node clusters where a specific tier should host the GitOps controller."
   type        = map(string)
   default     = {}
 }

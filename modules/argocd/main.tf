@@ -6,7 +6,7 @@
 # `kind: external` component pointing at the `argocd-server` Service
 # this chart creates.
 #
-# OIDC is wired through Dex's built-in OIDC connector. Caller is
+# SSO is direct OIDC (`oidc.config`, Dex disabled). Caller is
 # responsible for creating the Zitadel application (see
 # `argocd.tf` at the root) and passing in `client_id` /
 # `client_secret`. Empty inputs collapse the OIDC config and the
@@ -120,8 +120,7 @@ locals {
     # external` component yaml) routes Cloudflare Tunnel traffic to
     # the `argocd-server` Service the chart creates — owning ingress
     # in two places at once would conflict at the IngressClass level.
-    # SSO is configured as direct OIDC (`oidc.config`), so the bundled
-    # Dex never gets a config and only idles.
+    # SSO is configured as direct OIDC (`oidc.config`); Dex is not needed.
     dex = {
       enabled = false
     }
