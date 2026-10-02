@@ -259,6 +259,20 @@ variable "env_random_keys" {
   default     = []
 }
 
+variable "storage_node" {
+  description = <<-EOT
+    Node (`kubernetes.io/hostname`) that holds this component's `storage`
+    volumes. Storage is a node-local hostPath; without a pin, a pod that
+    moves to another node silently starts on that node's (empty or stale)
+    copy of the directory and writes diverge. When set, the pod is pinned
+    to the node and new PVs carry a matching nodeAffinity. Leave empty on
+    a single-node cluster.
+  EOT
+  type        = string
+  default     = ""
+  nullable    = false
+}
+
 variable "node_selector" {
   description = <<-EOT
     Node-selector labels the pod must match. Empty map means the

@@ -8,6 +8,9 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- `pv_paths[].node`: one PV backup CronJob per node (`backup-pv-<node>`,
+  restic host `platform-pv-<node>`), since hostPath data exists only on its
+  node; `restore-pv.sh` defaults to the newest snapshot holding the archive.
 - PV backups capture SQLite databases listed under the entry's `sqlite:`
   with `VACUUM INTO` (+ `PRAGMA quick_check`) instead of tarring the live
   db/-wal/-shm, which could restore corrupt. The README no longer claims

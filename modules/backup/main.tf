@@ -85,12 +85,18 @@ locals {
   # tfstate backend uses for B2.
   repository_url = "s3:${var.b2_endpoint}/${var.b2_bucket}"
 
-  postgres_set      = var.enabled && var.postgres_enabled ? toset(["enabled"]) : toset([])
-  mysql_set         = var.enabled && var.mysql_enabled ? toset(["enabled"]) : toset([])
-  redis_set         = var.enabled && var.redis_enabled ? toset(["enabled"]) : toset([])
-  vault_set         = var.enabled && var.vault_enabled ? toset(["enabled"]) : toset([])
-  pv_set            = var.enabled && var.pv_enabled && length(var.pv_paths) > 0 ? toset(["enabled"]) : toset([])
-  pv_sqlite_entries = [for p in var.pv_paths : p.name if length(p.sqlite) > 0]
+  postgres_set = var.enabled && var.postgres_enabled ? toset(["enabled"]) : toset([])
+  mysql_set    = var.enabled && var.mysql_enabled ? toset(["enabled"]) : toset([])
+  redis_set    = var.enabled && var.redis_enabled ? toset(["enabled"]) : toset([])
+  vault_set    = var.enabled && var.vault_enabled ? toset(["enabled"]) : toset([])
+  pv_set       = var.enabled && var.pv_enabled && length(var.pv_paths) > 0 ? toset(["enabled"]) : toset([])
+  # One CronJob per node: hostPath data exists only on the node that
+  # holds it. Entries without `node` share the `default` job, placed by
+  # `pv_node_selector`.
+  pv_groups = length(local.pv_set) == 0 ? {} : {
+    for node in distinct([for p in var.pv_paths : p.node]) :
+    (node == "" ? "default" : node) => [for p in var.pv_paths : p if p.node == node]
+  }
 
   # Common shell preamble all CronJob containers share. `set -e`
   # so a failing restic backup propagates to the Pod status; jobs that
@@ -708,10 +714,10 @@ resource "kubernetes_cron_job_v1" "vault" {
 # ── PV tar CronJob ────────────────────────────────────────────────────────
 
 resource "kubernetes_cron_job_v1" "pv" {
-  for_each = local.pv_set
+  for_each = local.pv_groups
 
   metadata {
-    name      = "backup-pv"
+    name      = each.key == "default" ? "backup-pv" : "backup-pv-${each.key}"
     namespace = kubernetes_namespace_v1.backup["enabled"].metadata[0].name
   }
 
@@ -736,7 +742,7 @@ resource "kubernetes_cron_job_v1" "pv" {
           }
           spec {
             restart_policy = "OnFailure"
-            node_selector  = length(var.pv_node_selector) > 0 ? var.pv_node_selector : null
+            node_selector  = each.key == "default" ? (length(var.pv_node_selector) > 0 ? var.pv_node_selector : null) : { "kubernetes.io/hostname" = each.key }
 
             dynamic "toleration" {
               for_each = var.pv_tolerations
@@ -764,13 +770,18 @@ resource "kubernetes_cron_job_v1" "pv" {
               # available — alpine's /bin/sh is busybox).
               env {
                 name  = "PV_PAIRS"
-                value = join(",", [for p in var.pv_paths : "${p.name}:${p.path}"])
+                value = join(",", [for p in each.value : "${p.name}:${p.path}"])
+              }
+
+              env {
+                name  = "RESTIC_HOST"
+                value = each.key == "default" ? "platform-pv" : "platform-pv-${each.key}"
               }
 
               # `<name>:<file>|<file>` per entry with SQLite databases.
               env {
                 name  = "PV_SQLITE"
-                value = join(",", [for p in var.pv_paths : "${p.name}:${join("|", p.sqlite)}" if length(p.sqlite) > 0])
+                value = join(",", [for p in each.value : "${p.name}:${join("|", p.sqlite)}" if length(p.sqlite) > 0])
               }
 
               security_context {
@@ -783,7 +794,7 @@ resource "kubernetes_cron_job_v1" "pv" {
                   # DAC_OVERRIDE + CHOWN only when a SQLite database is read:
                   # its -shm index belongs to the app's UID and must be
                   # writable, and files SQLite creates go back to that UID.
-                  add = length(local.pv_sqlite_entries) > 0 ? ["DAC_READ_SEARCH", "DAC_OVERRIDE", "CHOWN"] : ["DAC_READ_SEARCH"]
+                  add = length([for p in each.value : p if length(p.sqlite) > 0]) > 0 ? ["DAC_READ_SEARCH", "DAC_OVERRIDE", "CHOWN"] : ["DAC_READ_SEARCH"]
                 }
               }
 
@@ -864,13 +875,15 @@ resource "kubernetes_cron_job_v1" "pv" {
                 IFS="$old_ifs"
 
                 echo "[pv] restic backup"
-                restic backup --host platform-pv --tag pv "$STAGE"
+                # One restic host per job, so retention (grouped by host and
+                # tags) keeps every node's snapshots.
+                restic backup --host "$RESTIC_HOST" --tag pv "$STAGE"
                 echo "[pv] done"
               EOT
               ]
 
               dynamic "volume_mount" {
-                for_each = var.pv_paths
+                for_each = each.value
                 content {
                   name       = "pv-${replace(volume_mount.value.name, "/", "-")}"
                   mount_path = volume_mount.value.path
@@ -885,7 +898,7 @@ resource "kubernetes_cron_job_v1" "pv" {
             }
 
             dynamic "volume" {
-              for_each = var.pv_paths
+              for_each = each.value
               content {
                 name = "pv-${replace(volume.value.name, "/", "-")}"
                 host_path {

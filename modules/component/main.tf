@@ -95,6 +95,12 @@ locals {
       )
     )
   }
+  # `storage_node` pins the pod to the node holding its hostPath volumes.
+  pod_node_selector = merge(
+    var.node_selector,
+    length(local.volumes) > 0 && var.storage_node != "" ? { "kubernetes.io/hostname" = var.storage_node } : {},
+  )
+
   sidecar_tags = {
     for name, sc in var.sidecars :
     name => (
@@ -136,6 +142,28 @@ resource "kubernetes_persistent_volume_v1" "this" {
         type = "DirectoryOrCreate"
       }
     }
+
+    dynamic "node_affinity" {
+      for_each = var.storage_node != "" ? [var.storage_node] : []
+      content {
+        required {
+          node_selector_term {
+            match_expressions {
+              key      = "kubernetes.io/hostname"
+              operator = "In"
+              values   = [node_affinity.value]
+            }
+          }
+        }
+      }
+    }
+  }
+
+  # PV nodeAffinity is immutable: setting `storage_node` on an existing
+  # component would otherwise replace its bound PV under a running pod.
+  # Existing PVs rely on the pod pin; new PVs get the affinity at creation.
+  lifecycle {
+    ignore_changes = [spec[0].node_affinity]
   }
 }
 
@@ -270,7 +298,7 @@ resource "kubernetes_deployment_v1" "this" {
         # default to empty so this block is a no-op for existing
         # components. Wired identically into the StatefulSet path
         # below (when one is added) and into shared service modules.
-        node_selector = length(var.node_selector) > 0 ? var.node_selector : null
+        node_selector = length(local.pod_node_selector) > 0 ? local.pod_node_selector : null
 
         dynamic "toleration" {
           for_each = var.tolerations

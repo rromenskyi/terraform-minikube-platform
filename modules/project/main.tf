@@ -1718,6 +1718,7 @@ module "component" {
   # `tolerations:`, `affinity:`) and the documented k8s schema each
   # mirrors.
   node_selector = try(each.value.node_selector, {})
+  storage_node  = try(each.value.storage_node, "")
   tolerations   = try(each.value.tolerations, [])
   affinity      = try(each.value.affinity, {})
 }

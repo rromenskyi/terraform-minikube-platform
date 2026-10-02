@@ -8,6 +8,12 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- `storage_node`: pins the pod to the node holding its hostPath volumes
+  and gives new PVs a matching nodeAffinity (existing PVs keep theirs;
+  `ignore_changes` avoids replacing a bound PV). Without it a pod that
+  moved nodes ran on that node's stale copy and writes diverged.
+
+### Added
 - **GCP Workload Identity Federation knobs (`gcp_wif_credential_configmap_name`
   / `gcp_wif_audience`).** When the caller passes a non-null ConfigMap
   name, the deployment pod gets: a dedicated ServiceAccount (so the

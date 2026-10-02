@@ -53,6 +53,19 @@ esac
 STAGE=$(mktemp -d)
 trap 'rm -rf "$STAGE"' EXIT
 
+# Each node's backup job writes its own snapshots, so "latest" alone may
+# not contain this archive: pick the newest snapshot that does.
+if [ "$SNAP" = "latest" ]; then
+  SNAP=""
+  for id in $(restic snapshots --no-lock --tag pv --json | grep -o '"short_id":"[^"]*"' | cut -d'"' -f4 | tac); do
+    if restic ls --no-lock "$id" | grep -q "/$NAME.tar.gz$"; then SNAP="$id"; break; fi
+  done
+  if [ -z "$SNAP" ]; then
+    echo "[pv] no snapshot with $NAME.tar.gz" >&2
+    exit 2
+  fi
+fi
+
 echo "[pv] restic restore $SNAP --tag pv"
 restic restore "$SNAP" --tag pv --target "$STAGE" \
   --include "*/$NAME.tar.gz"

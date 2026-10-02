@@ -136,11 +136,12 @@ variable "pv_enabled" {
 }
 
 variable "pv_paths" {
-  description = "List of host-path entries to back up. Each entry is `{ name, path, sqlite }` where `name` is a stable identifier used as the archive name (e.g. `stalwart-data`), `path` is the absolute host directory, and `sqlite` (optional) lists SQLite databases inside it, relative to `path`. A live `tar` of a SQLite file (above all one in WAL mode) is not a consistent copy; listed databases are captured as a consistent snapshot (`VACUUM INTO`, checked with `PRAGMA quick_check`) and stored in the archive at their own path instead of the live db/-wal/-shm files. Entries with `sqlite` are mounted read-write, because reading a WAL database writes its -shm index."
+  description = "List of host-path entries to back up. Each entry is `{ name, path, sqlite }` where `name` is a stable identifier used as the archive name (e.g. `stalwart-data`), `path` is the absolute host directory, and `sqlite` (optional) lists SQLite databases inside it, relative to `path`. A live `tar` of a SQLite file (above all one in WAL mode) is not a consistent copy; listed databases are captured as a consistent snapshot (`VACUUM INTO`, checked with `PRAGMA quick_check`) and stored in the archive at their own path instead of the live db/-wal/-shm files. Entries with `sqlite` are mounted read-write, because reading a WAL database writes its -shm index. `node` (optional) is the node holding the directory; each node gets its own CronJob (`backup-pv-<node>`), entries without it run in `backup-pv` placed by `pv_node_selector`."
   type = list(object({
     name   = string
     path   = string
     sqlite = optional(list(string), [])
+    node   = optional(string, "")
   }))
   default = []
 }
