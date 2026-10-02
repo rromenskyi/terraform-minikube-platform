@@ -61,21 +61,20 @@ module "k8s" {
   ssh_private_key_path = var.ssh_private_key_path
 }
 
-# Fail fast at plan time if the operator forgot to set ssh_user /
-# ssh_private_key_path when the k3s distribution is active. Module blocks do
-# not accept `lifecycle { precondition }` in current Terraform, so a `check`
-# block is used. When the minikube distribution is active instead, the k3s
-# SSH vars are unused — the check still runs but is harmless informational
-# noise.
-check "k3s_ssh_vars_set" {
-  assert {
-    condition     = var.ssh_user != "" && var.ssh_private_key_path != ""
-    error_message = "ssh_user and ssh_private_key_path are required when the k3s distribution is active (set TF_VAR_ssh_user and TF_VAR_ssh_private_key_path, see .env.example)."
-  }
+# Fail the plan when the k3s SSH inputs are missing. Module blocks take no
+# `lifecycle { precondition }`, so a terraform_data carries it. It belongs to
+# the k3s module above: comment both out when switching to minikube.
+resource "terraform_data" "k3s_checks" {
+  lifecycle {
+    precondition {
+      condition     = var.ssh_user != "" && var.ssh_private_key_path != ""
+      error_message = "ssh_user and ssh_private_key_path are required when the k3s distribution is active (set TF_VAR_ssh_user and TF_VAR_ssh_private_key_path, see .env.example)."
+    }
 
-  assert {
-    condition     = var.ssh_private_key_path == "" || fileexists(var.ssh_private_key_path)
-    error_message = "ssh_private_key_path does not point to a readable file: ${var.ssh_private_key_path}"
+    precondition {
+      condition     = var.ssh_private_key_path == "" || fileexists(var.ssh_private_key_path)
+      error_message = "ssh_private_key_path does not point to a readable file: ${var.ssh_private_key_path}"
+    }
   }
 }
 

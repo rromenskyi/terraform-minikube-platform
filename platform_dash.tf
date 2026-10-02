@@ -8,32 +8,30 @@
 #     `dash: platform-dash`) to that external component
 #
 # What this file owns:
-#   - check blocks (zitadel + hostname required)
+#   - plan-time preconditions (zitadel + hostname required)
 #   - zitadel-app instance for OIDC (creates Project + Application,
 #     emits AUTH_ZITADEL_* + AUTH_SECRET in a Secret in platform ns)
 #   - module.platform_dash invocation, fed the OIDC Secret name +
 #     checksum so Deployment env_from picks it up
 
-check "platform_dash_requires_zitadel" {
-  assert {
-    condition     = !local.platform.services.platform_dash.enabled || local.platform.services.zitadel.enabled
-    error_message = "services.platform_dash.enabled = true requires services.zitadel.enabled = true (dashboard authentication is OIDC-only)."
+resource "terraform_data" "platform_dash_checks" {
+  lifecycle {
+    precondition {
+      condition     = !local.platform.services.platform_dash.enabled || local.platform.services.zitadel.enabled
+      error_message = "services.platform_dash.enabled = true requires services.zitadel.enabled = true (dashboard authentication is OIDC-only)."
+    }
+    precondition {
+      condition     = !local.platform.services.platform_dash.enabled || local.platform.services.platform_dash.hostname != ""
+      error_message = "services.platform_dash.hostname must be set when platform_dash is enabled (e.g. `dash.example.com`). Drives ORIGIN + AUTH_URL + the Zitadel redirect URI registration."
+    }
+    precondition {
+      condition     = !local.platform.services.platform_dash.enabled || local.platform.services.platform_dash.image != ""
+      error_message = "services.platform_dash.image must be set when platform_dash is enabled (e.g. `ghcr.io/<your-handle>/platform-dash:vX.Y.Z`). Engine does not assume a specific registry path — operator owns the dashboard build."
+    }
   }
 }
 
-check "platform_dash_hostname_set" {
-  assert {
-    condition     = !local.platform.services.platform_dash.enabled || local.platform.services.platform_dash.hostname != ""
-    error_message = "services.platform_dash.hostname must be set when platform_dash is enabled (e.g. `dash.example.com`). Drives ORIGIN + AUTH_URL + the Zitadel redirect URI registration."
-  }
-}
 
-check "platform_dash_image_set" {
-  assert {
-    condition     = !local.platform.services.platform_dash.enabled || local.platform.services.platform_dash.image != ""
-    error_message = "services.platform_dash.image must be set when platform_dash is enabled (e.g. `ghcr.io/<your-handle>/platform-dash:vX.Y.Z`). Engine does not assume a specific registry path — operator owns the dashboard build."
-  }
-}
 
 # OIDC integration. Emits a Secret in `platform` ns with
 # AUTH_ZITADEL_ISSUER / AUTH_ZITADEL_ID / AUTH_ZITADEL_SECRET /

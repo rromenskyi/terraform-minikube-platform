@@ -42,8 +42,8 @@ locals {
 
   # Only check the non-sensitive vars in this derivation —
   # `for_each` rejects values derived from sensitive inputs.
-  # The check block at the root level confirms the matching
-  # creds are also present when the bucket+endpoint are set.
+  # Missing credentials with a bucket+endpoint set are not caught
+  # here; Longhorn reports the backup target as unreachable.
   backup_configured = (
     var.enabled &&
     var.backup_b2_bucket != "" &&

@@ -52,15 +52,17 @@ variable "backup_passphrase" {
   sensitive   = true
 }
 
-check "backup_inputs_set_when_enabled" {
-  assert {
-    condition = !local.platform.services.backup.enabled || (
-      var.backup_b2_bucket != "" &&
-      var.backup_b2_endpoint != "" &&
-      var.backup_b2_access_key_id != "" &&
-      var.backup_b2_secret_access_key != ""
-    )
-    error_message = "services.backup.enabled = true requires TF_VAR_backup_b2_bucket / TF_VAR_backup_b2_endpoint / TF_VAR_backup_b2_access_key_id / TF_VAR_backup_b2_secret_access_key in the operator's gitignored .env. Use a separate B2 application key from the tfstate one — backup writes should survive a tfstate-key leak."
+resource "terraform_data" "backup_checks" {
+  lifecycle {
+    precondition {
+      condition = !local.platform.services.backup.enabled || (
+        var.backup_b2_bucket != "" &&
+        var.backup_b2_endpoint != "" &&
+        var.backup_b2_access_key_id != "" &&
+        var.backup_b2_secret_access_key != ""
+      )
+      error_message = "services.backup.enabled = true requires TF_VAR_backup_b2_bucket / TF_VAR_backup_b2_endpoint / TF_VAR_backup_b2_access_key_id / TF_VAR_backup_b2_secret_access_key in the operator's gitignored .env. Use a separate B2 application key from the tfstate one — backup writes should survive a tfstate-key leak."
+    }
   }
 }
 

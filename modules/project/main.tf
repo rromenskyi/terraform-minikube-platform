@@ -434,65 +434,85 @@ module "pg_credentials_label" {
   id_max_length = 63
 }
 
-# Catch typos / missing component definitions at plan time.
-# A routed component is "known" if it has either a generic template
-# at `config/components/<name>.yaml` OR an inline definition in this
-# project's `envs.<env>.components.<name>` block.
-check "routes_reference_known_components" {
-  assert {
-    condition = alltrue([
-      for name in local._component_names :
-      contains(keys(var.components), name) || contains(keys(try(var.project_config.components, {})), name)
-    ])
-    error_message = "project '${local.namespace}' has a route to an unknown component. Referenced components: ${jsonencode(local._component_names)}. Available templates: ${jsonencode(keys(var.components))}. Inline overrides: ${jsonencode(keys(try(var.project_config.components, {})))}. Add `config/components/<name>.yaml` OR an inline `envs.<env>.components.<name>` block in the domain yaml."
-  }
-}
-
-# Shared-service preconditions: a component asks for MySQL/Redis/Ollama
-# only if the operator flipped the matching `services.<name>` toggle in
-# `config/platform.yaml` on. Check blocks warn at plan time; the
-# resources that actually consume these inputs (`kubernetes_job_v1`,
-# `kubernetes_secret_v1`) will then fail with a cleaner error if the
-# warning is ignored.
-check "mysql_enabled_when_needed" {
-  assert {
-    condition     = !local.needs_db || var.mysql_host != null
-    error_message = "project '${local.namespace}' has a component with `db: true` but `services.mysql` is disabled in config/platform.yaml. Either enable MySQL or drop `db: true` from the component spec."
-  }
-}
-
-check "postgres_enabled_when_needed" {
-  assert {
-    condition     = !local.needs_postgres || var.postgres_host != null
-    error_message = "project '${local.namespace}' has a component with `postgres: true` but `services.postgres` is disabled in config/platform.yaml. Either enable PostgreSQL or drop `postgres: true` from the component spec."
-  }
-}
-
-check "redis_enabled_when_needed" {
-  assert {
-    condition     = !local.needs_redis || var.redis_host != null
-    error_message = "project '${local.namespace}' has a component with `redis: true` but `services.redis` is disabled in config/platform.yaml. Either enable Redis or drop `redis: true` from the component spec."
-  }
-}
-
-check "ollama_enabled_when_needed" {
-  assert {
-    condition     = !local.needs_ollama || var.ollama_url != null
-    error_message = "project '${local.namespace}' has a component with `ollama: true` but `services.ollama` is disabled in config/platform.yaml. Either enable Ollama or drop `ollama: true` from the component spec."
-  }
-}
-
-check "gcp_wif_audience_set_when_needed" {
-  assert {
-    condition     = length(local.gcp_wif_components) == 0 || var.gcp_wif_pool_provider_audience != ""
-    error_message = "project '${local.namespace}' has component(s) with `gcp_wif.gcp_service_account` set (${join(", ", keys(local.gcp_wif_components))}) but `services.gcp_wif.pool_provider_audience` is empty in config/platform.yaml. Either set the audience (`//iam.googleapis.com/projects/<NUMBER>/locations/global/workloadIdentityPools/<POOL>/providers/<PROVIDER>`) or drop `gcp_wif:` from the component spec(s)."
-  }
-}
-
-check "oauth2_proxy_available_when_zitadel_auth_used" {
-  assert {
-    condition     = length(local.zitadel_auth_components) == 0 || (var.oauth2_proxy_middlewares != null && length(var.oauth2_proxy_middlewares) > 0)
-    error_message = "project '${local.namespace}' has at least one component with `auth: zitadel` (${join(", ", keys(local.zitadel_auth_components))}) but the cluster-wide oauth2-proxy is not deployed — that gate is gated on `services.zitadel.enabled`. Either turn Zitadel on, or drop the `auth: zitadel` knob."
+# Configuration preconditions: each one fails the plan instead of letting
+# a wrong project config reach the cluster.
+resource "terraform_data" "config_checks" {
+  lifecycle {
+    # A routed component needs a template (`config/components/<name>.yaml`)
+    # or an inline `envs.<env>.components.<name>` block.
+    precondition {
+      condition = alltrue([
+        for name in local._component_names :
+        contains(keys(var.components), name) || contains(keys(try(var.project_config.components, {})), name)
+      ])
+      error_message = "project '${local.namespace}' has a route to an unknown component. Referenced components: ${jsonencode(local._component_names)}. Available templates: ${jsonencode(keys(var.components))}. Inline overrides: ${jsonencode(keys(try(var.project_config.components, {})))}. Add `config/components/<name>.yaml` OR an inline `envs.<env>.components.<name>` block in the domain yaml."
+    }
+    # Anything else would silently render as a plain Deployment.
+    precondition {
+      condition = alltrue([
+        for name, c in local.normalized_components : contains(["deployment", "app", "external"], c.kind)
+      ])
+      error_message = "project '${local.namespace}' has a component with an unknown `kind` (${jsonencode({ for name, c in local.normalized_components : name => c.kind if !contains(["deployment", "app", "external"], c.kind) })}). Supported: deployment, app, external."
+    }
+    # A component that asks for a shared service needs its
+    # `services.<name>` toggle on in `config/platform.yaml`.
+    precondition {
+      condition     = !local.needs_db || var.mysql_host != null
+      error_message = "project '${local.namespace}' has a component with `db: true` but `services.mysql` is disabled in config/platform.yaml. Either enable MySQL or drop `db: true` from the component spec."
+    }
+    precondition {
+      condition     = !local.needs_postgres || var.postgres_host != null
+      error_message = "project '${local.namespace}' has a component with `postgres: true` but `services.postgres` is disabled in config/platform.yaml. Either enable PostgreSQL or drop `postgres: true` from the component spec."
+    }
+    precondition {
+      condition     = !local.needs_redis || var.redis_host != null
+      error_message = "project '${local.namespace}' has a component with `redis: true` but `services.redis` is disabled in config/platform.yaml. Either enable Redis or drop `redis: true` from the component spec."
+    }
+    precondition {
+      condition     = !local.needs_ollama || var.ollama_url != null
+      error_message = "project '${local.namespace}' has a component with `ollama: true` but `services.ollama` is disabled in config/platform.yaml. Either enable Ollama or drop `ollama: true` from the component spec."
+    }
+    precondition {
+      condition     = length(local.gcp_wif_components) == 0 || var.gcp_wif_pool_provider_audience != ""
+      error_message = "project '${local.namespace}' has component(s) with `gcp_wif.gcp_service_account` set (${join(", ", keys(local.gcp_wif_components))}) but `services.gcp_wif.pool_provider_audience` is empty in config/platform.yaml. Either set the audience (`//iam.googleapis.com/projects/<NUMBER>/locations/global/workloadIdentityPools/<POOL>/providers/<PROVIDER>`) or drop `gcp_wif:` from the component spec(s)."
+    }
+    precondition {
+      condition     = length(local.zitadel_auth_components) == 0 || (var.oauth2_proxy_middlewares != null && length(var.oauth2_proxy_middlewares) > 0)
+      error_message = "project '${local.namespace}' has at least one component with `auth: zitadel` (${join(", ", keys(local.zitadel_auth_components))}) but the cluster-wide oauth2-proxy is not deployed — that gate is gated on `services.zitadel.enabled`. Either turn Zitadel on, or drop the `auth: zitadel` knob."
+    }
+    precondition {
+      condition     = length(var.gcp_wif_service_accounts) == 0 || var.gcp_wif_pool_provider_audience != ""
+      error_message = "project '${local.namespace}' declares gcp_wif_service_accounts (${join(", ", keys(var.gcp_wif_service_accounts))}) but `services.gcp_wif.pool_provider_audience` is empty in config/platform.yaml. Set the audience or drop the entries."
+    }
+    precondition {
+      condition = alltrue([
+        for name in local.operator_secret_literal_set :
+        alltrue([
+          for k in try(var.secrets[name].keys, []) :
+          contains(keys(var.operator_secret_values[name]), k)
+        ])
+      ])
+      error_message = "var.operator_secret_values supplies a literal entry whose inner map is missing a key declared under `secrets.<name>.keys` in the domain yaml. Project '${local.namespace}'. Each literal-mode Secret must cover every yaml-listed key. Add the missing key to terraform.tfvars or remove it from the domain yaml. (Vault-mode entries — yaml `vault: true` — bypass this check; VSO copies whatever's at the Vault path.)"
+    }
+    precondition {
+      condition     = length(var.chart_oidc_apps) == 0 || var.zitadel_issuer_url != null
+      error_message = "project '${local.namespace}' declares `chart_oidc_apps:` entries (${join(", ", keys(var.chart_oidc_apps))}) but `services.zitadel.enabled` is false. Either flip Zitadel on in `config/platform.yaml` or remove the chart_oidc_apps block."
+    }
+    precondition {
+      condition     = length(local.app_components_with_oidc) == 0 || var.zitadel_issuer_url != null
+      error_message = "project '${local.namespace}' has at least one `kind: app` component with `oidc.enabled: true` (${join(", ", keys(local.app_components_with_oidc))}) but `services.zitadel.enabled` is false. Either flip Zitadel on in `config/platform.yaml` or remove the oidc block."
+    }
+    precondition {
+      condition     = length(var.argocd_bootstraps) == 0 || var.argocd_namespace != ""
+      error_message = "project '${local.namespace}' declares `argocd_bootstraps:` entries but `argocd_namespace` is empty. Enable `services.argocd.enabled = true` in `config/platform.yaml` and re-apply."
+    }
+    precondition {
+      condition = alltrue([
+        for _, h in var.argocd_hostnames :
+        try(h.cf_tunnel, true) || try(h.node_ip, "") != ""
+      ])
+      error_message = "every `argocd_hostnames` entry with `cf_tunnel: false` must set `node_ip:` to the node's real public IP — TF emits an unproxied A record there, bypassing the Cloudflare Tunnel. Project '${local.namespace}'."
+    }
   }
 }
 
@@ -1133,13 +1153,6 @@ resource "kubernetes_config_map_v1" "gcp_wif_credential_config" {
 # the GCP-side principalSet binding authorizes, plus the credential-config
 # ConfigMap; the chart sets `serviceAccountName`, renders the projected
 # SA-token volume, and mounts the ConfigMap itself.
-check "gcp_wif_service_accounts_audience_set" {
-  assert {
-    condition     = length(var.gcp_wif_service_accounts) == 0 || var.gcp_wif_pool_provider_audience != ""
-    error_message = "project '${local.namespace}' declares gcp_wif_service_accounts (${join(", ", keys(var.gcp_wif_service_accounts))}) but `services.gcp_wif.pool_provider_audience` is empty in config/platform.yaml. Set the audience or drop the entries."
-  }
-}
-
 resource "kubernetes_service_account_v1" "gcp_wif_standalone" {
   for_each = local.gcp_wif_service_accounts
 
@@ -1241,19 +1254,6 @@ locals {
   operator_secret_vault_paths = {
     for name in local.operator_secret_vault_set :
     name => "tenants/${var.project_config.slug}/${name}"
-  }
-}
-
-check "operator_secret_values_cover_yaml_keys" {
-  assert {
-    condition = alltrue([
-      for name in local.operator_secret_literal_set :
-      alltrue([
-        for k in try(var.secrets[name].keys, []) :
-        contains(keys(var.operator_secret_values[name]), k)
-      ])
-    ])
-    error_message = "var.operator_secret_values supplies a literal entry whose inner map is missing a key declared under `secrets.<name>.keys` in the domain yaml. Project '${local.namespace}'. Each literal-mode Secret must cover every yaml-listed key. Add the missing key to terraform.tfvars or remove it from the domain yaml. (Vault-mode entries — yaml `vault: true` — bypass this check; VSO copies whatever's at the Vault path.)"
   }
 }
 
@@ -1549,13 +1549,8 @@ resource "kubernetes_default_service_account_v1" "this" {
 # them up — no operator-side `kubectl create secret`, no OIDC
 # values committed in plain text.
 
-check "zitadel_enabled_when_chart_oidc_used" {
-  assert {
-    condition     = length(var.chart_oidc_apps) == 0 || var.zitadel_issuer_url != null
-    error_message = "project '${local.namespace}' declares `chart_oidc_apps:` entries (${join(", ", keys(var.chart_oidc_apps))}) but `services.zitadel.enabled` is false. Either flip Zitadel on in `config/platform.yaml` or remove the chart_oidc_apps block."
-  }
-}
-
+# A warning, not a precondition: on a first install the PAT exists only
+# after Zitadel is up, and a hard stop would block that apply.
 check "zitadel_provider_authenticated_when_chart_oidc_used" {
   assert {
     condition     = length(var.chart_oidc_apps) == 0 || var.zitadel_provider_authenticated
@@ -1631,13 +1626,8 @@ module "chart_oidc" {
 # both via the component yaml — see any `kind: app` example for the
 # worked shape.
 
-check "zitadel_issuer_set_when_app_oidc_used" {
-  assert {
-    condition     = length(local.app_components_with_oidc) == 0 || var.zitadel_issuer_url != null
-    error_message = "project '${local.namespace}' has at least one `kind: app` component with `oidc.enabled: true` (${join(", ", keys(local.app_components_with_oidc))}) but `services.zitadel.enabled` is false. Either flip Zitadel on in `config/platform.yaml` or remove the oidc block."
-  }
-}
-
+# A warning, not a precondition: on a first install the PAT exists only
+# after Zitadel is up, and a hard stop would block that apply.
 check "zitadel_pat_set_when_app_oidc_used" {
   assert {
     condition     = length(local.app_components_with_oidc) == 0 || var.zitadel_provider_authenticated
@@ -1959,23 +1949,6 @@ resource "kubernetes_secret_v1" "env_random" {
 #      project namespace, each owning its own Application manifest).
 #
 # When neither is declared, the project has zero Argo CD footprint.
-
-check "argocd_bootstraps_require_argocd_ns" {
-  assert {
-    condition     = length(var.argocd_bootstraps) == 0 || var.argocd_namespace != ""
-    error_message = "project '${local.namespace}' declares `argocd_bootstraps:` entries but `argocd_namespace` is empty. Enable `services.argocd.enabled = true` in `config/platform.yaml` and re-apply."
-  }
-}
-
-check "argocd_hostnames_node_ip_set_when_no_tunnel" {
-  assert {
-    condition = alltrue([
-      for _, h in var.argocd_hostnames :
-      try(h.cf_tunnel, true) || try(h.node_ip, "") != ""
-    ])
-    error_message = "every `argocd_hostnames` entry with `cf_tunnel: false` must set `node_ip:` to the node's real public IP — TF emits an unproxied A record there, bypassing the Cloudflare Tunnel. Project '${local.namespace}'."
-  }
-}
 
 # AppProject — RBAC scope. One per (project, env) when the project
 # has any Argo CD wiring (bootstrap declared OR argocd_hostnames

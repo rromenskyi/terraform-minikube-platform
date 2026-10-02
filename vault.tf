@@ -12,10 +12,12 @@
 #     SSO, scoped to their policy; engine VaultStaticSecret CRs in
 #     tenant namespaces are reconciled by VSO into k8s Secrets.
 
-check "vault_hostname_set" {
-  assert {
-    condition     = !local.platform.services.vault.enabled || local.platform.services.vault.hostname != ""
-    error_message = "services.vault.hostname must be set when vault is enabled (e.g. `vault.example.com`). Drives the IngressRoute Host(...) match. Add the matching `<prefix>: vault` route to your domain yaml so cloudflared sees the hostname through the same project-IngressRoute pipeline as Stalwart and oauth2-proxy."
+resource "terraform_data" "vault_checks" {
+  lifecycle {
+    precondition {
+      condition     = !local.platform.services.vault.enabled || local.platform.services.vault.hostname != ""
+      error_message = "services.vault.hostname must be set when vault is enabled (e.g. `vault.example.com`). Drives the IngressRoute Host(...) match. Add the matching `<prefix>: vault` route to your domain yaml so cloudflared sees the hostname through the same project-IngressRoute pipeline as Stalwart and oauth2-proxy."
+    }
   }
 }
 

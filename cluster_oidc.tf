@@ -47,10 +47,16 @@
 #      issuer, with audience and attribute mapping per the consumer's
 #      need. Outside this engine's scope.
 
-check "cluster_oidc_external_hostname_set" {
-  assert {
-    condition     = !local.platform.services.cluster_oidc.enabled || local.platform.services.cluster_oidc.external_hostname != ""
-    error_message = "services.cluster_oidc.enabled = true requires services.cluster_oidc.external_hostname to be set (e.g. `k8s-oidc.example.com`). The hostname must match the `--service-account-issuer` value the operator configured on kube-apiserver, otherwise external verifiers will reject tokens with issuer/discovery URL mismatch."
+resource "terraform_data" "cluster_oidc_checks" {
+  lifecycle {
+    precondition {
+      condition     = !local.platform.services.cluster_oidc.enabled || local.platform.services.cluster_oidc.external_hostname != ""
+      error_message = "services.cluster_oidc.enabled = true requires services.cluster_oidc.external_hostname to be set (e.g. `k8s-oidc.example.com`). The hostname must match the `--service-account-issuer` value the operator configured on kube-apiserver, otherwise external verifiers will reject tokens with issuer/discovery URL mismatch."
+    }
+    precondition {
+      condition     = !local.platform.services.cluster_oidc.enabled || local._cluster_oidc_zone_id != ""
+      error_message = "services.cluster_oidc.external_hostname `${local.platform.services.cluster_oidc.external_hostname}` does not match any zone declared in `config/domains/*.yaml`. Add the parent domain's yaml (with `cloudflare_zone_id`) before enabling cluster_oidc."
+    }
   }
 }
 
@@ -388,12 +394,6 @@ locals {
   ) : ""
 }
 
-check "cluster_oidc_hostname_in_known_zone" {
-  assert {
-    condition     = !local.platform.services.cluster_oidc.enabled || local._cluster_oidc_zone_id != ""
-    error_message = "services.cluster_oidc.external_hostname `${local.platform.services.cluster_oidc.external_hostname}` does not match any zone declared in `config/domains/*.yaml`. Add the parent domain's yaml (with `cloudflare_zone_id`) before enabling cluster_oidc."
-  }
-}
 
 resource "cloudflare_dns_record" "cluster_oidc_proxy" {
   for_each = local._cluster_oidc_enabled

@@ -8,19 +8,19 @@
 # provider already uses for tunnel + DNS records). Engine does not
 # generate the token; operator provisions it once in CF dashboard.
 
-check "dns01_cloudflare_token_present" {
-  assert {
-    condition     = !local.platform.services.dns01_cloudflare.enabled || var.cloudflare_api_token != ""
-    error_message = "services.dns01_cloudflare.enabled = true requires TF_VAR_cloudflare_api_token in operator's .env (same token the cloudflare provider uses for tunnel + DNS records). Empty token would emit a Secret with empty data — DNS-01 challenges would fail at ACME time with `forbidden` from the CF API."
+resource "terraform_data" "cert_manager_checks" {
+  lifecycle {
+    precondition {
+      condition     = !local.platform.services.dns01_cloudflare.enabled || var.cloudflare_api_token != ""
+      error_message = "services.dns01_cloudflare.enabled = true requires TF_VAR_cloudflare_api_token in operator's .env (same token the cloudflare provider uses for tunnel + DNS records). Empty token would emit a Secret with empty data — DNS-01 challenges would fail at ACME time with `forbidden` from the CF API."
+    }
+    precondition {
+      condition     = !local.platform.services.dns01_cloudflare.enabled || length(local.platform.services.dns01_cloudflare.dns_zones) > 0
+      error_message = "services.dns01_cloudflare.enabled = true requires services.dns01_cloudflare.dns_zones non-empty (e.g. `[example.com]`). Without zones, the dns01 solver renders but cert-manager has nothing to match Certificates against — every DNS-01 challenge would fall through to HTTP-01 (defeating the point of enabling dns01)."
+    }
   }
 }
 
-check "dns01_cloudflare_zones_present" {
-  assert {
-    condition     = !local.platform.services.dns01_cloudflare.enabled || length(local.platform.services.dns01_cloudflare.dns_zones) > 0
-    error_message = "services.dns01_cloudflare.enabled = true requires services.dns01_cloudflare.dns_zones non-empty (e.g. `[example.com]`). Without zones, the dns01 solver renders but cert-manager has nothing to match Certificates against — every DNS-01 challenge would fall through to HTTP-01 (defeating the point of enabling dns01)."
-  }
-}
 
 resource "kubernetes_secret_v1" "cloudflare_acme_token" {
   for_each = local.platform.services.dns01_cloudflare.enabled ? toset(["enabled"]) : toset([])

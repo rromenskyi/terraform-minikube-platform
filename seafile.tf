@@ -6,33 +6,29 @@
 # wired into the main module via client_id / client_secret outputs
 # (same pattern as `module.argocd_oidc` → `module.argocd`).
 
-check "seafile_requires_mysql" {
-  assert {
-    condition     = !local.platform.services.seafile.enabled || local.platform.services.mysql.enabled
-    error_message = "services.seafile.enabled = true requires services.mysql.enabled = true (Seafile 13 CE is MySQL-only — Postgres unsupported upstream)."
+resource "terraform_data" "seafile_checks" {
+  lifecycle {
+    precondition {
+      condition     = !local.platform.services.seafile.enabled || local.platform.services.mysql.enabled
+      error_message = "services.seafile.enabled = true requires services.mysql.enabled = true (Seafile 13 CE is MySQL-only — Postgres unsupported upstream)."
+    }
+    precondition {
+      condition     = !local.platform.services.seafile.enabled || local.platform.services.redis.enabled
+      error_message = "services.seafile.enabled = true requires services.redis.enabled = true (Seafile 13 default cache backend)."
+    }
+    precondition {
+      condition     = !local.platform.services.seafile.enabled || local.platform.services.seafile.external_hostname != ""
+      error_message = "services.seafile.enabled = true requires services.seafile.external_hostname to be set (e.g. `cloud.example.com`). Empty would emit an IngressRoute with no Host matcher and Seahub generates broken self-referential URLs."
+    }
+    precondition {
+      condition     = !local.platform.services.seafile.enabled || local.platform.services.seafile.admin_email != ""
+      error_message = "services.seafile.enabled = true requires services.seafile.admin_email to be set. Used as the bootstrap super-user email (Seafile 13 init script writes this into the DB on first boot)."
+    }
   }
 }
 
-check "seafile_requires_redis" {
-  assert {
-    condition     = !local.platform.services.seafile.enabled || local.platform.services.redis.enabled
-    error_message = "services.seafile.enabled = true requires services.redis.enabled = true (Seafile 13 default cache backend)."
-  }
-}
 
-check "seafile_external_hostname_set" {
-  assert {
-    condition     = !local.platform.services.seafile.enabled || local.platform.services.seafile.external_hostname != ""
-    error_message = "services.seafile.enabled = true requires services.seafile.external_hostname to be set (e.g. `cloud.example.com`). Empty would emit an IngressRoute with no Host matcher and Seahub generates broken self-referential URLs."
-  }
-}
 
-check "seafile_admin_email_set" {
-  assert {
-    condition     = !local.platform.services.seafile.enabled || local.platform.services.seafile.admin_email != ""
-    error_message = "services.seafile.enabled = true requires services.seafile.admin_email to be set. Used as the bootstrap super-user email (Seafile 13 init script writes this into the DB on first boot)."
-  }
-}
 
 module "seafile_oidc" {
   source     = "./modules/zitadel-app"

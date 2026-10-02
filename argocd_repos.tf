@@ -113,32 +113,34 @@ locals {
   )
 }
 
-# Plan-time guard: catch entries that set both ssh + app credentials
-# (ambiguous which the engine should emit) or app-mode entries missing
-# the ID fields (engine would emit a Secret that Argo CD rejects at
-# runtime — push the failure to plan instead).
-check "argocd_bootstraps_credential_shape" {
-  assert {
-    condition = alltrue([
-      for _, project in local.projects : alltrue([
-        for _, entry in try(project.argocd_bootstraps, {}) :
-        !(try(entry.repo_ssh_key_id, "") != "" && try(entry.repo_app_pem_id, "") != "")
+resource "terraform_data" "argocd_repos_checks" {
+  lifecycle {
+    # Plan-time guard: catch entries that set both ssh + app credentials
+    # (ambiguous which the engine should emit) or app-mode entries missing
+    # the ID fields (engine would emit a Secret that Argo CD rejects at
+    # runtime — push the failure to plan instead).
+    precondition {
+      condition = alltrue([
+        for _, project in local.projects : alltrue([
+          for _, entry in try(project.argocd_bootstraps, {}) :
+          !(try(entry.repo_ssh_key_id, "") != "" && try(entry.repo_app_pem_id, "") != "")
+        ])
       ])
-    ])
-    error_message = "argocd_bootstraps entry sets BOTH repo_ssh_key_id and repo_app_pem_id — pick one credential mode per entry."
-  }
+      error_message = "argocd_bootstraps entry sets BOTH repo_ssh_key_id and repo_app_pem_id — pick one credential mode per entry."
+    }
 
-  assert {
-    condition = alltrue([
-      for _, project in local.projects : alltrue([
-        for _, entry in try(project.argocd_bootstraps, {}) :
-        try(entry.repo_app_pem_id, "") == "" || (
-          try(entry.repo_app_id, "") != "" &&
-          try(entry.repo_app_installation_id, "") != ""
-        )
+    precondition {
+      condition = alltrue([
+        for _, project in local.projects : alltrue([
+          for _, entry in try(project.argocd_bootstraps, {}) :
+          try(entry.repo_app_pem_id, "") == "" || (
+            try(entry.repo_app_id, "") != "" &&
+            try(entry.repo_app_installation_id, "") != ""
+          )
+        ])
       ])
-    ])
-    error_message = "argocd_bootstraps entry with repo_app_pem_id must also set repo_app_id and repo_app_installation_id."
+      error_message = "argocd_bootstraps entry with repo_app_pem_id must also set repo_app_id and repo_app_installation_id."
+    }
   }
 }
 

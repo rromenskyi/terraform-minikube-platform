@@ -31,6 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Images pinned by tag and digest: `whoami` (v1.12.0), `echo` (0.9.2),
   Speaches default (0.8.3-cpu). `modules/zitadel` gains `pat_broker_image`
   (default `bitnami/kubectl:latest` pinned by digest).
+- Configuration `check` blocks are now `terraform_data` preconditions, so a
+  wrong config fails the plan instead of printing a warning. The two Zitadel
+  PAT checks stay warnings (the PAT only exists after Zitadel is up). An
+  unknown component `kind` is rejected instead of rendering as a Deployment.
 
 ### Added
 - **`modules/logging` — cluster log aggregation (VictoriaLogs + Vector).**

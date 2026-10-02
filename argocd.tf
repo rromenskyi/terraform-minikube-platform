@@ -12,19 +12,19 @@
 #   - Domain yaml routes `argocd: argocd` (or whatever sub the
 #     operator picks) to that external component.
 
-check "argocd_requires_zitadel" {
-  assert {
-    condition     = !local.platform.services.argocd.enabled || local.platform.services.zitadel.enabled
-    error_message = "services.argocd.enabled = true requires services.zitadel.enabled = true (Argo CD authentication is OIDC-only in this stack — local admin is intentionally not exposed publicly)."
+resource "terraform_data" "argocd_checks" {
+  lifecycle {
+    precondition {
+      condition     = !local.platform.services.argocd.enabled || local.platform.services.zitadel.enabled
+      error_message = "services.argocd.enabled = true requires services.zitadel.enabled = true (Argo CD authentication is OIDC-only in this stack — local admin is intentionally not exposed publicly)."
+    }
+    precondition {
+      condition     = !local.platform.services.argocd.enabled || local.platform.services.argocd.hostname != ""
+      error_message = "services.argocd.hostname must be set when argocd is enabled (e.g. `argocd.example.com`). Drives `server.config.url` and the OIDC redirect URI registration in Zitadel."
+    }
   }
 }
 
-check "argocd_hostname_set" {
-  assert {
-    condition     = !local.platform.services.argocd.enabled || local.platform.services.argocd.hostname != ""
-    error_message = "services.argocd.hostname must be set when argocd is enabled (e.g. `argocd.example.com`). Drives `server.config.url` and the OIDC redirect URI registration in Zitadel."
-  }
-}
 
 # Root-owned namespace so the OIDC Secret (created by
 # `module.argocd_oidc`) lands BEFORE the chart's `create_namespace`
