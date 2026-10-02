@@ -598,6 +598,9 @@ resource "kubernetes_job_v1" "mysql_setup" {
               "CREATE DATABASE IF NOT EXISTS \\`${local.db_name}\\`;",
               "CREATE USER IF NOT EXISTS '${local.db_user}'@'%' ",
               "IDENTIFIED BY '${values(random_password.db)[0].result}';",
+              # Re-assert the password: CREATE ... IF NOT EXISTS leaves an
+              # existing user's old one (e.g. after state was regenerated).
+              "ALTER USER '${local.db_user}'@'%' IDENTIFIED BY '${values(random_password.db)[0].result}';",
               "GRANT ALL PRIVILEGES ON \\`${local.db_name}\\`.* TO '${local.db_user}'@'%';",
               "FLUSH PRIVILEGES;\"",
             ])

@@ -49,6 +49,27 @@ resource "random_password" "root" {
   special = false
 }
 
+# mysqld runs this file on every start. The image sets the root password
+# only when it initialises an empty data dir, so after state is
+# regenerated (or the password rotated) the Secret and the server would
+# disagree; re-asserting it here keeps them in sync.
+resource "kubernetes_secret_v1" "mysql_root_init" {
+  for_each = local.instances
+
+  metadata {
+    name      = "mysql-root-init"
+    namespace = var.namespace
+    labels    = local.tags
+  }
+
+  data = {
+    "init.sql" = <<-SQL
+      ALTER USER IF EXISTS 'root'@'%' IDENTIFIED BY '${random_password.root["enabled"].result}';
+      ALTER USER IF EXISTS 'root'@'localhost' IDENTIFIED BY '${random_password.root["enabled"].result}';
+    SQL
+  }
+}
+
 resource "kubernetes_secret_v1" "mysql_root" {
   for_each = local.instances
 
@@ -155,6 +176,7 @@ resource "kubernetes_stateful_set_v1" "mysql" {
         container {
           name  = "mysql"
           image = "mysql:8.4.11"
+          args  = ["mysqld", "--init-file=/etc/mysql-init/init.sql"]
 
           port {
             container_port = 3306
@@ -179,6 +201,12 @@ resource "kubernetes_stateful_set_v1" "mysql" {
           volume_mount {
             name       = "data"
             mount_path = "/var/lib/mysql"
+          }
+
+          volume_mount {
+            name       = "root-init"
+            mount_path = "/etc/mysql-init"
+            read_only  = true
           }
 
           # Startup probe: MySQL 8.0 first init can take 60-90s.
@@ -208,6 +236,14 @@ resource "kubernetes_stateful_set_v1" "mysql" {
             period_seconds    = 5
             failure_threshold = 3
             timeout_seconds   = 5
+          }
+        }
+
+        volume {
+          name = "root-init"
+          secret {
+            secret_name  = kubernetes_secret_v1.mysql_root_init["enabled"].metadata[0].name
+            default_mode = "0444"
           }
         }
 

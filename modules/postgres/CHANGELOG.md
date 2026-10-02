@@ -7,6 +7,11 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Superuser password is re-asserted after start over the local socket
+  (`postStart`, never fails the container); the image sets it only on an
+  empty data dir.
+
 ### Changed
 - File layout split into `main.tf` / `variables.tf` / `outputs.tf` per AGENT.md
   module conventions. Pure file reorganisation — no resource, input, output, or

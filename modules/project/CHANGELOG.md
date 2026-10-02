@@ -7,6 +7,10 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Tenant MySQL setup re-asserts the user's password (`ALTER USER`);
+  `CREATE USER IF NOT EXISTS` alone kept an old one.
+
 ### Added
 - `rate_limits:` component key: per-path Traefik RateLimit middleware on the
   whole-host routes, counted per `CF-Connecting-IP`.

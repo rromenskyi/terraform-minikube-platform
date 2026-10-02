@@ -259,6 +259,24 @@ resource "kubernetes_stateful_set_v1" "postgres" {
             failure_threshold = 3
             timeout_seconds   = 5
           }
+
+          # The image sets the superuser password only when it initialises an
+          # empty data dir; after state is regenerated (or the password
+          # rotated) the Secret and the server would disagree. Re-assert it
+          # over the local socket (trust auth) once the server is up. The
+          # password goes through stdin, not argv. Never fails the container.
+          lifecycle {
+            post_start {
+              exec {
+                command = ["sh", "-c", <<-EOT
+                  for i in $(seq 1 120); do pg_isready -q -h /var/run/postgresql && break; sleep 1; done
+                  echo "ALTER ROLE postgres PASSWORD :'pw'" | psql -q -h /var/run/postgresql -U postgres -d postgres -v pw="$POSTGRES_PASSWORD" >/dev/null 2>&1
+                  exit 0
+                EOT
+                ]
+              }
+            }
+          }
         }
 
         volume {

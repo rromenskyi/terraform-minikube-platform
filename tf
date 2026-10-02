@@ -771,7 +771,8 @@ remote tfstate in B2 if the remote backend was ever configured (local backend ov
 local Terraform state — ${SCRIPT_DIR}/terraform.tfstate, ${SCRIPT_DIR}/terraform.tfstate.backup, ${SCRIPT_DIR}/.terraform.tfstate.lock.info" \
       "host volume data at ${TF_VAR_host_volume_path:-${HOST_VOLUME_PATH:-/data/vol}} on ${TF_VAR_ssh_host:-?} — k3s hostPath PVs survive because only the k3s control plane / kubelet are uninstalled, not the directory tree
 the SSH host itself — OS, user accounts, other services running on ${TF_VAR_ssh_host:-?} are untouched
-Cloudflare tunnel \"${CLOUDFLARE_TUNNEL_NAME}\" and its DNS CNAMEs — bootstrap does NOT touch Cloudflare. If you want to destroy them, run './tf cloudflare-purge' as a deliberate separate step" \
+Cloudflare zones and DNS records outside Terraform — but NOTE: the Cloudflare tunnel \"${CLOUDFLARE_TUNNEL_NAME}\" and its Terraform-managed DNS CNAMEs ARE destroyed by the \`terraform destroy\` step and recreated (new tunnel ID) by the apply
+database / mail credentials — Terraform state is reset, so passwords are regenerated; MySQL/Postgres re-assert the new superuser passwords on start and tenant setup Jobs re-assert theirs, but other app-held secrets stored in the volumes keep their old values" \
       "$@"
 
     echo "=== Single-phase Bootstrap Mode (k3s / Option B) ==="
