@@ -37,6 +37,7 @@ locals {
         memory_limit   = "16Gi"
         cpu_request    = "200m"
         cpu_limit      = "10"
+        context_length = null # null = module default
         # Optional GPU offload. Default null = CPU-only StatefulSet.
         # Override in config/platform.yaml with the full object shape
         # (image, device_path, supplemental_groups, env) — see

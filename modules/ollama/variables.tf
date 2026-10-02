@@ -75,6 +75,7 @@ variable "context_length" {
   EOT
   type        = number
   default     = 8192
+  nullable    = false
 }
 
 variable "keep_alive" {
@@ -159,6 +160,11 @@ variable "gpu" {
     # is null instead of erroring on the missing attribute.
     condition     = try(contains(["Directory", "CharDevice", "BlockDevice", "File"], var.gpu.device_type), true)
     error_message = "ollama gpu.device_type must be one of: Directory, CharDevice, BlockDevice, File. Mirrors kubelet hostPath types."
+  }
+
+  validation {
+    condition     = var.gpu == null || length(setintersection(keys(try(var.gpu.env, {})), ["OLLAMA_HOST", "OLLAMA_CONTEXT_LENGTH", "OLLAMA_KEEP_ALIVE"])) == 0
+    error_message = "gpu.env must not set OLLAMA_HOST, OLLAMA_CONTEXT_LENGTH or OLLAMA_KEEP_ALIVE: the module sets them (use context_length / keep_alive); a duplicate env name silently overrides the module's value."
   }
 }
 

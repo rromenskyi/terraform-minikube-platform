@@ -24,6 +24,7 @@ module "ollama" {
   memory_limit   = local.platform.services.ollama.memory_limit
   cpu_request    = local.platform.services.ollama.cpu_request
   cpu_limit      = local.platform.services.ollama.cpu_limit
+  context_length = local.platform.services.ollama.context_length
 
   # Optional GPU offload. Whole `gpu:` block in platform.yaml is passed
   # through verbatim. Null (the default) keeps the StatefulSet on its
