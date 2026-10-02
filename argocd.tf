@@ -108,6 +108,8 @@ module "argocd" {
 
   controller_resources = local.platform.services.argocd.controller_resources
   built_from_apps      = local.platform.services.argocd.built_from_apps
+
+  slack_notifications_vault_path = local.platform.services.argocd.slack_notifications_vault_path
 }
 
 output "argocd_url" {

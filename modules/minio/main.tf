@@ -46,14 +46,17 @@ locals {
   bucket_targets        = var.enabled ? var.buckets : {}
 
   # Flattened (bucket, consumer) pairs for `for_each` on the
-  # per-consumer credential resources. Key is `<bucket>/<secret_name>`
-  # so the same secret_name can repeat across different buckets
-  # without collision.
+  # per-consumer credential resources. Key is
+  # `<bucket>/<namespace>/<secret_name>`, so the same secret_name can
+  # repeat across buckets and namespaces. `env_id` names the Job env vars
+  # carrying the pair's keys; a hash, because upper-casing and
+  # `-` → `_` makes different pairs collide (`a-b`+`c` vs `a`+`b-c`).
   bucket_consumers = {
     for pair in flatten([
       for bucket_name, bucket in local.bucket_targets : [
         for c in bucket.consumers : {
-          key         = "${bucket_name}/${c.secret_name}"
+          key         = "${bucket_name}/${c.namespace}/${c.secret_name}"
+          env_id      = upper(substr(sha256("${bucket_name}/${c.namespace}/${c.secret_name}"), 0, 16))
           bucket_name = bucket_name
           namespace   = c.namespace
           secret_name = c.secret_name
@@ -627,7 +630,9 @@ resource "kubernetes_job_v1" "buckets" {
   ]
 
   metadata {
-    name      = "minio-buckets-${formatdate("YYYYMMDDhhmmss", timestamp())}"
+    # Named by the provisioning input: a new Job runs only when buckets or
+    # consumers change (a timestamp name re-ran it on every apply).
+    name      = "minio-buckets-${substr(sha256(jsonencode([local.bucket_targets, keys(local.bucket_consumers)])), 0, 8)}"
     namespace = var.namespace
     labels = merge(local.tags, {
       "app.kubernetes.io/name"      = "minio"
@@ -636,8 +641,7 @@ resource "kubernetes_job_v1" "buckets" {
   }
 
   spec {
-    backoff_limit              = 4
-    ttl_seconds_after_finished = 600
+    backoff_limit = 4
 
     template {
       metadata {
@@ -674,14 +678,12 @@ resource "kubernetes_job_v1" "buckets" {
             value = local.endpoint
           }
 
-          # One env var per consumer for AK + SK. Job-side script
-          # references them by `<bucket>_<secret_name>`-derived
-          # variable name so the inner loop stays a simple `eval`-free
-          # lookup.
+          # One env var per consumer for AK + SK, named by the pair's
+          # `env_id` so the script's lookup stays a plain printenv.
           dynamic "env" {
             for_each = local.bucket_consumers
             content {
-              name  = "CONSUMER_${replace(upper(env.value.bucket_name), "-", "_")}_${replace(upper(env.value.secret_name), "-", "_")}_AK"
+              name  = "CONSUMER_${env.value.env_id}_AK"
               value = random_password.consumer_access_key[env.key].result
             }
           }
@@ -689,7 +691,7 @@ resource "kubernetes_job_v1" "buckets" {
           dynamic "env" {
             for_each = local.bucket_consumers
             content {
-              name  = "CONSUMER_${replace(upper(env.value.bucket_name), "-", "_")}_${replace(upper(env.value.secret_name), "-", "_")}_SK"
+              name  = "CONSUMER_${env.value.env_id}_SK"
               value = random_password.consumer_secret_key[env.key].result
             }
           }
@@ -723,8 +725,8 @@ resource "kubernetes_job_v1" "buckets" {
                 for _, c in local.bucket_consumers :
                 join("\n", [
                   "BUCKET=\"${c.bucket_name}\"",
-                  "AK_VAR=\"CONSUMER_${replace(upper(c.bucket_name), "-", "_")}_${replace(upper(c.secret_name), "-", "_")}_AK\"",
-                  "SK_VAR=\"CONSUMER_${replace(upper(c.bucket_name), "-", "_")}_${replace(upper(c.secret_name), "-", "_")}_SK\"",
+                  "AK_VAR=\"CONSUMER_${c.env_id}_AK\"",
+                  "SK_VAR=\"CONSUMER_${c.env_id}_SK\"",
                   "AK=$(printenv \"$AK_VAR\")",
                   "SK=$(printenv \"$SK_VAR\")",
                   "POLICY_DOC=$(mktemp)",

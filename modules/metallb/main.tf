@@ -148,10 +148,9 @@ resource "kubectl_manifest" "ip_pool" {
 }
 
 resource "kubectl_manifest" "l2_advertisement" {
-  for_each = var.enabled ? {
-    for k, v in var.pools : k => v
-    if length(v.l2_node_selectors) > 0
-  } : {}
+  # Every pool needs one: without an L2Advertisement MetalLB assigns the
+  # pool's IPs but never announces them. No selectors = every speaker.
+  for_each = var.enabled ? var.pools : {}
 
   depends_on = [kubectl_manifest.ip_pool]
 
@@ -163,14 +162,16 @@ resource "kubectl_manifest" "l2_advertisement" {
       namespace = var.namespace
       labels    = local.tags
     }
-    spec = {
-      ipAddressPools = [each.key]
-      nodeSelectors = [
-        for sel in each.value.l2_node_selectors : {
-          matchLabels = sel
-        }
-      ]
-    }
+    spec = merge(
+      { ipAddressPools = [each.key] },
+      length(each.value.l2_node_selectors) == 0 ? {} : {
+        nodeSelectors = [
+          for sel in each.value.l2_node_selectors : {
+            matchLabels = sel
+          }
+        ]
+      },
+    )
   })
 }
 

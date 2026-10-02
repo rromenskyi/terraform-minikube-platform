@@ -44,8 +44,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one file per concern (databases, secrets, components, ingress, …;
   deployment, relay, listeners, dns, …; statefulset, bootstrap, oidc, vso, …).
   Resource addresses are unchanged (plan: no changes).
+- **BREAKING** `modules/argocd`: Slack deploy notifications are opt-in via
+  `slack_notifications_vault_path` (root: `services.argocd.slack_notifications_vault_path`).
+  Migration: set it to the KV path holding `slack-webhook` (previously
+  hardcoded `platform/slack/argocd-notifications`) to keep notifications.
 
 ### Fixed
+- `modules/component` git-sync:
+- `modules/metallb`: every pool gets an L2Advertisement; a pool without
+  `l2_node_selectors` was assigned but never announced.
+- `modules/minio`: the bucket Job is named by its input hash instead of
+  `timestamp()` (no re-run on every apply); consumer keys include the
+  namespace and Job env names are hashed, so distinct consumers no longer
+  collide.
+- `modules/seafile`: the generated Seahub settings (public URL, proxy
+  headers, Zitadel OIDC) were never delivered. They now ship in a Secret
+  that a postStart hook hooks into `seahub_settings.py` once.
 - `modules/component` git-sync: the main container mounted the `current`
   symlink by subPath, which pins the worktree present at container start.
   After the next sync that worktree was deleted, the liveness probe failed

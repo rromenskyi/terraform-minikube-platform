@@ -87,3 +87,9 @@ variable "platform_apps" {
   default  = []
   nullable = false
 }
+
+variable "slack_notifications_vault_path" {
+  description = "KV-v2 path (mount `secret`) holding the Slack incoming-webhook URL under key `slack-webhook`, e.g. `platform/slack/argocd-notifications`. Set → deploy notifications go to Slack and VSO syncs `argocd-notifications-secret` from this path (needs Vault + VSO). Empty → no Slack notifier; the chart's notifications defaults apply."
+  type        = string
+  default     = ""
+}

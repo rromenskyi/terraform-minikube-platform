@@ -63,6 +63,9 @@ locals {
         # Chart-shaped `controller.resources`; {} = chart default.
         controller_resources = {}
         built_from_apps      = []
+        # KV-v2 path with the Slack webhook (key `slack-webhook`); "" = no
+        # Slack deploy notifications.
+        slack_notifications_vault_path = ""
       }
       # Maintenance window defaults = the addons module's (reboot any time,
       # any day, UTC). Operators narrow it in config/platform.yaml —
@@ -556,11 +559,11 @@ locals {
   # about an env. Auto-generated CNAMEs for `envs.*.routes:` are emitted
   # separately by cloudflare.tf via `local.all_hostnames`.
   #
-  # for_each key = "{domain_key}|{type}|{name}|{md5(content|data)}". Re-
-  # ordering the YAML list does not churn the plan; editing content
-  # rotates only that record's key (replace, not in-place update — CF
-  # doesn't allow changing the value of an existing record without a
-  # delete+create, so this matches reality).
+  # for_each key = "{domain_key}|{type}|{name}|{md5(content|data)}". The
+  # content is part of the key because a zone can hold several records of
+  # one type and name (TXT at `@`, multiple MX). Re-ordering the YAML list
+  # does not churn the plan; editing a record's content replaces that one
+  # record (delete + create) instead of updating it in place.
   manual_dns_records = {
     for entry in flatten([
       for domain_key, cfg in local._domain_configs : [

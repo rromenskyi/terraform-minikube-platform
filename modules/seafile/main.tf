@@ -48,19 +48,16 @@ terraform {
 # tunnel boundary; Seahub is plain HTTP behind it).
 
 locals {
-  enabled  = var.enabled
-  set      = local.enabled ? toset(["enabled"]) : toset([])
-  oidc_set = (var.enabled && var.oidc_client_id != "") ? toset(["enabled"]) : toset([])
+  enabled = var.enabled
+  set     = local.enabled ? toset(["enabled"]) : toset([])
 
   tags = module.label.tags
 
-  # Seahub Python settings file — OAuth/OIDC, public service URL,
-  # CSRF trusted origins. Mounted as a ConfigMap subPath overlay so
-  # operator-side rotations (e.g. flipping a claim mapping) trigger
-  # a Pod re-roll via the checksum annotation.
+  # Seahub settings — OAuth/OIDC, public service URL, CSRF trusted
+  # origins. Delivered through the seahub-extra Secret; its checksum
+  # annotation rolls the pod on change.
   seahub_settings_py = <<-EOT
-    # Managed by terraform — modules/seafile/main.tf. Edits here are
-    # overwritten on every `./tf apply`.
+    # Managed by terraform (modules/seafile, seahub-extra Secret).
 
     # Public-facing URL — generated download links / OAuth callback
     # construction use this prefix.
@@ -189,12 +186,25 @@ resource "kubernetes_secret_v1" "bootstrap" {
   }
 }
 
-# NOTE: seahub_settings.py was emitted as a ConfigMap and mounted via
-# subPath overlay; that conflicts with Seafile's first-boot bootstrap
-# which writes the file (populates DB creds, SECRET_KEY, etc.) — a
-# read-only overlay kills bootstrap. Deferred until a postStart-append
-# pattern lands. OIDC configured via Seahub admin UI after first
-# password login.
+# Platform settings for Seahub (public URL, proxy headers, Zitadel OIDC).
+# Seafile's first boot writes `seahub_settings.py` itself (DB creds,
+# SECRET_KEY), so the file cannot be mounted over. The pod's postStart
+# appends one line to it that executes this file; being last, these
+# values win over anything set earlier in the file. A Secret, because
+# the OIDC client secret is in it.
+resource "kubernetes_secret_v1" "seahub_extra" {
+  for_each = local.set
+
+  metadata {
+    name      = "seafile-seahub-extra"
+    namespace = kubernetes_namespace_v1.this["enabled"].metadata[0].name
+    labels    = local.tags
+  }
+
+  data = {
+    "seahub_settings_extra.py" = local.seahub_settings_py
+  }
+}
 
 # ── Persistent volume for /shared ───────────────────────────────────────────
 
@@ -363,7 +373,8 @@ resource "kubernetes_deployment_v1" "this" {
         annotations = {
           # Per the platform consumer-checksum convention — re-roll
           # the pod when bootstrap secret rotates.
-          "checksum/bootstrap" = sha256(jsonencode(kubernetes_secret_v1.bootstrap["enabled"].data))
+          "checksum/bootstrap"    = sha256(jsonencode(kubernetes_secret_v1.bootstrap["enabled"].data))
+          "checksum/seahub-extra" = sha256(local.seahub_settings_py)
         }
       }
       spec {
@@ -414,16 +425,31 @@ resource "kubernetes_deployment_v1" "this" {
             mount_path = "/shared"
           }
 
-          # NOTE: seahub_settings.py overlay via ConfigMap subPath
-          # was attempted but conflicts with Seafile's first-boot
-          # bootstrap which WRITES the file (populates DB creds,
-          # SECRET_KEY, etc.). Read-only mount kills bootstrap with
-          # "OSError: [Errno 30] Read-only file system". Canonical
-          # workaround is a postStart hook that APPENDS our config
-          # after bootstrap settles — deferred. For MVP, operator
-          # configures OIDC manually via Seahub admin UI after first
-          # password login (bootstrap admin password is in TF
-          # output). See modules/seafile/README.md.
+          volume_mount {
+            name       = "seahub-extra"
+            mount_path = "/etc/seafile-extra"
+            read_only  = true
+          }
+
+          # Hooks the seahub-extra Secret into seahub_settings.py once
+          # (see the Secret). On a brand-new volume the file appears only
+          # after bootstrap, so the first boot needs one pod restart for
+          # these settings to take effect. Never fails the container.
+          lifecycle {
+            post_start {
+              exec {
+                command = ["/bin/sh", "-c", <<-EOT
+                  f=/shared/seafile/conf/seahub_settings.py
+                  line='exec(open("/etc/seafile-extra/seahub_settings_extra.py").read())  # managed by terraform'
+                  i=0
+                  while [ ! -f "$f" ] && [ $i -lt 600 ]; do sleep 2; i=$((i+2)); done
+                  [ -f "$f" ] && ! grep -qF "$line" "$f" && printf '\n%s\n' "$line" >> "$f"
+                  exit 0
+                EOT
+                ]
+              }
+            }
+          }
 
           # Seafile's all-in-one bootstrap is slow on first start
           # (MySQL schema population, Django migrations, ccnet init,
@@ -457,6 +483,13 @@ resource "kubernetes_deployment_v1" "this" {
           name = "data"
           persistent_volume_claim {
             claim_name = kubernetes_persistent_volume_claim_v1.data["enabled"].metadata[0].name
+          }
+        }
+
+        volume {
+          name = "seahub-extra"
+          secret {
+            secret_name = kubernetes_secret_v1.seahub_extra["enabled"].metadata[0].name
           }
         }
 

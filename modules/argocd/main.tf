@@ -44,7 +44,7 @@ locals {
   # Chart values. `commonLabels` propagates to every chart-rendered
   # resource. Server-config is built conditionally so empty OIDC
   # inputs don't render a half-shaped `oidc.config` block.
-  values = yamlencode({
+  values = yamlencode(merge({
     global = {
       # Chart 10+ creates NetworkPolicies by default. The platform runs
       # one trust boundary without NetworkPolicy; policies on Argo CD alone
@@ -150,29 +150,31 @@ locals {
       }
     }
 
-    # Deploy notifications (operator ruling 2026-07-06: Slack, not Telegram).
-    # This block ALSO adopts config that previously drifted outside TF — the
-    # app-deployed template/trigger were hand-applied to the live CM; from
-    # here on the chart renders them. The Slack INCOMING WEBHOOK URL is a
-    # secret and is NOT in TF: the chart-managed secret is disabled and a
-    # VaultStaticSecret (below) syncs
-    # `secret/platform/slack/argocd-notifications` (key `slack-webhook`)
-    # into `argocd-notifications-secret`.
-    notifications = {
-      argocdUrl = "https://${var.hostname}"
-      notifiers = {
-        # Slack INCOMING WEBHOOK (operator ruling 2026-07-06) — the channel is
-        # baked into the URL, which lives in Vault (key slack-webhook), never
-        # in this repo.
-        "service.webhook.slack-deploys" = <<-EOT
+  }, local.notifications_values))
+}
+
+locals {
+  # Slack deploy notifications, rendered only when a Vault path holds the
+  # incoming-webhook URL (key `slack-webhook`). The chart's own
+  # notifications secret is disabled; the VaultStaticSecret below syncs
+  # `argocd-notifications-secret` from that path.
+  notifications_values = {
+    for k, v in {
+      notifications = {
+        argocdUrl = "https://${var.hostname}"
+        notifiers = {
+          # Slack INCOMING WEBHOOK (operator ruling 2026-07-06) — the channel is
+          # baked into the URL, which lives in Vault (key slack-webhook), never
+          # in this repo.
+          "service.webhook.slack-deploys" = <<-EOT
           url: $slack-webhook
           headers:
             - name: Content-Type
               value: application/json
         EOT
-      }
-      templates = {
-        "template.app-deployed" = <<-EOT
+        }
+        templates = {
+          "template.app-deployed" = <<-EOT
           webhook:
             slack-deploys:
               method: POST
@@ -188,21 +190,22 @@ locals {
                 {{- end -}}
                 {"text": {{ toJson (printf "Deployed: %s\n%s\n%s/applications/%s" .app.metadata.name $line .context.argocdUrl .app.metadata.name) }}}
         EOT
-      }
-      triggers = {
-        "trigger.on-deployed" = <<-EOT
+        }
+        triggers = {
+          "trigger.on-deployed" = <<-EOT
           - description: Application is synced and healthy. Triggered once per commit.
             oncePer: app.status.sync.revision
             when: app.status.operationState.phase in ['Succeeded'] and app.status.health.status == 'Healthy' and (app.metadata.name not in [${join(",", [for a in var.built_from_apps : "'${a}'"])}] or repo.GetCommitMetadata(app.status.sync.revision).Message matches 'built-from=')
             send:
               - app-deployed
         EOT
+        }
+        secret = {
+          create = false # owned by VSO (Vault → argocd-notifications-secret)
+        }
       }
-      secret = {
-        create = false # owned by VSO (Vault → argocd-notifications-secret)
-      }
-    }
-  })
+    } : k => v if var.slack_notifications_vault_path != ""
+  }
 }
 
 # ── Resources ─────────────────────────────────────────────────────────────
@@ -243,7 +246,7 @@ resource "helm_release" "argocd" {
 # already exists in the argocd namespace (root argocd_repos.tf emits it for
 # Vault-mode repo creds) — this VSS rides the same auth.
 resource "kubectl_manifest" "notifications_secret_vault" {
-  for_each = var.enabled ? toset(["enabled"]) : toset([])
+  for_each = var.enabled && var.slack_notifications_vault_path != "" ? toset(["enabled"]) : toset([])
 
   yaml_body = yamlencode({
     apiVersion = "secrets.hashicorp.com/v1beta1"
@@ -256,7 +259,7 @@ resource "kubectl_manifest" "notifications_secret_vault" {
       vaultAuthRef = ""
       mount        = "secret"
       type         = "kv-v2"
-      path         = "platform/slack/argocd-notifications"
+      path         = var.slack_notifications_vault_path
       destination = {
         name   = "argocd-notifications-secret"
         create = true
