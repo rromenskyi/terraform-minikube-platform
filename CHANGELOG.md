@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   default model.
 - Comments in tracked files no longer name the operator's hosts, tenants or
   hardware.
+- `tools/check-scrub.sh` checks every changed file, not only
+  `.tf`/`.md`/`.example`; `--all` audits the whole tracked tree.
 
 ### Added
 - **`modules/logging` — cluster log aggregation (VictoriaLogs + Vector).**

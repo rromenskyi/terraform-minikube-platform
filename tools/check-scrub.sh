@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Pre-commit scrub check — guards committed engine code, docs, and
-# `.example` files against operator-private identifiers (tenant slugs,
-# app names, internal node names, public IPs the operator owns).
+# Pre-commit scrub check — guards every committed file against
+# operator-private identifiers (tenant slugs, app names, internal
+# node names, public IPs the operator owns).
 #
 # The engine itself stays generic; the operator-private list lives
 # OUTSIDE the repo at `config/.scrub-list` (gitignored). This script
@@ -25,7 +25,8 @@
 #   # or for `pre-commit` framework, add a `local` repo hook pointing here
 #
 # Manual invocation (run-as-needed without commit gate):
-#   ./tools/check-scrub.sh
+#   ./tools/check-scrub.sh          # pending change (staged, else working tree)
+#   ./tools/check-scrub.sh --all    # every tracked file
 
 set -euo pipefail
 
@@ -48,30 +49,28 @@ if [ -z "$PATTERN" ]; then
   exit 0
 fi
 
-# Filter to staged-but-not-yet-committed changes when run as a
-# pre-commit hook; fall back to the full working-tree diff when
-# invoked manually with no staged changes.
+if [ "${1:-}" = "--all" ]; then
+  # Full-tree audit: every tracked file, not just the pending change.
+  MATCHES="$(git grep -n -I -i -E -e "$PATTERN" -- ':!'"$SCRUB_LIST" || true)"
+  if [ -z "$MATCHES" ]; then
+    exit 0
+  fi
+  echo "scrub: operator-private identifiers in tracked files:" >&2
+  printf '%s\n' "$MATCHES" >&2
+  exit 1
+fi
+
+# Staged changes when run as a pre-commit hook; the working-tree diff
+# when invoked manually with nothing staged. Every text file counts —
+# yaml, scripts and the ./tf wrapper leak as easily as .tf and .md.
 DIFF_ARGS="--cached"
 if [ -z "$(git diff --cached --name-only)" ]; then
   DIFF_ARGS=""
 fi
 
-# Limit scrub to file types where leaks have actually bitten before:
-# .tf (engine code + comments), .md (READMEs, PR-body templates,
-# CHANGELOGs), .example (committed schema templates), .gitignore
-# (the `config/components/<tenant>.yaml` shape), shell scripts under
-# tools/.
-PATHS=(
-  '*.tf'
-  '*.md'
-  '*.example'
-  '.gitignore'
-  'tools/*.sh'
-)
-
 # `git diff` exits 0 when there are no changes; capture it without
 # tripping `set -e` and let the grep determine the final exit.
-ADDED_LINES="$(git diff $DIFF_ARGS -- "${PATHS[@]}" 2>/dev/null \
+ADDED_LINES="$(git diff $DIFF_ARGS --text 2>/dev/null \
                 | grep -E '^\+' \
                 | grep -vE '^\+\+\+' || true)"
 
