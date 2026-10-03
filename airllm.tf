@@ -265,9 +265,16 @@ resource "kubectl_manifest" "airllm_application" {
               adminUsername = "admin"
             }
             app = {
-              replicaCount = 1
-              autoscaling  = { enabled = false }
-              ingress      = { enabled = false } # platform IngressRoute below owns the route
+              # Two replicas so losing one pod does not interrupt calls; the
+              # disruption budget keeps a drain from taking both. On a
+              # single-node cluster this guards against losing a pod, not the
+              # node. Provider concurrency caps and round-robin counters are
+              # per replica: a provider's max_concurrency admits twice that
+              # many requests in total.
+              replicaCount        = 2
+              autoscaling         = { enabled = false }
+              podDisruptionBudget = { enabled = true, maxUnavailable = 1 }
+              ingress             = { enabled = false } # platform IngressRoute below owns the route
               # The image's USER is the name `app` (non-numeric), which k8s
               # can't verify against the chart's runAsNonRoot — pin the UID
               # the image is built for (Dockerfile chowns /var/lib/airllm to
