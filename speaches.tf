@@ -191,3 +191,116 @@ resource "kubernetes_service_v1" "speaches" {
     }
   }
 }
+
+# ── Piper voice preload ───────────────────────────────────────────────────────
+#
+# One-shot Job that downloads every voice in `services.speaches.piper_voices`
+# into the model cache and synthesises one short clip with each, so a voice
+# the registry does not carry (or one that downloads but cannot speak) fails
+# the apply rather than a caller's first turn. Runs against the live Service,
+# like the Ollama model-pull Job. Speaches answers 200 for a fresh download
+# and 201 for a cached one; both count as success.
+#
+# A Piper voice name `<lang>_<REGION>-<name>-<quality>` maps to the Speaches
+# model `speaches-ai/piper-<voice name>` speaking voice `<name>`.
+
+locals {
+  speaches_piper_voices_instances = local.speaches.enabled && length(local.speaches.piper_voices) > 0 ? toset(["enabled"]) : toset([])
+}
+
+resource "kubernetes_job_v1" "speaches_piper_voices" {
+  for_each = local.speaches_piper_voices_instances
+
+  depends_on = [kubernetes_deployment_v1.speaches]
+
+  lifecycle {
+    precondition {
+      condition     = alltrue([for v in local.speaches.piper_voices : can(regex("^[a-z]{2,3}_[A-Z]{2}-[a-z0-9_]+-(x_low|low|medium|high)$", v))])
+      error_message = "services.speaches.piper_voices entries must be Piper voice names like en_US-amy-medium (<lang>_<REGION>-<name>-<quality>)."
+    }
+  }
+
+  metadata {
+    # Job specs are immutable; the hash suffix gives every voice-list change
+    # a fresh Job instead of a `field is immutable` error.
+    name      = "speaches-piper-voices-${substr(sha1(join(",", local.speaches.piper_voices)), 0, 10)}"
+    namespace = kubernetes_namespace_v1.platform.metadata[0].name
+    labels = merge(module.platform_label.tags, {
+      "app.kubernetes.io/component" = "speaches-piper-voices"
+    })
+  }
+
+  spec {
+    backoff_limit = 3
+
+    template {
+      metadata {
+        labels = merge(module.platform_label.tags, {
+          "app.kubernetes.io/component" = "speaches-piper-voices"
+        })
+      }
+
+      spec {
+        restart_policy = "OnFailure"
+
+        container {
+          name  = "preload"
+          image = "busybox:1.36"
+
+          env {
+            name  = "SPEACHES_URL"
+            value = "http://${kubernetes_service_v1.speaches["enabled"].metadata[0].name}.${kubernetes_namespace_v1.platform.metadata[0].name}.svc.cluster.local:8000"
+          }
+
+          env {
+            name  = "PIPER_VOICES"
+            value = join(" ", local.speaches.piper_voices)
+          }
+
+          command = ["sh", "-c", <<-EOT
+            set -eu
+            for v in $PIPER_VOICES; do
+              model="speaches-ai/piper-$v"
+              name=$(echo "$v" | cut -d- -f2)
+              echo "download $model"
+              wget -q -O - --post-data '' "$SPEACHES_URL/v1/models/$model"
+              echo
+              # Some voices map characters straight to phonemes and skip any
+              # character outside their script, so a Latin word comes back
+              # as a near-empty clip from a Cyrillic voice.
+              case "$v" in
+                be_*|bg_*|kk_*|mk_*|ru_*|sr_*|uk_*) text="мама" ;;
+                *) text="mama" ;;
+              esac
+              echo "synthesise $model voice $name"
+              wget -q -O /tmp/clip.wav --header 'Content-Type: application/json' \
+                --post-data "{\"model\":\"$model\",\"voice\":\"$name\",\"input\":\"$text\",\"response_format\":\"wav\"}" \
+                "$SPEACHES_URL/v1/audio/speech"
+              # A two-syllable word comes back as 9+ KB even from a 16 kHz
+              # voice; a voice that skipped every character returns ~5 KB of
+              # near-silence.
+              if [ "$(head -c 4 /tmp/clip.wav)" != "RIFF" ] || [ "$(wc -c < /tmp/clip.wav)" -lt 8000 ]; then
+                echo "$model returned no audible clip for '$text'" >&2
+                exit 1
+              fi
+              echo "ok $model ($(wc -c < /tmp/clip.wav) bytes)"
+            done
+          EOT
+          ]
+
+          resources {
+            requests = { cpu = "20m", memory = "32Mi" }
+            limits   = { cpu = "200m", memory = "64Mi" }
+          }
+        }
+      }
+    }
+  }
+
+  wait_for_completion = true
+
+  timeouts {
+    # A Piper voice is ~60 MB; the first synthesis also loads it.
+    create = "15m"
+  }
+}
