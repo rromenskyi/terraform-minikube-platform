@@ -27,6 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `config/domains/*.yaml` is missing (the empty-default fallback planned to
   remove the whole platform). `allow_missing_config = true` opts out for a
   first install or an intentional teardown.
+- `airllm.tf`: the gateway chart's `PrometheusRule` (tier quarantined too
+  long) is on, labelled for the Prometheus rule selector and the metric-alert
+  email route. Email delivery also needs the gateway's namespace under
+  `monitoring.metric_alert_email.namespaces`.
 
 ### Changed
 - AirLLM runs two gateway replicas behind a PodDisruptionBudget

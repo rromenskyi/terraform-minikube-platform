@@ -302,6 +302,15 @@ resource "kubectl_manifest" "airllm_application" {
             metrics = {
               serviceMonitor = { enabled = true }
               dashboards     = { enabled = true }
+              # The chart's tier-quarantine alert. `release` matches the
+              # Prometheus rule selector; `alert_source = metric` is what the
+              # metric-alert email route matches — it also needs this
+              # namespace under `monitoring.metric_alert_email.namespaces`.
+              prometheusRule = {
+                enabled     = true
+                labels      = { release = "kube-prometheus-stack" }
+                alertLabels = { severity = "warning", alert_source = "metric" }
+              }
             }
             # Off unless an SA to impersonate is configured, and then the only
             # thing it changes is that the pod gains a cloud identity — the
