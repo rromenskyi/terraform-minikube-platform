@@ -37,6 +37,12 @@ terraform {
 # ── Locals ─────────────────────────────────────────────────────────────────
 
 locals {
+  # Vulnerability series for workloads that still run. Reports outlive a
+  # rollout: the old ReplicaSets stay (revision history, 0 replicas) with
+  # their reports, so without this the dashboard and the alert keep
+  # showing images that were already replaced. `%s` = label selector.
+  vuln_series = "(trivy_image_vulnerabilities{%s} unless on (namespace, resource_name) label_replace(kube_replicaset_spec_replicas == 0, \"resource_name\", \"$1\", \"replicaset\", \"(.*)\"))"
+
   instances = var.enabled ? toset(["enabled"]) : toset([])
   alerting  = var.enabled && var.alerts_enabled ? toset(["enabled"]) : toset([])
 
@@ -228,7 +234,7 @@ resource "kubectl_manifest" "alerts" {
             alert = "ImageVulnerabilities"
             # One report per container: `max` counts an image once however
             # many containers run it, then severities add up.
-            expr = "sum by (image_registry, image_repository, image_tag) (max by (image_registry, image_repository, image_tag, severity) (trivy_image_vulnerabilities{severity=~\"${join("|", var.alert_severities)}\"})) > 0"
+            expr = "sum by (image_registry, image_repository, image_tag) (max by (image_registry, image_repository, image_tag, severity) (${format(local.vuln_series, "severity=~\"${join("|", var.alert_severities)}\"")})) > 0"
             for  = "15m"
             # Series carry the scanned workload's namespace; pin the alert to
             # the scanner's namespace so it routes in one place.
@@ -299,7 +305,7 @@ resource "kubernetes_config_map_v1" "dashboard" {
             datasource = { type = "prometheus", uid = "prometheus" }
             targets = [{
               refId   = "A"
-              expr    = "count(max by (image_repository, image_tag) (trivy_image_vulnerabilities{severity=\"${s.sev}\"}) > 0) or vector(0)"
+              expr    = "count(max by (image_repository, image_tag) (${format(local.vuln_series, "severity=\"${s.sev}\"")}) > 0) or vector(0)"
               instant = true
             }]
             fieldConfig = {
@@ -319,14 +325,14 @@ resource "kubernetes_config_map_v1" "dashboard" {
             [
               for i, sev in ["Critical", "High", "Unknown"] : {
                 refId   = sev
-                expr    = "max by (image_repository, image_tag) (trivy_image_vulnerabilities{severity=\"${sev}\"})"
+                expr    = "max by (image_repository, image_tag) (${format(local.vuln_series, "severity=\"${sev}\"")})"
                 instant = true
                 format  = "table"
               }
             ],
             [{
               refId   = "Containers"
-              expr    = "count by (image_repository, image_tag) (max by (image_repository, image_tag, namespace, resource_name, container_name) (trivy_image_vulnerabilities))"
+              expr    = "count by (image_repository, image_tag) (max by (image_repository, image_tag, namespace, resource_name, container_name) (${format(local.vuln_series, "")}))"
               instant = true
               format  = "table"
             }],

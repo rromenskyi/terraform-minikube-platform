@@ -58,6 +58,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the number of containers running an image (Argo CD: 6x). Both now count
   each image once. The dashboard has per-severity columns (Critical / High /
   Unknown), a container count and summary tiles.
+  Reports of rolled-out ReplicaSets (0 replicas, kept as revision history)
+  no longer count, so a replaced image leaves the dashboard and the alert.
 - README "Remote state": put the backend in the gitignored
   `_local_backend_override.tf` instead of editing the tracked `_backend.tf`;
   `*_override.tf` is now in `.gitignore`.
