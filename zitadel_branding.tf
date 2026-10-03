@@ -72,8 +72,9 @@ resource "kubernetes_job_v1" "zitadel_branding_assets" {
   }
 
   spec {
-    backoff_limit              = 3
-    ttl_seconds_after_finished = 86400
+    # No TTL: the name is a content hash, so a TTL-deleted Job only made
+    # Terraform re-create (and re-run) it on the next apply.
+    backoff_limit = 3
 
     template {
       metadata {}
