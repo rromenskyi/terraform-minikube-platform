@@ -51,6 +51,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - `modules/component` git-sync:
+- `modules/roundcube`: default image 1.6.16 → 1.6.19 (patch release, rebuilt
+  base image), pinned by digest.
 - `modules/security-scan`: trivy-operator writes one report per container,
   so the dashboard and the `ImageVulnerabilities` alert multiplied counts by
   the number of containers running an image (Argo CD: 6x). Both now count
