@@ -385,6 +385,11 @@ locals {
         # keeps the download off a caller's first turn and fails the apply
         # on a voice the registry does not carry.
         piper_voices = []
+        # Seconds an idle model (Whisper, Piper, Kokoro alike — Speaches has
+        # one setting for all) stays loaded; -1 never unloads. Loading a
+        # Piper voice takes seconds, so a voice serving live calls wants -1,
+        # at the cost of keeping every model it has used in memory.
+        model_ttl_seconds = 300
       }
 
       # whisper.cpp server on a Vulkan GPU (whisper.tf) — an OpenAI-shaped
@@ -399,11 +404,11 @@ locals {
         # images/whisper-server-vulkan (see its runbook).
         image = ""
         # GGML model fetched once into the model volume and verified by
-        # sha256 on every pod start. large-v3-turbo q5_0: ~550 MB on disk,
-        # multilingual, near large-v3 accuracy at a fraction of its decode
-        # cost.
+        # sha256 on every pod start; the file is named after the URL's last
+        # segment. large-v3-turbo q5_0: ~550 MB on disk, multilingual, near
+        # large-v3 accuracy at a fraction of its decode cost. Override both
+        # together — a URL without its checksum fails the init container.
         model_url    = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin"
-        model_file   = "ggml-large-v3-turbo-q5_0.bin"
         model_sha256 = "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2"
         storage_size = "2Gi"
         # CPU threads for the non-GPU parts of a decode (audio decoding,
@@ -417,8 +422,9 @@ locals {
         # services.ollama.gpu — device_path, device_type (default
         # "CharDevice"), privileged (default true), supplemental_groups,
         # env — plus vulkan_device_id, the PCI `vendor:device` the
-        # entrypoint pins Vulkan to.
-        gpu           = null
+        # entrypoint pins Vulkan to (required while privileged).
+        gpu = null
+        # Required when enabled: the node that owns gpu.device_path.
         node_selector = {}
         cpu_request   = "500m"
         cpu_limit     = "4"

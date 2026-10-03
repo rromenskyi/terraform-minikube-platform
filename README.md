@@ -84,6 +84,7 @@ terraform-minikube-platform/
 ├── _local_backend_override.tf                  # Local-state escape hatch (dev / detached use)
 │
 ├── mysql.tf, postgres.tf, redis.tf, ollama.tf  # Shared service wiring (each calls modules/<name>)
+├── speaches.tf, whisper.tf                     # CPU speech server (+ Piper voice preload) and GPU whisper.cpp recogniser
 ├── vault.tf, zitadel.tf, zitadel_actions.tf    # Identity + secrets stack
 ├── argocd.tf, argocd_repos.tf                  # Argo CD core + per-tenant Vault-backed deploy-key Secrets
 ├── cert_manager.tf                             # cert-manager extras (DNS-01 ACME token Secret when enabled)
@@ -108,6 +109,8 @@ terraform-minikube-platform/
 │   ├── domains/<domain>.yaml                   # Per-domain routes + envs + argocd hooks (gitignored)
 │   ├── components/<name>.yaml                  # Reusable component definitions (tracked)
 │   └── limits/<ns>.yaml                        # Per-namespace ResourceQuota; `default.yaml` is the fallback
+│
+├── images/whisper-server-vulkan/              # Operator-built whisper.cpp Vulkan image for whisper.tf
 │
 └── modules/                                    # 19 modules — one per concern, all four files per AGENT.md
     ├── project/                                # Tenant ns + quota + per-ns shared-service hooks + components + IngressRoutes + chart_oidc_apps + secrets + argocd_bootstraps
@@ -741,6 +744,8 @@ Data layout under the prefix (same structure on every distribution):
 ├── platform/postgres/                       # PostgreSQL data
 ├── platform/redis/                          # Redis AOF
 ├── platform/ollama/                         # Ollama model cache
+├── speaches/speaches/hf-hub-cache/         # Speaches model cache
+├── whisper/models/                          # whisper.cpp GGML model
 ├── phost-example-com-prod/wordpress/
 │   └── var-www-html-wp-content/             # WordPress uploads, plugins, themes
 └── …

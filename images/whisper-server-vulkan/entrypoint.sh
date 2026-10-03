@@ -51,9 +51,18 @@ devices=$(printf '%s\n' "$summary" | awk '
 log "vulkan devices visible (pin='${pin:-none}'):"
 printf '%s\n' "${devices:-  (none)}" | sed 's/^/  /' >&2
 
-if [ -n "$pin" ] && ! printf '%s\n' "$devices" | grep -q "^$pin "; then
-  log "pinned device $pin is not in the Vulkan device list — check the device mount, supplemental groups and Mesa version"
-  exit 1
+if [ -n "$pin" ]; then
+  if ! printf '%s\n' "$devices" | grep -q "^$pin "; then
+    log "pinned device $pin is not in the Vulkan device list — check the device mount, supplemental groups and Mesa version"
+    exit 1
+  fi
+  # whisper.cpp takes the first device it is given; anything listed next to
+  # the pin means the device-select layer did not filter, and the pin would
+  # not be what decodes.
+  if [ "$(printf '%s\n' "$devices" | grep -c .)" -ne 1 ]; then
+    log "Vulkan still lists more than the pinned device $pin — Mesa's device-select layer is missing or ignored"
+    exit 1
+  fi
 fi
 
 if [ "$require_gpu" = "1" ] && ! printf '%s\n' "$devices" | grep -q -E 'PHYSICAL_DEVICE_TYPE_(DISCRETE|INTEGRATED|VIRTUAL)_GPU'; then

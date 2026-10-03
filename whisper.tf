@@ -21,8 +21,13 @@ locals {
   whisper           = local.platform.services.whisper
   whisper_instances = local.whisper.enabled ? toset(["enabled"]) : toset([])
 
+  # Keys services.whisper.gpu may carry; anything else is a typo the
+  # precondition below rejects rather than silently dropping (a misspelled
+  # vulkan_device_id would otherwise lose the device pin).
+  whisper_gpu_keys = ["device_path", "device_type", "privileged", "supplemental_groups", "vulkan_device_id", "env"]
+
   # Always an object so the deployment body never dereferences null; the
-  # precondition below rejects a missing `gpu` block with a clear message.
+  # preconditions below reject a missing or malformed `gpu` block.
   whisper_gpu = {
     device_path         = try(local.whisper.gpu.device_path, "")
     device_type         = try(local.whisper.gpu.device_type, "CharDevice")
@@ -32,8 +37,12 @@ locals {
     env                 = try(local.whisper.gpu.env, {})
   }
 
-  whisper_model_dir  = "/models"
-  whisper_model_path = "${local.whisper_model_dir}/${local.whisper.model_file}"
+  whisper_port        = 8080
+  whisper_health_path = "/health"
+  whisper_model_dir   = "/models"
+  # The file name follows the URL, so overriding the model is one URL plus
+  # its checksum.
+  whisper_model_path = "${local.whisper_model_dir}/${basename(local.whisper.model_url)}"
 }
 
 resource "kubernetes_persistent_volume_v1" "whisper_models" {
@@ -52,7 +61,7 @@ resource "kubernetes_persistent_volume_v1" "whisper_models" {
 
     persistent_volume_source {
       host_path {
-        path = "${var.host_volume_path}/${local.whisper.namespace}/whisper/models"
+        path = "${var.host_volume_path}/${local.whisper.namespace}/models"
         type = "DirectoryOrCreate"
       }
     }
@@ -91,12 +100,24 @@ resource "kubernetes_deployment_v1" "whisper" {
       error_message = "services.whisper.gpu with a device_path must be set when whisper is enabled: the service exists to decode on a GPU (device_path, supplemental_groups, vulkan_device_id)."
     }
     precondition {
+      condition     = length(setsubtract(try(keys(local.whisper.gpu), []), local.whisper_gpu_keys)) == 0
+      error_message = "services.whisper.gpu has unknown keys; allowed: device_path, device_type, privileged, supplemental_groups, vulkan_device_id, env."
+    }
+    precondition {
+      condition     = !local.whisper_gpu.privileged || local.whisper_gpu.vulkan_device_id != ""
+      error_message = "services.whisper.gpu.vulkan_device_id is required when privileged is true: a privileged pod sees every GPU on the host, and without the pin whisper may decode on the wrong one."
+    }
+    precondition {
+      condition     = length(local.whisper.node_selector) > 0
+      error_message = "services.whisper.node_selector must pin the pod to the node that owns gpu.device_path (the same selector as services.ollama)."
+    }
+    precondition {
       condition     = can(regex("^[0-9a-fA-F]{64}$", local.whisper.model_sha256))
       error_message = "services.whisper.model_sha256 must be the model file's 64-character hex sha256."
     }
     precondition {
       condition     = can(regex("^([0-9a-fA-F]{4}:[0-9a-fA-F]{4})?$", local.whisper_gpu.vulkan_device_id))
-      error_message = "services.whisper.gpu.vulkan_device_id must be a PCI vendor:device hex pair (e.g. 8086:e212) or empty."
+      error_message = "services.whisper.gpu.vulkan_device_id must be a PCI vendor:device hex pair (e.g. 8086:e212), or empty for an unprivileged pod that sees only its device."
     }
     precondition {
       condition     = contains(["CharDevice", "Directory"], local.whisper_gpu.device_type)
@@ -135,7 +156,7 @@ resource "kubernetes_deployment_v1" "whisper" {
       }
 
       spec {
-        node_selector = length(local.whisper.node_selector) > 0 ? local.whisper.node_selector : null
+        node_selector = local.whisper.node_selector
 
         security_context {
           supplemental_groups = local.whisper_gpu.supplemental_groups
@@ -171,7 +192,7 @@ resource "kubernetes_deployment_v1" "whisper" {
 
           args = concat([
             "--host", "0.0.0.0",
-            "--port", "8080",
+            "--port", tostring(local.whisper_port),
             "--model", local.whisper_model_path,
             "--inference-path", "/v1/audio/transcriptions",
             # Detect per request unless the caller sends `language`.
@@ -189,6 +210,13 @@ resource "kubernetes_deployment_v1" "whisper" {
             value = "1"
           }
 
+          # Mesa keeps compiled shaders here; without a writable cache every
+          # start recompiles them on the first requests.
+          env {
+            name  = "XDG_CACHE_HOME"
+            value = "/cache"
+          }
+
           dynamic "env" {
             for_each = local.whisper_gpu.env
             content {
@@ -204,13 +232,19 @@ resource "kubernetes_deployment_v1" "whisper" {
           security_context {
             privileged                 = local.whisper_gpu.privileged
             allow_privilege_escalation = local.whisper_gpu.privileged
+            run_as_non_root            = true
             run_as_user                = 1000
             run_as_group               = 1000
+            read_only_root_filesystem  = true
+
+            capabilities {
+              drop = local.whisper_gpu.privileged ? [] : ["ALL"]
+            }
           }
 
           port {
             name           = "http"
-            container_port = 8080
+            container_port = local.whisper_port
           }
 
           volume_mount {
@@ -224,6 +258,11 @@ resource "kubernetes_deployment_v1" "whisper" {
             mount_path = local.whisper_gpu.device_path
           }
 
+          volume_mount {
+            name       = "cache"
+            mount_path = "/cache"
+          }
+
           resources {
             requests = { cpu = local.whisper.cpu_request, memory = local.whisper.memory_request }
             limits   = { cpu = local.whisper.cpu_limit, memory = local.whisper.memory_limit }
@@ -233,8 +272,8 @@ resource "kubernetes_deployment_v1" "whisper" {
           # the decode lock, so a long decode does not fail the probes.
           startup_probe {
             http_get {
-              path = "/health"
-              port = 8080
+              path = local.whisper_health_path
+              port = local.whisper_port
             }
             period_seconds    = 5
             failure_threshold = 60
@@ -242,8 +281,8 @@ resource "kubernetes_deployment_v1" "whisper" {
 
           readiness_probe {
             http_get {
-              path = "/health"
-              port = 8080
+              path = local.whisper_health_path
+              port = local.whisper_port
             }
             period_seconds  = 10
             timeout_seconds = 5
@@ -251,8 +290,8 @@ resource "kubernetes_deployment_v1" "whisper" {
 
           liveness_probe {
             http_get {
-              path = "/health"
-              port = 8080
+              path = local.whisper_health_path
+              port = local.whisper_port
             }
             period_seconds    = 30
             timeout_seconds   = 5
@@ -265,6 +304,11 @@ resource "kubernetes_deployment_v1" "whisper" {
           persistent_volume_claim {
             claim_name = kubernetes_persistent_volume_claim_v1.whisper_models["enabled"].metadata[0].name
           }
+        }
+
+        volume {
+          name = "cache"
+          empty_dir {}
         }
 
         volume {
@@ -293,8 +337,8 @@ resource "kubernetes_service_v1" "whisper" {
 
     port {
       name        = "http"
-      port        = 8080
-      target_port = 8080
+      port        = local.whisper_port
+      target_port = local.whisper_port
     }
   }
 }

@@ -18,7 +18,8 @@ recent enough for every card.
     integrated GPU as well this is what keeps whisper on the discrete card. A
     PCI-id pin survives the enumeration-order changes that a reboot or Mesa
     upgrade can cause; an index pin does not.
-  - Exits non-zero when the pinned device is missing, or when Vulkan lists only
+  - Exits non-zero when the pinned device is missing, when other devices are
+    still listed next to it, or when Vulkan lists only
     CPU devices (llvmpipe) — the symptom of a missing device mount or a Mesa
     too old for the card. Without this the server starts anyway and decodes on
     the CPU, many times slower, with nothing in the probes to show it.
@@ -74,6 +75,11 @@ services:
       supplemental_groups: [44, 990]    # host video + render GIDs
       vulkan_device_id: "8086:e212"     # PCI vendor:device of the card
 ```
+
+`vulkan_device_id` is required while `privileged` is true (the pod then sees
+every GPU on the host), and `node_selector` is always required; the plan
+fails without them. With a pin set, the entrypoint also refuses to start if
+Vulkan lists anything besides the pinned device.
 
 Find the PCI id with `lspci -nn | grep -Ei 'vga|display'` on the node, or
 `cat /sys/bus/pci/devices/*/{vendor,device}` from any privileged pod there.

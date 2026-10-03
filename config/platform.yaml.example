@@ -120,6 +120,9 @@ services:
     # piper_voices:
     #   - en_US-amy-medium
     #   - es_ES-davefx-medium
+    # Idle seconds before a model unloads (-1 = never). Keep live-call
+    # voices resident with -1; loading one costs seconds on a caller's turn.
+    # model_ttl_seconds: 300
 
   # whisper.cpp server on a Vulkan GPU — OpenAI-shaped transcription route
   # (`whisper.platform.svc.cluster.local:8080/v1/audio/transcriptions`) for
@@ -138,9 +141,8 @@ services:
     #   privileged: true
     #   supplemental_groups: [44, 990]    # host video + render GIDs
     #   vulkan_device_id: "8086:e212"     # PCI vendor:device to pin Vulkan to
-    # Model defaults to large-v3-turbo q5_0; override all three together.
+    # Model defaults to large-v3-turbo q5_0; override both together.
     # model_url:    https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin
-    # model_file:   ggml-large-v3-turbo-q5_0.bin
     # model_sha256: 394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2
 
   # Zitadel — shared OIDC/SAML IdP for every project (and the

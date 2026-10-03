@@ -41,6 +41,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `services.speaches.piper_voices`: a Job on apply downloads each listed Piper
   voice and synthesises one clip with it. The apply fails on a voice that is
   not in the registry or produces no audio.
+- `services.speaches.model_ttl_seconds` (default 300, the upstream default):
+  how long an idle model stays loaded; `-1` keeps live-call voices resident.
+  Adding the setting, and pinning the init container's busybox by digest,
+  rolls the Speaches pod once on the next apply.
 
 ### Changed
 - `services.airllm.node_selector` places the gateway pods; empty (default)

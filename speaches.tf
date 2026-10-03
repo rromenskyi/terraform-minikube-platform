@@ -14,6 +14,8 @@
 locals {
   speaches           = local.platform.services.speaches
   speaches_instances = local.speaches.enabled ? toset(["enabled"]) : toset([])
+  # Shell image for the ownership fix and the voice preload Job.
+  speaches_busybox_image = "busybox:1.36@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662"
 }
 
 resource "kubernetes_persistent_volume_v1" "speaches_model_cache" {
@@ -103,7 +105,7 @@ resource "kubernetes_deployment_v1" "speaches" {
 
         init_container {
           name    = "fix-model-cache-ownership"
-          image   = "busybox:1.36"
+          image   = local.speaches_busybox_image
           command = ["chown", "-R", "1000:1000", "/home/ubuntu/.cache/huggingface/hub"]
 
           volume_mount {
@@ -135,6 +137,13 @@ resource "kubernetes_deployment_v1" "speaches" {
           volume_mount {
             name       = "model-cache"
             mount_path = "/home/ubuntu/.cache/huggingface/hub"
+          }
+
+          # Despite the name, Speaches applies this idle-unload TTL to every
+          # model kind, Piper and Kokoro included.
+          env {
+            name  = "WHISPER__TTL"
+            value = tostring(local.speaches.model_ttl_seconds)
           }
 
           resources {
@@ -245,11 +254,11 @@ resource "kubernetes_job_v1" "speaches_piper_voices" {
 
         container {
           name  = "preload"
-          image = "busybox:1.36"
+          image = local.speaches_busybox_image
 
           env {
             name  = "SPEACHES_URL"
-            value = "http://${kubernetes_service_v1.speaches["enabled"].metadata[0].name}.${kubernetes_namespace_v1.platform.metadata[0].name}.svc.cluster.local:8000"
+            value = "http://${kubernetes_service_v1.speaches["enabled"].metadata[0].name}.${kubernetes_namespace_v1.platform.metadata[0].name}.svc.cluster.local:${kubernetes_service_v1.speaches["enabled"].spec[0].port[0].port}"
           }
 
           env {
