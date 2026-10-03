@@ -35,7 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   app repo's `main`. Rolling out a gateway release now means bumping
   `chart_revision` and applying. Provider concurrency caps in the gateway are
   per replica, so a provider's `max_concurrency` now admits twice as many
-  requests in total.
+  requests in total. Migration: halve any cap that mirrors a fixed upstream
+  capacity, such as a local model server's parallel slots.
 - `config/components/chat.yaml` no longer sets `DEFAULT_MODELS` — the chat
   models depend on what each install's Ollama serves. Migration: set
   `components.chat.env_static.DEFAULT_MODELS` in the domain yaml to keep a
