@@ -51,6 +51,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - `modules/component` git-sync:
+- `modules/stalwart`: Stalwart v0.16.11 → v0.16.24 and the socat proxies
+  1.8.0.0 → 1.8.1.3, pinned by digest (trivy: 3 → 0 and 2 → 0 critical).
 - `modules/roundcube`: default image 1.6.16 → 1.6.19 (patch release, rebuilt
   base image), pinned by digest.
 - `modules/security-scan`: trivy-operator writes one report per container,

@@ -51,7 +51,7 @@ resource "kubernetes_deployment_v1" "stalwart_client_proxy" {
         # Stalwart; else raw passthrough to Stalwart's self-signed cert.
         container {
           name  = "socat-imaps"
-          image = "alpine/socat:1.8.0.0"
+          image = "alpine/socat:1.8.1.3@sha256:82ad20f6f6e29b91ff33b6662d24063522b1378f08fd8569cd3ab412cac13f50"
 
           args = length(var.client_cert_dns_names) > 0 ? [
             "OPENSSL-LISTEN:993,bind=${var.client_listen_ip},cert=/certs/tls.crt,key=/certs/tls.key,verify=0,fork,reuseaddr",
@@ -88,7 +88,7 @@ resource "kubernetes_deployment_v1" "stalwart_client_proxy" {
         # SMTP submission 465 — same TLS-terminate/passthrough as IMAPS.
         container {
           name  = "socat-submission"
-          image = "alpine/socat:1.8.0.0"
+          image = "alpine/socat:1.8.1.3@sha256:82ad20f6f6e29b91ff33b6662d24063522b1378f08fd8569cd3ab412cac13f50"
 
           args = length(var.client_cert_dns_names) > 0 ? [
             "OPENSSL-LISTEN:465,bind=${var.client_listen_ip},cert=/certs/tls.crt,key=/certs/tls.key,verify=0,fork,reuseaddr",
@@ -217,7 +217,7 @@ resource "kubernetes_deployment_v1" "stalwart_admin_proxy" {
         # and Cloudflare already terminate in front of.
         container {
           name  = "socat-admin"
-          image = "alpine/socat:1.8.0.0"
+          image = "alpine/socat:1.8.1.3@sha256:82ad20f6f6e29b91ff33b6662d24063522b1378f08fd8569cd3ab412cac13f50"
 
           args = [
             "OPENSSL-LISTEN:443,bind=${var.admin_listen_ip},cert=/certs/tls.crt,key=/certs/tls.key,verify=0,fork,reuseaddr",
