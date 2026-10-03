@@ -226,8 +226,10 @@ resource "kubectl_manifest" "alerts" {
         rules = [
           {
             alert = "ImageVulnerabilities"
-            expr  = "sum by (image_registry, image_repository, image_tag) (trivy_image_vulnerabilities{severity=~\"${join("|", var.alert_severities)}\"}) > 0"
-            for   = "15m"
+            # One report per container: `max` counts an image once however
+            # many containers run it, then severities add up.
+            expr = "sum by (image_registry, image_repository, image_tag) (max by (image_registry, image_repository, image_tag, severity) (trivy_image_vulnerabilities{severity=~\"${join("|", var.alert_severities)}\"})) > 0"
+            for  = "15m"
             # Series carry the scanned workload's namespace; pin the alert to
             # the scanner's namespace so it routes in one place.
             labels = merge(var.alert_labels, {
@@ -280,22 +282,93 @@ resource "kubernetes_config_map_v1" "dashboard" {
       schemaVersion = 39
       refresh       = "15m"
       time          = { from = "now-6h", to = "now" }
-      panels = [{
-        type       = "table"
-        title      = "Fixable vulnerabilities by image"
-        gridPos    = { x = 0, y = 0, w = 24, h = 20 }
-        datasource = { type = "prometheus", uid = "prometheus" }
-        targets = [{
-          refId   = "A"
-          expr    = "sum by (namespace, image_repository, image_tag, severity) (trivy_image_vulnerabilities) > 0"
-          instant = true
-          format  = "table"
-        }]
-        transformations = [
-          { id = "organize", options = { excludeByName = { Time = true } } },
-          { id = "sortBy", options = { sort = [{ field = "Value", desc = true }] } },
-        ]
-      }]
+      # trivy-operator writes one report per container, so every query
+      # first takes `max` per image (and severity): an image running in six
+      # containers counts once. "Unknown" = CVEs the trivy DB has not rated
+      # yet; their CVSS scores are often high, so they are shown, not hidden.
+      panels = concat(
+        [
+          for i, s in [
+            { title = "Images with Critical", sev = "Critical", color = "red" },
+            { title = "Images with High", sev = "High", color = "orange" },
+            { title = "Images with Unknown", sev = "Unknown", color = "purple" },
+            ] : {
+            type       = "stat"
+            title      = s.title
+            gridPos    = { x = i * 8, y = 0, w = 8, h = 4 }
+            datasource = { type = "prometheus", uid = "prometheus" }
+            targets = [{
+              refId   = "A"
+              expr    = "count(max by (image_repository, image_tag) (trivy_image_vulnerabilities{severity=\"${s.sev}\"}) > 0) or vector(0)"
+              instant = true
+            }]
+            fieldConfig = {
+              defaults = {
+                color      = { mode = "fixed", fixedColor = s.color }
+                thresholds = { mode = "absolute", steps = [{ color = s.color, value = null }] }
+              }
+            }
+          }
+        ],
+        [{
+          type       = "table"
+          title      = "Fixable vulnerabilities by image (each image counted once)"
+          gridPos    = { x = 0, y = 4, w = 24, h = 20 }
+          datasource = { type = "prometheus", uid = "prometheus" }
+          targets = concat(
+            [
+              for i, sev in ["Critical", "High", "Unknown"] : {
+                refId   = sev
+                expr    = "max by (image_repository, image_tag) (trivy_image_vulnerabilities{severity=\"${sev}\"})"
+                instant = true
+                format  = "table"
+              }
+            ],
+            [{
+              refId   = "Containers"
+              expr    = "count by (image_repository, image_tag) (max by (image_repository, image_tag, namespace, resource_name, container_name) (trivy_image_vulnerabilities))"
+              instant = true
+              format  = "table"
+            }],
+          )
+          transformations = [
+            { id = "merge", options = {} },
+            {
+              id = "organize"
+              options = {
+                excludeByName = { Time = true }
+                renameByName = {
+                  image_repository    = "Image"
+                  image_tag           = "Tag"
+                  "Value #Critical"   = "Critical"
+                  "Value #High"       = "High"
+                  "Value #Unknown"    = "Unknown"
+                  "Value #Containers" = "Containers"
+                }
+                indexByName = { image_repository = 0, image_tag = 1, "Value #Critical" = 2, "Value #High" = 3, "Value #Unknown" = 4, "Value #Containers" = 5 }
+              }
+            },
+            { id = "filterByValue", options = { type = "exclude", match = "all", filters = [
+              { fieldName = "Critical", config = { id = "lowerOrEqual", options = { value = 0 } } },
+              { fieldName = "High", config = { id = "lowerOrEqual", options = { value = 0 } } },
+              { fieldName = "Unknown", config = { id = "lowerOrEqual", options = { value = 0 } } },
+            ] } },
+            { id = "sortBy", options = { sort = [{ field = "Critical", desc = true }, { field = "High", desc = true }] } },
+          ]
+          fieldConfig = {
+            defaults = { custom = { align = "auto" } }
+            overrides = [
+              for f in [{ n = "Critical", c = "red" }, { n = "High", c = "orange" }, { n = "Unknown", c = "purple" }] : {
+                matcher = { id = "byName", options = f.n }
+                properties = [
+                  { id = "custom.cellOptions", value = { type = "color-text" } },
+                  { id = "color", value = { mode = "fixed", fixedColor = f.c } },
+                ]
+              }
+            ]
+          }
+        }],
+      )
     })
   }
 }

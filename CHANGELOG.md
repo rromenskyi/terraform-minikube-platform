@@ -51,6 +51,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - `modules/component` git-sync:
+- `modules/security-scan`: trivy-operator writes one report per container,
+  so the dashboard and the `ImageVulnerabilities` alert multiplied counts by
+  the number of containers running an image (Argo CD: 6x). Both now count
+  each image once. The dashboard has per-severity columns (Critical / High /
+  Unknown), a container count and summary tiles.
 - README "Remote state": put the backend in the gitignored
   `_local_backend_override.tf` instead of editing the tracked `_backend.tf`;
   `*_override.tf` is now in `.gitignore`.
