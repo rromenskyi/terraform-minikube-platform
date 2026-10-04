@@ -71,6 +71,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - `modules/component` git-sync:
+- `modules/vault`: VSO's kube-rbac-proxy v0.18.1 → v0.23.0
+  (`vso_kube_rbac_proxy_image`), vault-init Job on `bitnami/kubectl`
+  instead of `alpine/k8s` (`init_image`); both scan clean.
+  `modules/github-runners`: default runner image 2.336.0 → 2.337.0.
 - `modules/stalwart`: Stalwart v0.16.11 → v0.16.24 and the socat proxies
   1.8.0.0 → 1.8.1.3, pinned by digest (trivy: 3 → 0 and 2 → 0 critical).
 - `modules/roundcube`: default image 1.6.16 → 1.6.19 (patch release, rebuilt

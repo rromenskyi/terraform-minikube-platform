@@ -377,7 +377,7 @@ resource "kubernetes_job_v1" "vault_init" {
 
         container {
           name  = "init"
-          image = "alpine/k8s:1.37.1"
+          image = var.init_image
 
           resources {
             requests = { cpu = "10m", memory = "32Mi" }
