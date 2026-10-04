@@ -41,11 +41,10 @@ terraform {
 # provisions Seafile users on first SSO login
 # (`OAUTH_CREATE_UNKNOWN_USER = True`).
 #
-# Behind Traefik: pod exposes :8000 (Seahub) and :8082 (fileserver
-# for raw blob upload/download). IngressRoute splits the traffic by
-# path — `/seafhttp` → fileserver after StripPrefix, everything else
-# → Seahub. The bundled Caddy is bypassed (Traefik does TLS at the
-# tunnel boundary; Seahub is plain HTTP behind it).
+# Behind Traefik: the project route sends everything to the image's
+# nginx on :80, which serves Seahub and proxies `/seafhttp` to the
+# fileserver (:8082). The bundled Caddy is bypassed (Traefik does TLS
+# at the tunnel boundary; Seahub is plain HTTP behind it).
 
 locals {
   enabled = var.enabled
@@ -532,79 +531,6 @@ resource "kubernetes_service_v1" "this" {
   }
 }
 
-# ── Traefik IngressRoute — `/seafhttp` only ─────────────────────────────────
-#
-# The CATCH-ALL `Host(...)` → Seahub :80 route is intentionally NOT
-# emitted here. That's the canonical generic-route surface every
-# platform-level app uses: operator declares a `kind: external`
-# component yaml + the route in their domain yaml, engine project
-# machinery materialises the catch-all IngressRoute. Emitting one
-# here in addition would compete for the same hostname with no
-# priority discriminator (see feedback_traefik_ingressroute_priority_conflicts).
-#
-# `/seafhttp/*` IS engine-emitted because it's a path the operator
-# shouldn't have to know about — Seafile's fileserver lives on a
-# different port (:8082) than Seahub (:80), and the prefix has to
-# be stripped before forwarding. That's plumbing, not routing
-# decision. Priority 100 wins over the generic catch-all (priority
-# 0 by default).
+# No `/seafhttp` route of its own: the image's nginx (behind the project
+# route on :80) already proxies `/seafhttp` to the fileserver on :8082.
 
-resource "kubernetes_manifest" "fileserver_strip_middleware" {
-  for_each = local.set
-
-  manifest = {
-    apiVersion = "traefik.io/v1alpha1"
-    kind       = "Middleware"
-    metadata = {
-      name      = "seafile-strip-fileserver"
-      namespace = kubernetes_namespace_v1.this["enabled"].metadata[0].name
-      labels    = local.tags
-    }
-    spec = {
-      stripPrefix = {
-        prefixes = ["/seafhttp"]
-      }
-    }
-  }
-}
-
-resource "kubectl_manifest" "ingressroute_fileserver" {
-  for_each = local.set
-
-  depends_on = [
-    kubernetes_service_v1.this,
-    kubernetes_manifest.fileserver_strip_middleware,
-  ]
-
-  yaml_body = yamlencode({
-    apiVersion = "traefik.io/v1alpha1"
-    kind       = "IngressRoute"
-    metadata = {
-      name      = "seafile-fileserver"
-      namespace = kubernetes_namespace_v1.this["enabled"].metadata[0].name
-      labels    = local.tags
-    }
-    spec = {
-      entryPoints = ["websecure"]
-      routes = [
-        {
-          match    = "Host(`${var.external_hostname}`) && PathPrefix(`/seafhttp`)"
-          kind     = "Rule"
-          priority = 100
-          services = [
-            {
-              name = kubernetes_service_v1.this["enabled"].metadata[0].name
-              port = 8082
-            }
-          ]
-          middlewares = [
-            {
-              name      = "seafile-strip-fileserver"
-              namespace = kubernetes_namespace_v1.this["enabled"].metadata[0].name
-            }
-          ]
-        }
-      ]
-    }
-  })
-}

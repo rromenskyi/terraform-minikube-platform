@@ -64,6 +64,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Migration: set it to the KV path holding `slack-webhook` (previously
   hardcoded `platform/slack/argocd-notifications`) to keep notifications.
 
+### Removed
+- `modules/seafile`: the `/seafhttp` IngressRoute and its StripPrefix
+  Middleware. The route listened on `websecure` only and never got traffic;
+  the image's nginx behind the project route already proxies `/seafhttp`.
+
 ### Fixed
 - `modules/component` git-sync:
 - `modules/stalwart`: Stalwart v0.16.11 → v0.16.24 and the socat proxies
