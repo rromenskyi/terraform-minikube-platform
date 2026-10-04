@@ -97,6 +97,8 @@ module "component" {
 
   static_env = try(each.value.env_static, {})
 
+  egress = try(each.value.egress, null)
+
   random_env_secret_name = contains(local.env_random_components, each.key) ? (
     kubernetes_secret_v1.env_random[each.key].metadata[0].name
   ) : null

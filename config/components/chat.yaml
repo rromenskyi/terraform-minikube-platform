@@ -170,9 +170,8 @@ env_static:
 # means they don't outlive the Pod, which is acceptable for a terminal
 # scratchpad that belongs to the chat session.
 #
-# Egress is NOT restricted: the platform emits no NetworkPolicy for tenant
-# namespaces, so commands run here reach the internet and every in-cluster
-# Service the Pod can resolve. Grant the terminal only to trusted users.
+# Egress is limited by the `egress:` block at the end of this file:
+# internet yes, cluster no (DNS and Ollama only).
 sidecars:
   mcp-weather:
     # Pinned to v1.2.0 — adds the `web` domain (search / news /
@@ -249,3 +248,14 @@ storage:
 security:
   run_as_user: 1000
   fs_group:    1000
+
+# The open-terminal sidecar runs commands the chat model chooses, and the
+# Pod is one network identity. Egress: internet yes, cluster no — only DNS
+# and the shared Ollama. Open WebUI itself needs nothing else in-cluster
+# (Zitadel is reached at its public hostname).
+egress:
+  internet: true
+  allow:
+    - namespace:  platform
+      pod_labels: { app: ollama }
+      ports:      [11434]

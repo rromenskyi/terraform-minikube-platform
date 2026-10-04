@@ -315,3 +315,27 @@ variable "affinity" {
   type        = any
   default     = {}
 }
+
+variable "egress" {
+  description = <<-EOT
+    Optional egress lockdown (a NetworkPolicy on the component's pods).
+    `null` (default) = no policy, the pods reach everything. When set, the
+    pods may reach only: cluster DNS, the in-cluster targets in `allow`
+    (namespace + optional pod labels + TCP ports), and — with `internet` —
+    any address outside `private_ranges`. Pod, Service and node addresses
+    sit in those ranges, so everything else in the cluster is cut off.
+    Meant for components that run untrusted code (e.g. a model-driven
+    shell). Needs a CNI that enforces NetworkPolicy egress.
+  EOT
+  type = object({
+    internet = optional(bool, true)
+    allow = optional(list(object({
+      namespace  = string
+      pod_labels = optional(map(string), {})
+      ports      = list(number)
+    })), [])
+    private_ranges    = optional(list(string), ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "169.254.0.0/16"])
+    private_ranges_v6 = optional(list(string), ["fc00::/7", "fe80::/10"])
+  })
+  default = null
+}

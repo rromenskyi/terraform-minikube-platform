@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `modules/component`: optional `egress` (component yaml `egress:`) — a
+  NetworkPolicy that limits the pods to cluster DNS, listed in-cluster
+  targets and, with `internet`, addresses outside the private ranges. The
+  `chat` template uses it: the model-driven `open-terminal` shell keeps
+  internet access but no longer reaches cluster Services, nodes or the
+  Kubernetes API (only Ollama).
 - `grafana_oidc.tf`: Grafana single sign-on through Zitadel (`generic_oauth`,
   auto-login, PKCE), on when Zitadel is enabled and
   `monitoring.grafana_external_url` is set. Roles from the `groups` claim:

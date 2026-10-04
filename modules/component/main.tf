@@ -1038,3 +1038,83 @@ resource "kubernetes_service_v1" "this" {
     }
   }
 }
+
+# ── Egress lockdown (opt-in, see var.egress) ────────────────────────────────
+resource "kubernetes_network_policy_v1" "egress" {
+  for_each = var.egress == null ? toset([]) : toset(["enabled"])
+
+  metadata {
+    name      = "${var.name}-egress"
+    namespace = var.namespace
+    labels    = local.labels
+  }
+
+  spec {
+    pod_selector {
+      match_labels = { app = var.name }
+    }
+    policy_types = ["Egress"]
+
+    egress {
+      to {
+        namespace_selector {
+          match_labels = { "kubernetes.io/metadata.name" = "kube-system" }
+        }
+        pod_selector {
+          match_labels = { "k8s-app" = "kube-dns" }
+        }
+      }
+      ports {
+        protocol = "UDP"
+        port     = "53"
+      }
+      ports {
+        protocol = "TCP"
+        port     = "53"
+      }
+    }
+
+    dynamic "egress" {
+      for_each = var.egress.allow
+      content {
+        to {
+          namespace_selector {
+            match_labels = { "kubernetes.io/metadata.name" = egress.value.namespace }
+          }
+          dynamic "pod_selector" {
+            for_each = length(egress.value.pod_labels) > 0 ? [egress.value.pod_labels] : []
+            content {
+              match_labels = pod_selector.value
+            }
+          }
+        }
+        dynamic "ports" {
+          for_each = egress.value.ports
+          content {
+            protocol = "TCP"
+            port     = tostring(ports.value)
+          }
+        }
+      }
+    }
+
+    dynamic "egress" {
+      for_each = var.egress.internet ? [1] : []
+      content {
+        to {
+          ip_block {
+            cidr   = "0.0.0.0/0"
+            except = var.egress.private_ranges
+          }
+        }
+        to {
+          ip_block {
+            cidr   = "::/0"
+            except = var.egress.private_ranges_v6
+          }
+        }
+      }
+    }
+  }
+}
+
