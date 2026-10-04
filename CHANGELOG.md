@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `grafana_oidc.tf`: Grafana single sign-on through Zitadel (`generic_oauth`,
+  auto-login, PKCE), on when Zitadel is enabled and
+  `monitoring.grafana_external_url` is set. Roles from the `groups` claim:
+  `platform_admin` / `grafana_admin` → Admin, `grafana_editor` → Editor,
+  `grafana_viewer` → Viewer, anyone else refused. Local login stays at
+  `/login?disableAutoLogin=true`.
 - `config_guard.tf`: plan fails when `config/platform.yaml` or every
   `config/domains/*.yaml` is missing (the empty-default fallback planned to
   remove the whole platform). `allow_missing_config = true` opts out for a

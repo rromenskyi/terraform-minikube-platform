@@ -160,6 +160,7 @@ module "addons" {
     local.platform.services.logging.enabled ? { plugins = ["victoriametrics-logs-datasource"] } : {},
     length(local.monitoring_node_selector) > 0 ? { nodeSelector = local.monitoring_node_selector } : {},
     length(local.grafana_resources) > 0 ? { resources = local.grafana_resources } : {},
+    local.grafana_oidc_values, # Zitadel SSO, see grafana_oidc.tf
   )
 
   # Pin Alertmanager's externalUrl (from the gitignored monitoring config)

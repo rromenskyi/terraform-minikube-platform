@@ -766,3 +766,13 @@ services:
 #
 # Schema mirrors `pod.spec` (k8s API v1) — see modules/component/main.tf
 # variable docs for the exact accepted fields.
+
+# Monitoring extras (all optional).
+# monitoring:
+#   # Browser-reachable URLs: alert e-mail links point here instead of
+#   # in-cluster Service names. Each needs a matching route.
+#   alertmanager_external_url: "https://alertmanager.example.com"
+#   vmalert_external_url:      "https://vmalert.example.com"
+#   # Setting this (with Zitadel on) enables Grafana SSO via Zitadel —
+#   # see grafana_oidc.tf for the role mapping.
+#   grafana_external_url:      "https://grafana.example.com"
