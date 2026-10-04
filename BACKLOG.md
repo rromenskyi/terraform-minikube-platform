@@ -147,6 +147,29 @@ domains.
 
 ## Medium — quality of life
 
+### Prebuilt image for backup and reconciler jobs
+
+The backup Jobs (`apk add restic postgresql18-client` / `redis` /
+`sqlite tar`), the Redis ACL keeper (`apk add curl`) and the Stalwart
+bootstrap (`apk add curl unzip zip xz`) install packages on every start.
+That makes each run depend on the Alpine mirrors and pulls whatever
+package versions are current. Plan: one small image (alpine + restic,
+pg/redis clients, sqlite, tar, curl) built in CI, pushed to GHCR, pinned
+by digest in the modules; the `apk add` lines go away. Needs a build
+workflow and a decision on where the Dockerfile lives.
+
+### Tenants can point child Applications at another tenant's AppProject
+
+Each tenant's bootstrap Application is confined to its own
+`<ns>-bootstrap` AppProject, but the child Applications it renders live
+in the `argocd` namespace and may name any AppProject — including
+another tenant's. Fix: Argo CD "apps in any namespace"
+(`application.namespaces`), child Applications in the tenant namespace,
+each AppProject's `sourceNamespaces` limited to that namespace. Requires
+changing every tenant deploy repo (Application `metadata.namespace`), so
+it is a coordinated migration, not an engine-only change. Low urgency
+while every tenant is operator-run.
+
 ### Stalwart 0.16 email aliases — research the canonical pattern
 
 Adding "alias addresses on a domain" (e.g. `legal@`, `hello@`,
