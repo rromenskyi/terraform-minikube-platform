@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `envs.<env>.pod_security_enforce` (domain yaml) → `modules/project`
+  `pod_security_enforce`: enforce a Pod Security level on the project
+  namespace, on top of the warn/audit labels.
 - `modules/component`: optional `egress` (component yaml `egress:`) — a
   NetworkPolicy that limits the pods to cluster DNS, listed in-cluster
   targets and, with `internet`, addresses outside the private ranges. The

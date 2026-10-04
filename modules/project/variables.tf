@@ -190,6 +190,17 @@ variable "redis_acl_namespace" {
   default     = ""
 }
 
+variable "pod_security_enforce" {
+  description = "Pod Security Standard enforced on the project namespace (`baseline`, `restricted`): the API server rejects violating pods. Empty = nothing enforced. Turn it on once warn/audit at `pod_security_level` shows no violations."
+  type        = string
+  default     = ""
+  nullable    = false
+  validation {
+    condition     = contains(["", "baseline", "restricted"], var.pod_security_enforce)
+    error_message = "pod_security_enforce must be empty, baseline or restricted."
+  }
+}
+
 variable "pod_security_level" {
   description = "Pod Security Standard (`privileged`, `baseline`, `restricted`) reported for the project namespace in warn and audit mode (never enforced here). Empty = no labels."
   type        = string

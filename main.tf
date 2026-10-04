@@ -229,10 +229,12 @@ module "project" {
     zitadel    = zitadel
   }
 
-  project_config   = each.value
-  components       = local.components
-  default_limits   = local.default_limits
-  volume_base_path = var.host_volume_path
+  project_config = each.value
+
+  pod_security_enforce = each.value.pod_security_enforce
+  components           = local.components
+  default_limits       = local.default_limits
+  volume_base_path     = var.host_volume_path
 
   # Serialised parent context from `terraform-null-label` (see
   # `_label.tf`). The project module chains its own `project_label`

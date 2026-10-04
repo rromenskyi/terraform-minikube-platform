@@ -483,6 +483,9 @@ locals {
           # rule — IngressRoute / Service live in the operator's deploy
           # repo, applied by Argo CD.
           argocd_hostnames = try(env_spec.argocd_hostnames, {})
+          # Pod Security level enforced on the namespace (`baseline`,
+          # `restricted`); "" = report only (warn/audit, see modules/project).
+          pod_security_enforce = try(env_spec.pod_security_enforce, "")
           # Argo CD bootstrap App-of-Apps roots for this env, keyed by
           # short name. Each entry → one root Application
           # (`<ns>-<key>-bootstrap`) + sub-apps recursing under it.

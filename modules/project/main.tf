@@ -531,6 +531,9 @@ resource "kubernetes_namespace_v1" "this" {
       var.pod_security_level == "" ? {} : {
         "pod-security.kubernetes.io/warn"  = var.pod_security_level
         "pod-security.kubernetes.io/audit" = var.pod_security_level
+      },
+      var.pod_security_enforce == "" ? {} : {
+        "pod-security.kubernetes.io/enforce" = var.pod_security_enforce
     })
   }
 }
