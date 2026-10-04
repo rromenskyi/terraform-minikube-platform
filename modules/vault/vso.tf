@@ -57,6 +57,14 @@ resource "helm_release" "vso" {
         serviceAccount = "vault-secrets-operator-controller-manager"
       }
     }
+    controller = {
+      kubeRbacProxy = {
+        image = {
+          repository = split(":", var.vso_kube_rbac_proxy_image)[0]
+          tag        = join(":", slice(split(":", var.vso_kube_rbac_proxy_image), 1, length(split(":", var.vso_kube_rbac_proxy_image))))
+        }
+      }
+    }
   })]
 
   wait    = true

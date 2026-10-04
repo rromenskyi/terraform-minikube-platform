@@ -196,3 +196,15 @@ variable "snapshot_backup" {
   })
   default = null
 }
+
+variable "vso_kube_rbac_proxy_image" {
+  description = "kube-rbac-proxy image for the VSO controller's metrics endpoint (`repo:tag`, `@sha256:` digest allowed). The chart's default (v0.18.1) carries critical Go stdlib / grpc CVEs."
+  type        = string
+  default     = "quay.io/brancz/kube-rbac-proxy:v0.23.0@sha256:a6075902738eaf1780390561ea998a53a056ef1d2b312bcbf0e2e81fec084b3c"
+}
+
+variable "init_image" {
+  description = "Image for the one-shot vault-init Job (needs sh, curl, sed, base64, kubectl). Bitnami ships only `:latest`, so pin the digest."
+  type        = string
+  default     = "bitnami/kubectl:latest@sha256:f7f9e4f64d9e114650c115a4ac6fd383394b3d494061a8f17b1a0f6c8d55bc25"
+}
