@@ -363,6 +363,7 @@ resource "helm_release" "scale_set" {
           name      = "runner"
           image     = each.value.runner_image
           command   = ["/home/runner/run.sh"]
+          env       = [for name, value in each.value.runner_env : { name = name, value = value }]
           resources = each.value.runner_resources
         }]
       }
