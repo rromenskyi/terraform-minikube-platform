@@ -33,6 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `monitoring.metric_alert_email.namespaces`.
 
 ### Changed
+- `services.airllm.node_selector` places the gateway pods; empty (default)
+  keeps today's scheduling.
 - AirLLM runs two gateway replicas behind a PodDisruptionBudget
   (`maxUnavailable: 1`), and Argo CD deploys a pinned chart tag
   (`services.airllm.chart_revision`, now `v0.1.79`) instead of following the
