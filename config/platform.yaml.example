@@ -115,6 +115,35 @@ services:
     memory_limit:   8Gi
     node_selector:
       workload-tier: general
+    # Piper voices downloaded and smoke-tested (one synthesis each) on
+    # apply, by Piper voice name. Empty = load on first request only.
+    # piper_voices:
+    #   - en_US-amy-medium
+    #   - es_ES-davefx-medium
+    # Idle seconds before a model unloads (-1 = never). Keep live-call
+    # voices resident with -1; loading one costs seconds on a caller's turn.
+    # model_ttl_seconds: 300
+
+  # whisper.cpp server on a Vulkan GPU — OpenAI-shaped transcription route
+  # (`whisper.platform.svc.cluster.local:8080/v1/audio/transcriptions`) for
+  # a Whisper model too slow on the CPU, sharing the card with Ollama. The
+  # image is built from images/whisper-server-vulkan and loaded into the GPU
+  # node; see docs/runbooks/whisper-server-vulkan-image.md for the build,
+  # the VRAM budget next to Ollama and the gateway concurrency cap (1).
+  whisper:
+    enabled: false
+    # image: docker.io/library/whisper-server-vulkan:v1.9.4-1
+    # node_selector:
+    #   gpu: intel
+    # gpu:
+    #   device_path: /dev/dri/renderD129  # discrete card's render node
+    #   device_type: CharDevice
+    #   privileged: true
+    #   supplemental_groups: [44, 990]    # host video + render GIDs
+    #   vulkan_device_id: "8086:e212"     # PCI vendor:device to pin Vulkan to
+    # Model defaults to large-v3-turbo q5_0; override both together.
+    # model_url:    https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin
+    # model_sha256: 394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2
 
   # Zitadel — shared OIDC/SAML IdP for every project (and the
   # platform-admin surface itself). Stores state in the shared Postgres

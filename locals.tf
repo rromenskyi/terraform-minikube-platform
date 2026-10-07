@@ -378,6 +378,60 @@ locals {
         # just the on-disk model size.
         memory_request = "1Gi"
         memory_limit   = "8Gi"
+        # Piper voices to download into the model cache on apply and smoke-
+        # test with one synthesis each, by Piper voice name
+        # (`<lang>_<REGION>-<name>-<quality>`, e.g. `en_US-amy-medium`).
+        # Speaches loads a voice on first request either way; preloading
+        # keeps the download off a caller's first turn and fails the apply
+        # on a voice the registry does not carry.
+        piper_voices = []
+        # Seconds an idle model (Whisper, Piper, Kokoro alike — Speaches has
+        # one setting for all) stays loaded; -1 never unloads. Loading a
+        # Piper voice takes seconds, so a voice serving live calls wants -1,
+        # at the cost of keeping every model it has used in memory.
+        model_ttl_seconds = 300
+      }
+
+      # whisper.cpp server on a Vulkan GPU (whisper.tf) — an OpenAI-shaped
+      # transcription route for a Whisper model that should not run on the
+      # CPU. Runs the operator-built image from images/whisper-server-vulkan.
+      whisper = {
+        enabled = false
+        # hostPath subdirectory under host_volume_path for the model PV —
+        # the k8s namespace is the shared `platform` one (same as speaches).
+        namespace = "whisper"
+        # Required when enabled: the image built from
+        # images/whisper-server-vulkan (see its runbook).
+        image = ""
+        # GGML model fetched once into the model volume and verified by
+        # sha256 on every pod start; the file is named after the URL's last
+        # segment. large-v3-turbo q5_0: ~550 MB on disk, multilingual, near
+        # large-v3 accuracy at a fraction of its decode cost. Override both
+        # together — a URL without its checksum fails the init container.
+        model_url    = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin"
+        model_sha256 = "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2"
+        storage_size = "2Gi"
+        # CPU threads for the non-GPU parts of a decode (audio decoding,
+        # mel spectrogram, sampling).
+        threads = 4
+        # Appended to the server's arguments. Language probabilities are off
+        # by default: computing them costs an extra encoder pass per request,
+        # and the detected language is still returned in `language`.
+        extra_args = ["--no-language-probabilities"]
+        # Required when enabled. Same device-access shape as
+        # services.ollama.gpu — device_path, device_type (default
+        # "CharDevice"), privileged (default true), supplemental_groups,
+        # env — plus vulkan_device_id, the PCI `vendor:device` the
+        # entrypoint pins Vulkan to (required while privileged).
+        gpu = null
+        # Required when enabled: the node that owns gpu.device_path.
+        node_selector = {}
+        cpu_request   = "500m"
+        cpu_limit     = "4"
+        # Model weights live in VRAM; host memory holds the HTTP buffers,
+        # the decoded audio and Vulkan's staging copies.
+        memory_request = "512Mi"
+        memory_limit   = "2Gi"
       }
 
       # AI alert enrichment (alert_llm_enricher.tf) — adds an LLM-generated
@@ -438,6 +492,7 @@ locals {
       traefik_public       = merge(local._platform_defaults.services.traefik_public, try(local._platform_services.traefik_public, {}))
       airllm               = merge(local._platform_defaults.services.airllm, try(local._platform_services.airllm, {}))
       speaches             = merge(local._platform_defaults.services.speaches, try(local._platform_services.speaches, {}))
+      whisper              = merge(local._platform_defaults.services.whisper, try(local._platform_services.whisper, {}))
       alert_llm_enrichment = merge(local._platform_defaults.services.alert_llm_enrichment, try(local._platform_services.alert_llm_enrichment, {}))
     }
     # Operator-supplied monitoring extras (gitignored config). Generic engine

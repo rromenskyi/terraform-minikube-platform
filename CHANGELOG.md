@@ -31,6 +31,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   long) is on, labelled for the Prometheus rule selector and the metric-alert
   email route. Email delivery also needs the gateway's namespace under
   `monitoring.metric_alert_email.namespaces`.
+- `whisper.tf` (`services.whisper`, off by default): whisper.cpp
+  `whisper-server` on a Vulkan GPU next to Ollama, with an OpenAI-shaped
+  `/v1/audio/transcriptions` route. The model is fetched into a hostPath
+  volume and checked by sha256 on every start. `images/whisper-server-vulkan`
+  holds the image, whose entrypoint pins Vulkan to a PCI `vendor:device` and
+  will not start on a CPU-only device list. The build, the VRAM budget and the
+  gateway concurrency cap are in `docs/runbooks/whisper-server-vulkan-image.md`.
+- `services.speaches.piper_voices`: a Job on apply downloads each listed Piper
+  voice and synthesises one clip with it. The apply fails on a voice that is
+  not in the registry or produces no audio.
+- `services.speaches.model_ttl_seconds` (default 300, the upstream default):
+  how long an idle model stays loaded; `-1` keeps live-call voices resident.
+  Adding the setting, and pinning the init container's busybox by digest,
+  rolls the Speaches pod once on the next apply.
 
 ### Changed
 - `services.airllm.node_selector` places the gateway pods; empty (default)
