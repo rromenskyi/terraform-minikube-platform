@@ -266,9 +266,9 @@ resource "kubectl_manifest" "airllm_application" {
             }
             app = {
               # Two replicas so losing one pod does not interrupt calls; the
-              # disruption budget keeps a drain from taking both. On a
-              # single-node cluster this guards against losing a pod, not the
-              # node. Provider concurrency caps and round-robin counters are
+              # disruption budget keeps a drain from taking both. Nothing
+              # spreads them across nodes, so this guards against losing a
+              # pod, not necessarily a node. Provider concurrency caps and round-robin counters are
               # per replica: a provider's max_concurrency admits twice that
               # many requests in total, so a cap that mirrors a fixed upstream
               # capacity (e.g. a local model server's parallel slots) has to
