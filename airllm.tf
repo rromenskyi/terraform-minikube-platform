@@ -265,9 +265,18 @@ resource "kubectl_manifest" "airllm_application" {
               adminUsername = "admin"
             }
             app = {
-              replicaCount = 1
-              autoscaling  = { enabled = false }
-              ingress      = { enabled = false } # platform IngressRoute below owns the route
+              # Two replicas so losing one pod does not interrupt calls; the
+              # disruption budget keeps a drain from taking both. Nothing
+              # spreads them across nodes, so this guards against losing a
+              # pod, not necessarily a node. Provider concurrency caps and round-robin counters are
+              # per replica: a provider's max_concurrency admits twice that
+              # many requests in total, so a cap that mirrors a fixed upstream
+              # capacity (e.g. a local model server's parallel slots) has to
+              # be halved in the gateway.
+              replicaCount        = 2
+              autoscaling         = { enabled = false }
+              podDisruptionBudget = { enabled = true, maxUnavailable = 1 }
+              ingress             = { enabled = false } # platform IngressRoute below owns the route
               # The image's USER is the name `app` (non-numeric), which k8s
               # can't verify against the chart's runAsNonRoot — pin the UID
               # the image is built for (Dockerfile chowns /var/lib/airllm to
@@ -293,6 +302,15 @@ resource "kubectl_manifest" "airllm_application" {
             metrics = {
               serviceMonitor = { enabled = true }
               dashboards     = { enabled = true }
+              # The chart's tier-quarantine alert. `release` matches the
+              # Prometheus rule selector; `alert_source = metric` is what the
+              # metric-alert email route matches — it also needs this
+              # namespace under `monitoring.metric_alert_email.namespaces`.
+              prometheusRule = {
+                enabled     = true
+                labels      = { release = "kube-prometheus-stack" }
+                alertLabels = { severity = "warning", alert_source = "metric" }
+              }
             }
             # Off unless an SA to impersonate is configured, and then the only
             # thing it changes is that the pod gains a cloud identity — the
