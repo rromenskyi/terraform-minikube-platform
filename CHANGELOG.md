@@ -51,7 +51,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keeps today's scheduling.
 - AirLLM runs two gateway replicas behind a PodDisruptionBudget
   (`maxUnavailable: 1`), and Argo CD deploys a pinned chart tag
-  (`services.airllm.chart_revision`, now `v0.1.81`) instead of following the
+  (`services.airllm.chart_revision`, now `v0.1.82`) instead of following the
   app repo's `main`. Rolling out a gateway release now means bumping
   `chart_revision` and applying. Provider concurrency caps in the gateway are
   per replica, so a provider's `max_concurrency` now admits twice as many
