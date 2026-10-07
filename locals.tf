@@ -341,6 +341,10 @@ locals {
         image_tag      = ""
         # Upstream chart repository (public). Override to run a fork.
         repo_url = "https://github.com/ipsupport-llc/ipsupport-airllm.git"
+        # Node selector for the gateway pods (both replicas). Empty lets them
+        # land on any node; set it to keep the voice path off nodes far from
+        # its datastores and model servers.
+        node_selector = {}
         # GCP Workload Identity Federation: the SA the pod impersonates so the
         # gateway's `vertex` provider mints OAuth2 tokens as its own cloud
         # identity, with no service-account key stored anywhere. Empty (default)
