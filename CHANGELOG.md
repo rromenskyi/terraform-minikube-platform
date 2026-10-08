@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `speaches.tf`: ONNX sessions that leave their thread counts at 0 (speaches'
+  Piper and Kokoro) run with as many intra- and inter-op threads as the
+  container's CPU limit (`services.speaches.onnx_threads`, 0 = follow
+  `cpu_limit`). ONNX Runtime sized its pool by the node's cores, so under a
+  2-CPU limit a Piper sentence spent ~2 s throttled instead of ~0.1 s. The
+  upstream image is unchanged: `scripts/speaches/sitecustomize.py` comes from
+  a ConfigMap on `PYTHONPATH` and wraps `onnxruntime.InferenceSession`.
 - `envs.<env>.pod_security_enforce` (domain yaml) → `modules/project`
   `pod_security_enforce`: enforce a Pod Security level on the project
   namespace, on top of the warn/audit labels.

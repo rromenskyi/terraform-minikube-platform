@@ -111,6 +111,7 @@ terraform-minikube-platform/
 │   └── limits/<ns>.yaml                        # Per-namespace ResourceQuota; `default.yaml` is the fallback
 │
 ├── images/whisper-server-vulkan/              # Operator-built whisper.cpp Vulkan image for whisper.tf
+├── scripts/speaches/                           # sitecustomize.py hook that sizes speaches' ONNX thread pools (+ its test)
 │
 └── modules/                                    # 19 modules — one per concern, all four files per AGENT.md
     ├── project/                                # Tenant ns + quota + per-ns shared-service hooks + components + IngressRoutes + chart_oidc_apps + secrets + argocd_bootstraps

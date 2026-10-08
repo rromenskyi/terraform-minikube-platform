@@ -16,6 +16,42 @@ locals {
   speaches_instances = local.speaches.enabled ? toset(["enabled"]) : toset([])
   # Shell image for the ownership fix and the voice preload Job.
   speaches_busybox_image = "busybox:1.36@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662"
+
+  speaches_python_hooks_dir = "/opt/speaches-hooks"
+  speaches_sitecustomize    = file("${path.module}/scripts/speaches/sitecustomize.py")
+
+  # Whole cores in cpu_limit ("2", "1.5" or "1500m"), rounded up.
+  speaches_cpu_limit_cores = ceil(
+    endswith(local.speaches.cpu_limit, "m")
+    ? tonumber(trimsuffix(local.speaches.cpu_limit, "m")) / 1000
+    : tonumber(local.speaches.cpu_limit)
+  )
+  speaches_onnx_threads = (
+    tonumber(local.speaches.onnx_threads) > 0
+    ? tonumber(local.speaches.onnx_threads)
+    : local.speaches_cpu_limit_cores
+  )
+}
+
+# speaches builds its Piper and Kokoro ONNX sessions with no session options,
+# and has no setting for them, so ONNX Runtime sizes its thread pool by the
+# node's cores instead of the pod's CPU limit. Rather than fork the image,
+# this sitecustomize.py is put on PYTHONPATH, where Python imports it at
+# interpreter start; it fills in the thread count from ONNX_SESSION_THREADS.
+resource "kubernetes_config_map_v1" "speaches_python_hooks" {
+  for_each = local.speaches_instances
+
+  metadata {
+    name      = "speaches-python-hooks"
+    namespace = kubernetes_namespace_v1.platform.metadata[0].name
+    labels = merge(module.platform_label.tags, {
+      "app.kubernetes.io/component" = "speaches"
+    })
+  }
+
+  data = {
+    "sitecustomize.py" = local.speaches_sitecustomize
+  }
 }
 
 resource "kubernetes_persistent_volume_v1" "speaches_model_cache" {
@@ -63,6 +99,13 @@ resource "kubernetes_persistent_volume_claim_v1" "speaches_model_cache" {
 resource "kubernetes_deployment_v1" "speaches" {
   for_each = local.speaches_instances
 
+  lifecycle {
+    precondition {
+      condition     = can(regex("^[0-9]+$", tostring(local.speaches.onnx_threads)))
+      error_message = "services.speaches.onnx_threads must be a whole number of threads; 0 follows cpu_limit."
+    }
+  }
+
   metadata {
     name      = "speaches"
     namespace = kubernetes_namespace_v1.platform.metadata[0].name
@@ -84,6 +127,11 @@ resource "kubernetes_deployment_v1" "speaches" {
           "app.kubernetes.io/name"      = "speaches"
           "app.kubernetes.io/component" = "speaches"
         })
+        annotations = {
+          # A ConfigMap update alone does not restart the pod, and Python
+          # reads the hook only at start.
+          "checksum/sitecustomize-py" = sha256(local.speaches_sitecustomize)
+        }
       }
 
       spec {
@@ -139,11 +187,29 @@ resource "kubernetes_deployment_v1" "speaches" {
             mount_path = "/home/ubuntu/.cache/huggingface/hub"
           }
 
+          volume_mount {
+            name       = "python-hooks"
+            mount_path = local.speaches_python_hooks_dir
+            read_only  = true
+          }
+
           # Despite the name, Speaches applies this idle-unload TTL to every
           # model kind, Piper and Kokoro included.
           env {
             name  = "WHISPER__TTL"
             value = tostring(local.speaches.model_ttl_seconds)
+          }
+
+          # The upstream image sets no PYTHONPATH of its own to keep.
+          env {
+            name  = "PYTHONPATH"
+            value = local.speaches_python_hooks_dir
+          }
+
+          # Read by sitecustomize.py.
+          env {
+            name  = "ONNX_SESSION_THREADS"
+            value = tostring(local.speaches_onnx_threads)
           }
 
           resources {
@@ -174,6 +240,13 @@ resource "kubernetes_deployment_v1" "speaches" {
           name = "model-cache"
           persistent_volume_claim {
             claim_name = kubernetes_persistent_volume_claim_v1.speaches_model_cache["enabled"].metadata[0].name
+          }
+        }
+
+        volume {
+          name = "python-hooks"
+          config_map {
+            name = kubernetes_config_map_v1.speaches_python_hooks["enabled"].metadata[0].name
           }
         }
       }
