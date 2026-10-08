@@ -4,7 +4,8 @@ The hook acts at interpreter start, so every case runs a fresh Python with this
 directory on PYTHONPATH, the way the speaches container does. Needs
 onnxruntime and onnx:
 
-    uv run --with onnxruntime --with onnx python -m unittest scripts/speaches/test_sitecustomize.py
+    uv run --no-project --python 3.12 --with onnxruntime==1.22.1 --with onnx \
+        python -m unittest scripts/speaches/test_sitecustomize.py
 """
 
 import json

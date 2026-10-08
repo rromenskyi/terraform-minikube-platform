@@ -19,6 +19,18 @@ locals {
 
   speaches_python_hooks_dir = "/opt/speaches-hooks"
   speaches_sitecustomize    = file("${path.module}/scripts/speaches/sitecustomize.py")
+
+  # Whole cores in cpu_limit ("2", "1.5" or "1500m"), rounded up.
+  speaches_cpu_limit_cores = ceil(
+    endswith(local.speaches.cpu_limit, "m")
+    ? tonumber(trimsuffix(local.speaches.cpu_limit, "m")) / 1000
+    : tonumber(local.speaches.cpu_limit)
+  )
+  speaches_onnx_threads = (
+    tonumber(local.speaches.onnx_threads) > 0
+    ? tonumber(local.speaches.onnx_threads)
+    : local.speaches_cpu_limit_cores
+  )
 }
 
 # speaches builds its Piper and Kokoro ONNX sessions with no session options,
@@ -188,33 +200,16 @@ resource "kubernetes_deployment_v1" "speaches" {
             value = tostring(local.speaches.model_ttl_seconds)
           }
 
+          # The upstream image sets no PYTHONPATH of its own to keep.
           env {
             name  = "PYTHONPATH"
             value = local.speaches_python_hooks_dir
           }
 
-          # Read by sitecustomize.py. The downward API rounds a fractional
-          # CPU limit up to whole cores.
-          dynamic "env" {
-            for_each = local.speaches.onnx_threads == 0 ? ["cpu_limit"] : []
-            content {
-              name = "ONNX_SESSION_THREADS"
-              value_from {
-                resource_field_ref {
-                  container_name = "speaches"
-                  resource       = "limits.cpu"
-                  divisor        = "1"
-                }
-              }
-            }
-          }
-
-          dynamic "env" {
-            for_each = local.speaches.onnx_threads == 0 ? [] : [local.speaches.onnx_threads]
-            content {
-              name  = "ONNX_SESSION_THREADS"
-              value = tostring(env.value)
-            }
+          # Read by sitecustomize.py.
+          env {
+            name  = "ONNX_SESSION_THREADS"
+            value = tostring(local.speaches_onnx_threads)
           }
 
           resources {

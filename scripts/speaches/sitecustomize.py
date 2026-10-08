@@ -20,11 +20,11 @@ import functools
 import os
 import sys
 
-_VAR = "ONNX_SESSION_THREADS"
+_ENV_VAR = "ONNX_SESSION_THREADS"
 
 
-def _threads():
-    raw = os.environ.get(_VAR, "")
+def _threads_from_env():
+    raw = os.environ.get(_ENV_VAR, "")
     if raw == "":
         return None
     try:
@@ -33,7 +33,7 @@ def _threads():
         count = 0
     if count > 0:
         return count
-    print(f"sitecustomize: ignoring {_VAR}={raw!r}, want a positive integer", file=sys.stderr)
+    print(f"sitecustomize: ignoring {_ENV_VAR}={raw!r}, want a positive integer", file=sys.stderr)
     return None
 
 
@@ -59,6 +59,6 @@ def _install(threads):
     session.__init__ = __init__
 
 
-_count = _threads()
-if _count is not None:
-    _install(_count)
+_threads = _threads_from_env()
+if _threads is not None:
+    _install(_threads)

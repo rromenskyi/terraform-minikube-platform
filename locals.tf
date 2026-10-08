@@ -393,7 +393,7 @@ locals {
         # Intra- and inter-op threads for ONNX sessions that do not pick
         # their own (Piper, Kokoro). 0 follows cpu_limit, rounded up. ONNX
         # Runtime otherwise starts one thread per node core, and under a
-        # 2-CPU limit on a 28-core node a 0.1 s Piper sentence took 2 s of
+        # 2-CPU limit on a many-core node a 0.1 s Piper sentence took 2 s of
         # CFS throttling (scripts/speaches/sitecustomize.py).
         onnx_threads = 0
       }
