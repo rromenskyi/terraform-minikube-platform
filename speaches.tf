@@ -117,6 +117,13 @@ resource "kubernetes_deployment_v1" "speaches" {
   spec {
     replicas = 1
 
+    # A rolling update starts the new pod next to the old one, and a second
+    # memory_limit-sized pod does not fit the platform namespace quota: the
+    # rollout stalls on FailedCreate while the old pod keeps serving.
+    strategy {
+      type = "Recreate"
+    }
+
     selector {
       match_labels = { "app.kubernetes.io/name" = "speaches" }
     }
