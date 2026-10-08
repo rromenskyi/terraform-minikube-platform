@@ -105,6 +105,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the image's nginx behind the project route already proxies `/seafhttp`.
 
 ### Fixed
+- `speaches.tf`: the Deployment uses the `Recreate` strategy. A rolling update
+  needs room for a second `memory_limit`-sized pod in the `platform` quota,
+  and without it the rollout stalls on `FailedCreate`.
 - `modules/component` git-sync:
 - `modules/vault`: VSO's kube-rbac-proxy v0.18.1 → v0.23.0
   (`vso_kube_rbac_proxy_image`), vault-init Job on `bitnami/kubectl`
