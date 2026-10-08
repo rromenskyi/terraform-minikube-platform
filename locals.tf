@@ -337,7 +337,7 @@ locals {
         # the app repo's main never reaches live traffic by itself. Empty
         # image_tag lets the chart default to that tag's appVersion. Rolling
         # out a release = bump chart_revision here and apply.
-        chart_revision = "v0.1.80"
+        chart_revision = "v0.1.83"
         image_tag      = ""
         # Upstream chart repository (public). Override to run a fork.
         repo_url = "https://github.com/ipsupport-llc/ipsupport-airllm.git"
