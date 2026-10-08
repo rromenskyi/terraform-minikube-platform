@@ -123,6 +123,10 @@ services:
     # Idle seconds before a model unloads (-1 = never). Keep live-call
     # voices resident with -1; loading one costs seconds on a caller's turn.
     # model_ttl_seconds: 300
+    # Threads for ONNX sessions that do not pick their own (Piper, Kokoro).
+    # 0 = follow cpu_limit. ONNX Runtime would otherwise size its pool by the
+    # node's cores and spend most of each request throttled.
+    # onnx_threads: 0
 
   # whisper.cpp server on a Vulkan GPU — OpenAI-shaped transcription route
   # (`whisper.platform.svc.cluster.local:8080/v1/audio/transcriptions`) for
