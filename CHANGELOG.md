@@ -105,6 +105,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the image's nginx behind the project route already proxies `/seafhttp`.
 
 ### Fixed
+- `modules/zitadel`: after a node reboot Zitadel could start before Postgres
+  and exit, and the login container started next to it stayed broken until
+  the pod was restarted (SSO down). A `wait-postgres` init container now
+  holds the pod until the database answers, and the login container starts
+  only once Zitadel's `/debug/ready` passes.
 - `speaches.tf`: the Deployment uses the `Recreate` strategy. A rolling update
   needs room for a second `memory_limit`-sized pod in the `platform` quota,
   and without it the rollout stalls on `FailedCreate`.

@@ -280,6 +280,21 @@ resource "kubernetes_deployment_v1" "zitadel" {
         # value explicitly anyway.
         enable_service_links = false
 
+        # After a node reboot Zitadel can start before Postgres accepts
+        # connections; `start-from-init` then exits and the pod restarts
+        # with the login container already up next to it. Hold the whole
+        # pod until the database answers.
+        init_container {
+          name    = "wait-postgres"
+          image   = "postgres:18.6-alpine"
+          command = ["sh", "-c", "until pg_isready -h ${var.postgres_host} -p 5432 -t 2; do echo 'waiting for postgres'; sleep 2; done"]
+
+          resources {
+            requests = { cpu = "10m", memory = "16Mi" }
+            limits   = { cpu = "100m", memory = "64Mi" }
+          }
+        }
+
         container {
           name  = "zitadel"
           image = var.image
@@ -583,6 +598,13 @@ resource "kubernetes_deployment_v1" "zitadel" {
               done
             fi
             export ZITADEL_SERVICE_USER_TOKEN="$(cat "$PAT_FILE")"
+            # Start only once Zitadel serves: a login started against a
+            # Zitadel that is still booting (or restarting) has been seen
+            # to keep failing until the pod is restarted.
+            until node -e "fetch('http://localhost:8080/debug/ready').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"; do
+              echo "login: waiting for zitadel /debug/ready..."
+              sleep 2
+            done
             echo "login: token loaded ($${#ZITADEL_SERVICE_USER_TOKEN} chars), starting next-server..."
             exec node apps/login/server.js
             EOT
