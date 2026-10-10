@@ -357,6 +357,35 @@ locals {
         # leaves the chart's block off. The pool coordinates are NOT repeated
         # here — airllm.tf derives them from `services.gcp_wif`.
         google_service_account = ""
+        # Gateway replicas (see modules/airllm `replicas`).
+        replicas = 2
+      }
+
+      # A second AirLLM instance for development (airllm.tf), next to the one
+      # above: own namespace, hostname, database and Redis index; by default
+      # it tracks main while the instance above pins a release tag.
+      airllm_dev = {
+        enabled            = false
+        namespace          = "airllm-dev"
+        hostname           = ""
+        cloudflare_zone_id = ""
+        public_ip          = ""
+        chart_revision     = "main"
+        image_tag          = ""
+        node_selector      = {}
+        replicas           = 1
+        # Redis database index; the app's keys always start with `air:`, so
+        # it must differ from the other instance's (0).
+        redis_db = 1
+        # Copy the other instance's database once, while this one is still
+        # empty. It then also shares that instance's master key, because the
+        # copied provider credentials are encrypted with it.
+        seed_from_airllm = false
+        # Log in through Zitadel (needs services.zitadel and a hostname)
+        # instead of local accounts. Zitadel roles `airllm_admin` /
+        # `airllm_user` (and `platform_admin`) map to the app's roles.
+        oidc                   = false
+        google_service_account = ""
       }
 
       # Speaches — self-hosted OpenAI-compatible STT/TTS server
@@ -504,6 +533,7 @@ locals {
       disk_health          = merge(local._platform_defaults.services.disk_health, try(local._platform_services.disk_health, {}))
       traefik_public       = merge(local._platform_defaults.services.traefik_public, try(local._platform_services.traefik_public, {}))
       airllm               = merge(local._platform_defaults.services.airllm, try(local._platform_services.airllm, {}))
+      airllm_dev           = merge(local._platform_defaults.services.airllm_dev, try(local._platform_services.airllm_dev, {}))
       speaches             = merge(local._platform_defaults.services.speaches, try(local._platform_services.speaches, {}))
       whisper              = merge(local._platform_defaults.services.whisper, try(local._platform_services.whisper, {}))
       alert_llm_enrichment = merge(local._platform_defaults.services.alert_llm_enrichment, try(local._platform_services.alert_llm_enrichment, {}))

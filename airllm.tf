@@ -1,449 +1,223 @@
 # AirLLM — self-hosted LLM gateway (github.com/ipsupport-llc/ipsupport-airllm),
-# deployed from its PUBLIC Helm chart via an Argo CD Application.
+# deployed from its PUBLIC Helm chart via Argo CD (modules/airllm).
 #
-# Split of concerns (the public repo must carry NO trace of this install):
-#   - the app repo ships a generic chart (existingSecret contract, external
-#     Postgres/Redis, chart ingress off);
-#   - THIS file (tracked, generic — no hostnames/secrets) renders the
-#     Application, provisions the database, and emits the runtime Secret;
-#   - environment specifics (hostname, zone id, pool VIP) live in the
-#     gitignored `config/platform.yaml` under `services.airllm`.
-#
-# Exposure is DIRECT (no Cloudflare tunnel/proxy):
-# unproxied A record → traefik_public VIP → IngressRoute (websecure) with a
-# cert-manager Let's Encrypt certificate.
+# Two instances, each configured in the gitignored `config/platform.yaml`:
+#   - `services.airllm`     — the main instance, typically pinned to a release
+#     tag;
+#   - `services.airllm_dev` — a development instance next to it, typically
+#     tracking main. It can start from a one-time copy of the main instance's
+#     database (sharing its master key, so the copied provider credentials
+#     decrypt) and log in through Zitadel.
 
 locals {
-  airllm = local.platform.services.airllm # defaults + gitignored overrides, normalized in locals.tf
+  airllm     = local.platform.services.airllm # defaults + gitignored overrides, normalized in locals.tf
+  airllm_dev = local.platform.services.airllm_dev
 
-  airllm_instances = local.airllm.enabled ? toset(["enabled"]) : toset([])
-  airllm_enabled   = local.airllm.enabled
-  airllm_repo_url  = local.airllm.repo_url
-  airllm_db        = "airllm"
+  airllm_enabled  = local.airllm.enabled
+  airllm_repo_url = local.airllm.repo_url
 
-  # ── GCP Workload Identity Federation ──────────────────────────────────────
-  # The chart wants the pool coordinates as three separate values; the platform
-  # already carries them as the one audience string every other WIF consumer on
-  # this cluster uses. Derive them instead of re-declaring them: the audience is
-  # rendered into both the projected token and the credential config, and a
-  # mismatch is rejected only by STS at the first token refresh — hours after a
-  # rollout that looked clean.
-  airllm_wif_enabled = local.airllm.google_service_account != ""
+  # Applications Argo CD's `platform` AppProject admits (argocd.tf).
+  airllm_argocd_apps = concat(
+    local.airllm.enabled ? [{ repo_url = local.airllm_repo_url, namespace = local.airllm.namespace }] : [],
+    local.airllm_dev.enabled ? [{ repo_url = local.airllm_repo_url, namespace = local.airllm_dev.namespace }] : [],
+  )
 
-  # //iam.googleapis.com/projects/<NUMBER>/locations/global/workloadIdentityPools/<POOL>/providers/<PROVIDER>
-  _airllm_wif_pattern = "^//iam\\.googleapis\\.com/projects/(?P<project_number>[0-9]+)/locations/global/workloadIdentityPools/(?P<pool_id>[^/]+)/providers/(?P<provider_id>[^/]+)$"
-  # A non-match must reach the precondition below with an actionable message
-  # rather than dying inside `regex()`, hence `try` over a bare call.
-  _airllm_wif_unparsed = { project_number = "", pool_id = "", provider_id = "" }
-  airllm_wif = local.airllm_wif_enabled ? try(
-    regex(local._airllm_wif_pattern, local.platform.services.gcp_wif.pool_provider_audience),
-    local._airllm_wif_unparsed,
-  ) : local._airllm_wif_unparsed
+  airllm_dev_oidc_enabled = local.airllm_dev.enabled && local.airllm_dev.oidc && local.platform.services.zitadel.enabled
 }
 
-# ── Namespace ────────────────────────────────────────────────────────────────
+module "airllm" {
+  source = "./modules/airllm"
 
-resource "kubernetes_namespace_v1" "airllm" {
-  for_each = local.airllm_instances
+  enabled   = local.airllm.enabled
+  name      = "airllm"
+  namespace = local.airllm.namespace
+  tags      = module.platform_label.tags
+  app_env   = "prod"
 
-  metadata {
-    name = local.airllm.namespace
-    labels = merge(module.platform_label.tags, {
-      "app.kubernetes.io/managed-by" = "terraform"
-      "app.kubernetes.io/component"  = "airllm"
-    })
-  }
+  repo_url       = local.airllm_repo_url
+  chart_revision = local.airllm.chart_revision
+  image_tag      = local.airllm.image_tag
+  replicas       = local.airllm.replicas
+  node_selector  = local.airllm.node_selector
+
+  argocd_namespace          = local.platform.services.argocd.namespace
+  setup_namespace           = kubernetes_namespace_v1.platform.metadata[0].name
+  postgres_host             = module.postgres.host
+  postgres_superuser_secret = module.postgres.superuser_secret_name
+  database_name             = "airllm"
+  redis_host                = module.redis.host
+  redis_port                = module.redis.port
+  redis_db                  = 0
+  redis_acl_namespace       = module.redis.acl_namespace
+
+  google_service_account = local.airllm.google_service_account
+  gcp_wif_audience       = local.platform.services.gcp_wif.pool_provider_audience
+
+  hostname           = local.airllm.hostname
+  cloudflare_zone_id = local.airllm.cloudflare_zone_id
+  public_ip          = local.airllm.public_ip
 }
 
-# ── Database on the shared platform Postgres ────────────────────────────────
-# Same shape as the Zitadel provisioning job: idempotent psql against the
-# shared instance using the superuser Secret; the generated app password
-# never leaves TF state + the runtime Secret below.
+module "airllm_dev" {
+  source = "./modules/airllm"
 
-resource "random_password" "airllm_db" {
-  for_each = local.airllm_instances
+  enabled   = local.airllm_dev.enabled
+  name      = "airllm-dev"
+  namespace = local.airllm_dev.namespace
+  tags      = module.platform_label.tags
+  app_env   = "dev"
 
-  length  = 32
-  special = false
+  repo_url       = local.airllm_repo_url
+  chart_revision = local.airllm_dev.chart_revision
+  image_tag      = local.airllm_dev.image_tag
+  replicas       = local.airllm_dev.replicas
+  node_selector  = local.airllm_dev.node_selector
+  # The chart's dashboards have fixed uids (the main instance ships them)
+  # and dev alerts should not page anyone.
+  dashboards_enabled      = false
+  prometheus_rule_enabled = false
+
+  argocd_namespace          = local.platform.services.argocd.namespace
+  setup_namespace           = kubernetes_namespace_v1.platform.metadata[0].name
+  postgres_host             = module.postgres.host
+  postgres_superuser_secret = module.postgres.superuser_secret_name
+  database_name             = "airllm_dev"
+  seed_from_database        = local.airllm_dev.seed_from_airllm ? "airllm" : ""
+  master_key                = local.airllm_dev.seed_from_airllm ? module.airllm.master_key : ""
+  redis_host                = module.redis.host
+  redis_port                = module.redis.port
+  redis_db                  = local.airllm_dev.redis_db
+  redis_acl_namespace       = module.redis.acl_namespace
+
+  # Roles come from the `groups` claim (zitadel_actions.tf: every role key the
+  # user holds in any project). Role keys are therefore per instance, so a
+  # dev role grants nothing on another instance; `platform_admin` is admin
+  # everywhere.
+  oidc = local.airllm_dev_oidc_enabled ? {
+    issuer      = "https://${local.platform.services.zitadel.external_domain}"
+    client_id   = module.airllm_dev_oidc["enabled"].client_id
+    roles_claim = "groups"
+    role_map    = "platform_admin:airllm_admin,airllm_dev_admin:airllm_admin,airllm_dev_user:airllm_user"
+  } : null
+  oidc_client_secret = local.airllm_dev_oidc_enabled ? module.airllm_dev_oidc["enabled"].client_secret : ""
+
+  google_service_account = local.airllm_dev.google_service_account
+  gcp_wif_audience       = local.platform.services.gcp_wif.pool_provider_audience
+
+  hostname           = local.airllm_dev.hostname
+  cloudflare_zone_id = local.airllm_dev.cloudflare_zone_id
+  public_ip          = local.airllm_dev.public_ip
 }
 
-resource "kubernetes_secret_v1" "airllm_postgres_setup_env" {
-  for_each = local.airllm_instances
+# Zitadel project + OIDC application for the dev instance. The app reads the
+# client id from its values and the client secret from its runtime Secret;
+# the Secret this module emits (data only, no env formats) is not consumed.
+module "airllm_dev_oidc" {
+  source   = "./modules/zitadel-app"
+  for_each = local.airllm_dev_oidc_enabled ? toset(["enabled"]) : toset([])
 
-  metadata {
-    name      = "airllm-postgres-setup"
-    namespace = kubernetes_namespace_v1.platform.metadata[0].name
-    labels    = module.platform_label.tags
-  }
-
-  data = {
-    SETUP_PASSWORD = "${random_password.airllm_db["enabled"].result}"
-  }
-}
-
-resource "kubernetes_job_v1" "airllm_postgres_setup" {
-  for_each = local.airllm_instances
-
-  metadata {
-    name      = "airllm-postgres-setup"
-    namespace = kubernetes_namespace_v1.platform.metadata[0].name
-    labels    = merge(module.platform_label.tags, { app = "airllm" })
-  }
-
-  spec {
-    backoff_limit = 6
-    # No TTL — TF-managed Job, self-delete causes re-plan churn (see the
-    # postgres module's pg_extensions Job for the full rationale).
-
-    template {
-      metadata {
-        labels = merge(module.platform_label.tags, { app = "airllm", job = "airllm-postgres-setup" })
-      }
-
-      spec {
-        restart_policy = "OnFailure"
-
-        container {
-          name  = "psql"
-          image = "postgres:18.6-alpine"
-
-          # Password from a Secret, not the command line: Job specs are
-          # readable far more widely than Secrets.
-          env {
-            name = "SETUP_PASSWORD"
-            value_from {
-              secret_key_ref {
-                name = kubernetes_secret_v1.airllm_postgres_setup_env[each.key].metadata[0].name
-                key  = "SETUP_PASSWORD"
-              }
-            }
-          }
-
-          env {
-            name = "PGPASSWORD"
-            value_from {
-              secret_key_ref {
-                name = module.postgres.superuser_secret_name
-                key  = "POSTGRES_PASSWORD"
-              }
-            }
-          }
-
-          command = ["sh", "-ec"]
-          args = [
-            join("\n", [
-              "until pg_isready -h ${module.postgres.host} -U postgres; do sleep 2; done",
-              "psql -h ${module.postgres.host} -U postgres -tc \"SELECT 1 FROM pg_roles WHERE rolname = '${local.airllm_db}'\" | grep -q 1 || psql -h ${module.postgres.host} -U postgres -c \"CREATE ROLE \\\"${local.airllm_db}\\\" WITH LOGIN PASSWORD '$SETUP_PASSWORD'\"",
-              "psql -h ${module.postgres.host} -U postgres -c \"ALTER ROLE \\\"${local.airllm_db}\\\" WITH PASSWORD '$SETUP_PASSWORD'\"",
-              "psql -h ${module.postgres.host} -U postgres -tc \"SELECT 1 FROM pg_database WHERE datname = '${local.airllm_db}'\" | grep -q 1 || psql -h ${module.postgres.host} -U postgres -c \"CREATE DATABASE \\\"${local.airllm_db}\\\" OWNER \\\"${local.airllm_db}\\\"\"",
-              "psql -h ${module.postgres.host} -U postgres -c \"ALTER DATABASE \\\"${local.airllm_db}\\\" OWNER TO \\\"${local.airllm_db}\\\"\"",
-            ]),
-          ]
-
-          resources {
-            requests = { cpu = "10m", memory = "32Mi" }
-            limits   = { cpu = "100m", memory = "64Mi" }
-          }
-        }
-      }
-    }
+  providers = {
+    zitadel    = zitadel
+    kubernetes = kubernetes
+    random     = random
   }
 
-  wait_for_completion = true
-  timeouts {
-    create = "3m"
-    update = "3m"
-  }
-}
+  org_id       = data.zitadel_orgs.platform_org["enabled"].ids[0]
+  project_name = "airllm-dev"
+  app_name     = "airllm-dev"
+  issuer_url   = "https://${local.platform.services.zitadel.external_domain}"
 
-# ── Runtime Secret (chart `existingSecret` contract) ────────────────────────
-# All values are TF-generated or composed from platform-internal creds — no
-# operator-supplied secrets here (provider API keys are entered later in the
-# console and encrypted app-side with the master key).
+  redirect_uris    = ["https://${local.airllm_dev.hostname}/auth/callback"]
+  post_logout_uris = ["https://${local.airllm_dev.hostname}/"]
 
-resource "random_bytes" "airllm_master_key" {
-  for_each = local.airllm_instances
-  length   = 32
-}
+  secret_name      = "airllm-dev-oidc"
+  secret_namespace = module.airllm_dev.namespace
+  secret_formats   = []
 
-resource "random_bytes" "airllm_session_key" {
-  for_each = local.airllm_instances
-  length   = 32
-}
-
-resource "random_password" "airllm_admin" {
-  for_each = local.airllm_instances
-
-  length  = 24
-  special = false
-}
-
-# Own Redis identity instead of the shared `default` superuser: the
-# gateway's keys all live under `air:` (usage counters, locks, login
-# throttling). The ACL keeper in the Redis namespace applies this line to
-# every node (see modules/redis).
-resource "random_password" "airllm_redis" {
-  for_each = local.airllm_instances
-  length   = 32
-  special  = false
-}
-
-# Same ACL line in the keeper's dedicated namespace (see modules/redis).
-resource "kubernetes_secret_v1" "airllm_redis_acl_scoped" {
-  for_each = local.airllm_instances
-
-  metadata {
-    name      = "redis-acl-airllm"
-    namespace = module.redis.acl_namespace
-    labels = merge(module.platform_label.tags, {
-      "app.kubernetes.io/component" = "airllm"
-      "platform.local/redis-acl"    = "true"
-    })
-  }
-
-  data = {
-    setuser = "airllm on #${sha256(random_password.airllm_redis["enabled"].result)} ~air:* &air:* +@all -@dangerous +info"
-  }
-}
-
-resource "kubernetes_secret_v1" "airllm" {
-  for_each = local.airllm_instances
-
-  metadata {
-    name      = "airllm-secrets"
-    namespace = kubernetes_namespace_v1.airllm["enabled"].metadata[0].name
-    labels    = merge(module.platform_label.tags, { "app.kubernetes.io/component" = "airllm" })
-  }
-
-  data = {
-    "database-url"   = "postgres://${local.airllm_db}:${random_password.airllm_db["enabled"].result}@${module.postgres.host}:5432/${local.airllm_db}?sslmode=disable"
-    "redis-url"      = "redis://airllm:${random_password.airllm_redis["enabled"].result}@${module.redis.host}:${module.redis.port}/0"
-    "master-key"     = random_bytes.airllm_master_key["enabled"].base64
-    "session-key"    = random_bytes.airllm_session_key["enabled"].base64
-    "admin-password" = random_password.airllm_admin["enabled"].result
-  }
-}
-
-# ── Argo CD Application (public chart, values inline) ───────────────────────
-
-resource "kubectl_manifest" "airllm_application" {
-  for_each = local.airllm_instances
-
-  depends_on = [
-    kubernetes_secret_v1.airllm,
-    kubernetes_job_v1.airllm_postgres_setup,
+  roles = [
+    { key = "airllm_dev_admin", display_name = "AirLLM dev admin" },
+    { key = "airllm_dev_user", display_name = "AirLLM dev user" },
   ]
-
-  yaml_body = yamlencode({
-    apiVersion = "argoproj.io/v1alpha1"
-    kind       = "Application"
-    metadata = {
-      name       = "airllm"
-      namespace  = local.platform.services.argocd.namespace
-      finalizers = ["resources-finalizer.argocd.argoproj.io"]
-      labels = merge(module.platform_label.tags, {
-        "app.kubernetes.io/managed-by" = "terraform"
-      })
-    }
-    spec = {
-      project = "platform"
-
-      source = {
-        repoURL        = local.airllm_repo_url
-        path           = "deploy/helm/airllm"
-        targetRevision = local.airllm.chart_revision
-        helm = {
-          # Tracking main: the digests the app repo's CI writes per build.
-          valueFiles = local.airllm.chart_revision == "main" ? ["../../argocd/values-main.yaml"] : []
-          valuesObject = {
-            existingSecret = kubernetes_secret_v1.airllm["enabled"].metadata[0].name
-            image = {
-              repository = "ghcr.io/ipsupport-llc/ipsupport-airllm"
-              tag        = local.airllm.image_tag
-            }
-            config = {
-              env           = "prod"
-              authMode      = "local"
-              adminUsername = "admin"
-            }
-            app = {
-              # Two replicas so losing one pod does not interrupt calls; the
-              # disruption budget keeps a drain from taking both. Nothing
-              # spreads them across nodes, so this guards against losing a
-              # pod, not necessarily a node. Provider concurrency caps and
-              # round-robin counters are per replica: a provider's
-              # max_concurrency admits twice that many requests in total, so
-              # a cap that mirrors a fixed upstream capacity (e.g. a local
-              # model server's parallel slots) has to be halved in the gateway.
-              replicaCount        = 2
-              nodeSelector        = local.airllm.node_selector
-              autoscaling         = { enabled = false }
-              podDisruptionBudget = { enabled = true, maxUnavailable = 1 }
-              ingress             = { enabled = false } # platform IngressRoute below owns the route
-              # The image's USER is the name `app` (non-numeric), which k8s
-              # can't verify against the chart's runAsNonRoot — pin the UID
-              # the image is built for (Dockerfile chowns /var/lib/airllm to
-              # 10001).
-              securityContext = { runAsUser = 10001 }
-              # Chart default (128Mi/512Mi) is tight for a gateway proxying
-              # streaming completion bodies under real concurrent load —
-              # bumped 2026-08-19 at the operator's request.
-              resources = {
-                requests = { cpu = "100m", memory = "256Mi" }
-                limits   = { cpu = "1", memory = "2Gi" }
-              }
-            }
-            dlpBert = {
-              enabled = true
-              image = {
-                repository = "ghcr.io/ipsupport-llc/ipsupport-airllm-dlp-bert"
-                tag        = local.airllm.image_tag # separate artifact — pin explicitly (chart guidance)
-              }
-              replicaCount = 1
-              autoscaling  = { kind = "none" } # single box — scale later via hpa/keda values
-            }
-            metrics = {
-              serviceMonitor = { enabled = true }
-              dashboards     = { enabled = true }
-              # The chart's tier-quarantine alert. `release` matches the
-              # Prometheus rule selector; `alert_source = metric` is what the
-              # metric-alert email route matches — it also needs this
-              # namespace under `monitoring.metric_alert_email.namespaces`.
-              prometheusRule = {
-                enabled     = true
-                labels      = { release = "kube-prometheus-stack" }
-                alertLabels = { severity = "warning", alert_source = "metric" }
-              }
-            }
-            # Off unless an SA to impersonate is configured, and then the only
-            # thing it changes is that the pod gains a cloud identity — the
-            # chart renders nothing here when disabled. projectNumber is a
-            # STRING on purpose: as a number, YAML round-trips it into
-            # scientific notation and the audience STS sees is garbage.
-            googleWorkloadIdentity = {
-              enabled        = local.airllm_wif_enabled
-              projectNumber  = local.airllm_wif.project_number
-              poolId         = local.airllm_wif.pool_id
-              providerId     = local.airllm_wif.provider_id
-              serviceAccount = local.airllm.google_service_account
-            }
-          }
-        }
-      }
-
-      destination = {
-        server    = "https://kubernetes.default.svc"
-        namespace = local.airllm.namespace
-      }
-
-      syncPolicy = {
-        automated   = { prune = true, selfHeal = true }
-        syncOptions = ["CreateNamespace=false"]
-      }
-    }
-  })
-
-  lifecycle {
-    precondition {
-      condition     = !local.airllm_wif_enabled || local.airllm_wif.project_number != ""
-      error_message = "services.airllm.google_service_account is set (${local.airllm.google_service_account}) but services.gcp_wif.pool_provider_audience is empty or malformed in config/platform.yaml. It must read //iam.googleapis.com/projects/<NUMBER>/locations/global/workloadIdentityPools/<POOL>/providers/<PROVIDER> — the chart derives the pool coordinates from it. Either set it or drop google_service_account."
-    }
-  }
 }
 
-# ── Direct exposure: unproxied A record + LE cert + IngressRoute ─────────────
+# ── State moves: the main instance's resources moved into modules/airllm ────
 
-resource "cloudflare_dns_record" "airllm" {
-  for_each = { for k in local.airllm_instances : k => k if local.airllm.hostname != "" && local.airllm.cloudflare_zone_id != "" }
-
-  zone_id = local.airllm.cloudflare_zone_id
-  name    = local.airllm.hostname
-  type    = "A"
-  content = local.airllm.public_ip
-  ttl     = 300
-  proxied = false
-  comment = "AirLLM console/API — direct to traefik_public VIP (no CF proxy)"
+moved {
+  from = kubernetes_namespace_v1.airllm
+  to   = module.airllm.kubernetes_namespace_v1.this
 }
 
-resource "kubectl_manifest" "airllm_certificate" {
-  for_each = { for k in local.airllm_instances : k => k if local.airllm.hostname != "" }
-
-  yaml_body = yamlencode({
-    apiVersion = "cert-manager.io/v1"
-    kind       = "Certificate"
-    metadata = {
-      name      = "airllm-tls"
-      namespace = kubernetes_namespace_v1.airllm["enabled"].metadata[0].name
-    }
-    spec = {
-      secretName = "airllm-tls"
-      issuerRef  = { kind = "ClusterIssuer", name = "letsencrypt-production" }
-      dnsNames   = [local.airllm.hostname]
-    }
-  })
+moved {
+  from = random_password.airllm_db
+  to   = module.airllm.random_password.db
 }
 
-# Plain-HTTP hits (e.g. a client configured with http://…/v1) otherwise fall
-# through to the cluster 404 fallback — redirect them to https instead.
-resource "kubectl_manifest" "airllm_redirect_middleware" {
-  for_each = { for k in local.airllm_instances : k => k if local.airllm.hostname != "" }
-
-  yaml_body = yamlencode({
-    apiVersion = "traefik.io/v1alpha1"
-    kind       = "Middleware"
-    metadata = {
-      name      = "airllm-https-redirect"
-      namespace = kubernetes_namespace_v1.airllm["enabled"].metadata[0].name
-    }
-    spec = {
-      redirectScheme = { scheme = "https", permanent = true }
-    }
-  })
+moved {
+  from = kubernetes_secret_v1.airllm_postgres_setup_env
+  to   = module.airllm.kubernetes_secret_v1.postgres_setup_env
 }
 
-resource "kubectl_manifest" "airllm_ingressroute_web" {
-  for_each = { for k in local.airllm_instances : k => k if local.airllm.hostname != "" }
-
-  yaml_body = yamlencode({
-    apiVersion = "traefik.io/v1alpha1"
-    kind       = "IngressRoute"
-    metadata = {
-      name      = "airllm-web-redirect"
-      namespace = kubernetes_namespace_v1.airllm["enabled"].metadata[0].name
-    }
-    spec = {
-      entryPoints = ["web"]
-      routes = [{
-        match       = "Host(`${local.airllm.hostname}`)"
-        kind        = "Rule"
-        middlewares = [{ name = "airllm-https-redirect" }]
-        services    = [{ name = "airllm", port = 8080 }] # unreachable past the redirect; Traefik requires a service
-      }]
-    }
-  })
+moved {
+  from = kubernetes_job_v1.airllm_postgres_setup
+  to   = module.airllm.kubernetes_job_v1.postgres_setup
 }
 
-resource "kubectl_manifest" "airllm_ingressroute" {
-  for_each = { for k in local.airllm_instances : k => k if local.airllm.hostname != "" }
+moved {
+  from = random_bytes.airllm_master_key
+  to   = module.airllm.random_bytes.master_key
+}
 
-  yaml_body = yamlencode({
-    apiVersion = "traefik.io/v1alpha1"
-    kind       = "IngressRoute"
-    metadata = {
-      name      = "airllm"
-      namespace = kubernetes_namespace_v1.airllm["enabled"].metadata[0].name
-    }
-    spec = {
-      entryPoints = ["websecure"]
-      routes = [{
-        match = "Host(`${local.airllm.hostname}`)"
-        kind  = "Rule"
-        services = [{
-          name = "airllm"
-          port = 8080
-        }]
-      }]
-      tls = { secretName = "airllm-tls" }
-    }
-  })
+moved {
+  from = random_bytes.airllm_session_key
+  to   = module.airllm.random_bytes.session_key
+}
+
+moved {
+  from = random_password.airllm_admin
+  to   = module.airllm.random_password.admin
+}
+
+moved {
+  from = random_password.airllm_redis
+  to   = module.airllm.random_password.redis
+}
+
+moved {
+  from = kubernetes_secret_v1.airllm_redis_acl_scoped
+  to   = module.airllm.kubernetes_secret_v1.redis_acl
+}
+
+moved {
+  from = kubernetes_secret_v1.airllm
+  to   = module.airllm.kubernetes_secret_v1.runtime
+}
+
+moved {
+  from = kubectl_manifest.airllm_application
+  to   = module.airllm.kubectl_manifest.application
+}
+
+moved {
+  from = cloudflare_dns_record.airllm
+  to   = module.airllm.cloudflare_dns_record.this
+}
+
+moved {
+  from = kubectl_manifest.airllm_certificate
+  to   = module.airllm.kubectl_manifest.certificate
+}
+
+moved {
+  from = kubectl_manifest.airllm_redirect_middleware
+  to   = module.airllm.kubectl_manifest.redirect_middleware
+}
+
+moved {
+  from = kubectl_manifest.airllm_ingressroute_web
+  to   = module.airllm.kubectl_manifest.ingressroute_web
+}
+
+moved {
+  from = kubectl_manifest.airllm_ingressroute
+  to   = module.airllm.kubectl_manifest.ingressroute
 }

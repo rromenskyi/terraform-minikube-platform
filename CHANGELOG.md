@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `airllm.tf` / `modules/airllm`: a second AirLLM instance for development,
+  `services.airllm_dev`, next to the main one: own namespace, hostname,
+  database and Redis index; tracks `main` by default. `seed_from_airllm`
+  starts it from a one-time copy of the main instance's database (then it
+  shares that instance's master key), and `oidc` logs it in through Zitadel
+  (roles `airllm_dev_admin` / `airllm_dev_user`; `platform_admin` is admin).
+  The main instance moved into the module with `moved` blocks; its plan is
+  a no-op. New `services.airllm.replicas` (default 2, unchanged behaviour).
 - `disk_health.tf` / `modules/disk-health`: SMART data of the nodes'
   physical drives (smartctl_exporter DaemonSet + ServiceMonitor) and a
   "Disk health" Grafana dashboard: per-drive wear, estimated days left at
