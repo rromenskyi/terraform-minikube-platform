@@ -253,6 +253,8 @@ resource "kubectl_manifest" "airllm_application" {
         path           = "deploy/helm/airllm"
         targetRevision = local.airllm.chart_revision
         helm = {
+          # Tracking main: the digests the app repo's CI writes per build.
+          valueFiles = local.airllm.chart_revision == "main" ? ["../../argocd/values-main.yaml"] : []
           valuesObject = {
             existingSecret = kubernetes_secret_v1.airllm["enabled"].metadata[0].name
             image = {

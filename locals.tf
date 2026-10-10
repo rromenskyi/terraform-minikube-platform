@@ -333,11 +333,13 @@ locals {
         hostname           = ""
         cloudflare_zone_id = ""
         public_ip          = ""
-        # Pinned release: Argo CD deploys the chart at this tag, so a merge to
-        # the app repo's main never reaches live traffic by itself. Empty
-        # image_tag lets the chart default to that tag's appVersion. Rolling
-        # out a release = bump chart_revision here and apply.
-        chart_revision = "v0.1.84"
+        # "main" (default) = continuous: Argo CD tracks the app repo's main
+        # and reads deploy/argocd/values-main.yaml, the image digests that
+        # repo's CI commits after every green build — a merge there is the
+        # rollout, no TF touch. A tag (vX.Y.Z) pins that release instead:
+        # values-main.yaml is left out and an empty image_tag follows the
+        # tag's appVersion.
+        chart_revision = "main"
         image_tag      = ""
         # Upstream chart repository (public). Override to run a fork.
         repo_url = "https://github.com/ipsupport-llc/ipsupport-airllm.git"
