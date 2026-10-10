@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `disk_health.tf` / `modules/disk-health`: SMART data of the nodes'
+  physical drives (smartctl_exporter DaemonSet + ServiceMonitor) and a
+  "Disk health" Grafana dashboard: per-drive wear, estimated days left at
+  the recent write rate, bytes written, spare, media errors, temperature,
+  plus write rate, write latency and top writing namespaces per node.
+  Enabled with `services.disk_health.enabled`; `affinity` limits it to
+  bare-metal nodes.
 - `speaches.tf`: ONNX sessions that leave their thread counts at 0 (speaches'
   Piper and Kokoro) run with as many intra- and inter-op threads as the
   container's CPU limit (`services.speaches.onnx_threads`, 0 = follow
