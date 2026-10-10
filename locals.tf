@@ -197,6 +197,10 @@ locals {
         alerts_enabled               = false
         alert_severities             = ["Critical"]
       }
+      disk_health = {
+        enabled  = false
+        affinity = {}
+      }
       backup = {
         enabled                = false
         postgres_databases     = []
@@ -495,6 +499,7 @@ locals {
       gcp_wif              = merge(local._platform_defaults.services.gcp_wif, try(local._platform_services.gcp_wif, {}))
       seafile              = merge(local._platform_defaults.services.seafile, try(local._platform_services.seafile, {}))
       security_scan        = merge(local._platform_defaults.services.security_scan, try(local._platform_services.security_scan, {}))
+      disk_health          = merge(local._platform_defaults.services.disk_health, try(local._platform_services.disk_health, {}))
       traefik_public       = merge(local._platform_defaults.services.traefik_public, try(local._platform_services.traefik_public, {}))
       airllm               = merge(local._platform_defaults.services.airllm, try(local._platform_services.airllm, {}))
       speaches             = merge(local._platform_defaults.services.speaches, try(local._platform_services.speaches, {}))
