@@ -89,15 +89,15 @@ module "airllm_dev" {
   redis_db                  = local.airllm_dev.redis_db
   redis_acl_namespace       = module.redis.acl_namespace
 
-  # Roles come from the `groups` claim (zitadel_actions.tf: every role key the
-  # user holds in any project). Role keys are therefore per instance, so a
-  # dev role grants nothing on another instance; `platform_admin` is admin
-  # everywhere.
+  # Roles come from the `groups` claim (zitadel_actions.tf), which holds only
+  # the role keys the user is granted in this instance's own Zitadel project
+  # (`module.airllm_dev_oidc`). Grant `airllm_dev_admin` / `airllm_dev_user`
+  # there; roles from other projects (`platform_admin`) never reach it.
   oidc = local.airllm_dev_oidc_enabled ? {
     issuer      = "https://${local.platform.services.zitadel.external_domain}"
     client_id   = module.airllm_dev_oidc["enabled"].client_id
     roles_claim = "groups"
-    role_map    = "platform_admin:airllm_admin,airllm_dev_admin:airllm_admin,airllm_dev_user:airllm_user"
+    role_map    = "airllm_dev_admin:airllm_admin,airllm_dev_user:airllm_user"
   } : null
   oidc_client_secret = local.airllm_dev_oidc_enabled ? module.airllm_dev_oidc["enabled"].client_secret : ""
 

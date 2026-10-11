@@ -13,9 +13,14 @@
 # but require per-user maintenance.
 #
 # After this Action: every JWT issued by Zitadel carries
-# `groups: ["argocd_admin", "user", "platform_admin", ...]` — the
-# union of role keys across every project the authenticating user
-# is granted in. Argo CD's existing
+# `groups: ["argocd_admin", "user", ...]` — the union of the user's
+# role keys in the project of the client that asked for the token
+# (plus any project requested through an
+# `urn:zitadel:iam:org:project:id:<id>:aud` scope). Zitadel filters
+# `ctx.v1.user.grants` by that project list before the Action runs,
+# so a role granted in another project (e.g. `platform_admin` in
+# `platform-dash`) never reaches an app's token: each app needs its
+# own grant in its own project. Argo CD's existing
 # `g, argocd_admin, role:admin` mapping then matches.
 #
 # The Action is org-scoped (lives on the platform org), runs on the

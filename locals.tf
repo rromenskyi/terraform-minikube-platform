@@ -382,8 +382,9 @@ locals {
         # copied provider credentials are encrypted with it.
         seed_from_airllm = false
         # Log in through Zitadel (needs services.zitadel and a hostname)
-        # instead of local accounts. Zitadel roles `airllm_admin` /
-        # `airllm_user` (and `platform_admin`) map to the app's roles.
+        # instead of local accounts. Zitadel roles `airllm_dev_admin` /
+        # `airllm_dev_user`, granted in the `airllm-dev` project, map to
+        # the app's roles.
         oidc                   = false
         google_service_account = ""
       }
