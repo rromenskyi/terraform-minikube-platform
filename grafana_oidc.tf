@@ -15,8 +15,9 @@
 #   - `kubernetes_annotations.grafana_oidc_checksum` rolls Grafana when the
 #     Secret changes (a recreated Zitadel app means a new client secret).
 #
-# Roles come from the `groups` claim (zitadel_actions.tf: every role key the
-# user holds in any project). `platform_admin` / `grafana_admin` → Admin,
+# Roles come from the `groups` claim (zitadel_actions.tf: the role keys the
+# user holds in the `grafana` project only; `platform_admin` from another
+# project does not reach this token). `grafana_admin` → Admin,
 # `grafana_editor` → Editor, `grafana_viewer` → Viewer. Anyone else is
 # refused (`role_attribute_strict`), so a Zitadel account alone grants
 # nothing. The local login form stays as break-glass:

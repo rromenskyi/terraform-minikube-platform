@@ -13,7 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   database and Redis index; tracks `main` by default. `seed_from_airllm`
   starts it from a one-time copy of the main instance's database (then it
   shares that instance's master key), and `oidc` logs it in through Zitadel
-  (roles `airllm_dev_admin` / `airllm_dev_user`; `platform_admin` is admin).
+  (roles `airllm_dev_admin` / `airllm_dev_user`, granted in its own Zitadel
+  project).
   The main instance moved into the module with `moved` blocks; its plan is
   a no-op. New `services.airllm.replicas` (default 2, unchanged behaviour).
 - `disk_health.tf` / `modules/disk-health`: SMART data of the nodes'
@@ -41,8 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Kubernetes API (only Ollama).
 - `grafana_oidc.tf`: Grafana single sign-on through Zitadel (`generic_oauth`,
   auto-login, PKCE), on when Zitadel is enabled and
-  `monitoring.grafana_external_url` is set. Roles from the `groups` claim:
-  `platform_admin` / `grafana_admin` → Admin, `grafana_editor` → Editor,
+  `monitoring.grafana_external_url` is set. Roles from the `groups` claim
+  (roles granted in the `grafana` project): `grafana_admin` → Admin, `grafana_editor` → Editor,
   `grafana_viewer` → Viewer, anyone else refused. Local login stays at
   `/login?disableAutoLogin=true`.
 - `config_guard.tf`: plan fails when `config/platform.yaml` or every
