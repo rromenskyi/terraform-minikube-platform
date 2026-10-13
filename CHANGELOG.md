@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `cnpg.tf` / `modules/cnpg`: a highly available Postgres cluster run by
+  CloudNativePG, `services.cnpg` (off by default), next to the
+  single-instance `postgres`. Instances on different nodes (`nodes` limits
+  them), synchronous replication with `dataDurability: preferred`, data
+  checksums, the current `postgres` superuser password, WAL archiving and
+  daily base backups to the `services.backup` B2 bucket under `cnpg/`.
+  Nothing connects to it yet; switching the consumers over is a separate
+  step.
 - `airllm.tf` / `modules/airllm`: a second AirLLM instance for development,
   `services.airllm_dev`, next to the main one: own namespace, hostname,
   database and Redis index; tracks `main` by default. `seed_from_airllm`

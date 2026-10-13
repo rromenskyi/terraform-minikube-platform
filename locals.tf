@@ -22,6 +22,21 @@ locals {
         node_selector = {}
         tolerations   = []
       }
+      # CloudNativePG: a highly available Postgres cluster next to the
+      # single-instance `postgres` (modules/cnpg). Nothing connects to it
+      # until the consumers are switched over.
+      cnpg = {
+        enabled      = false
+        name         = "pg"
+        instances    = 2
+        nodes        = [] # hostnames the instances may use; empty = any node
+        synchronous  = true
+        storage_size = "20Gi"
+        # Under the `services.backup` bucket; empty bucket = no backups.
+        backup_prefix    = "cnpg"
+        backup_retention = "30d"
+        backup_schedule  = "0 0 2 * * *" # six fields, seconds first
+      }
       redis = {
         enabled       = false
         storage_class = ""
@@ -510,6 +525,7 @@ locals {
     services = {
       mysql                = merge(local._platform_defaults.services.mysql, try(local._platform_services.mysql, {}))
       postgres             = merge(local._platform_defaults.services.postgres, try(local._platform_services.postgres, {}))
+      cnpg                 = merge(local._platform_defaults.services.cnpg, try(local._platform_services.cnpg, {}))
       redis                = merge(local._platform_defaults.services.redis, try(local._platform_services.redis, {}))
       ollama               = merge(local._platform_defaults.services.ollama, try(local._platform_services.ollama, {}))
       zitadel              = merge(local._platform_defaults.services.zitadel, try(local._platform_services.zitadel, {}))
