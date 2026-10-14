@@ -7,6 +7,11 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Fixed
+- CPU limit on the Postgres containers (default `1`) and requests/limits on
+  the Barman Cloud sidecar (`backup_sidecar_resources`): a namespace
+  ResourceQuota that requires limits rejected the instance pods.
+
 ### Added
 - Initial module: CloudNativePG operator (chart 0.29.1, operator 1.30.1) and
   Barman Cloud plugin (chart 0.8.1), a Postgres 18 cluster with required

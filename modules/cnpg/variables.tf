@@ -90,10 +90,10 @@ variable "storage_size" {
 }
 
 variable "resources" {
-  description = "Requests and limits of each Postgres container."
+  description = "Requests and limits of each Postgres container. The operator gives its init and join containers the same, so a namespace ResourceQuota that requires limits is satisfied only with both `cpu` and `memory` limits set."
   type = object({
     requests = optional(map(string), { cpu = "100m", memory = "256Mi" })
-    limits   = optional(map(string), { memory = "1Gi" })
+    limits   = optional(map(string), { cpu = "1", memory = "1Gi" })
   })
   default = {}
 }
@@ -142,6 +142,15 @@ variable "backup_secret_access_key" {
   type        = string
   default     = ""
   sensitive   = true
+}
+
+variable "backup_sidecar_resources" {
+  description = "Requests and limits of the Barman Cloud sidecar the plugin adds to every instance pod (it ships WAL and runs base backups)."
+  type = object({
+    requests = optional(map(string), { cpu = "50m", memory = "64Mi" })
+    limits   = optional(map(string), { cpu = "500m", memory = "512Mi" })
+  })
+  default = {}
 }
 
 variable "backup_retention" {

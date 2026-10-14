@@ -202,6 +202,10 @@ resource "kubectl_manifest" "object_store" {
       # error; only send them where the API requires it.
       # plugin-barman-cloud issue #393.
       instanceSidecarConfiguration = {
+        resources = {
+          requests = var.backup_sidecar_resources.requests
+          limits   = var.backup_sidecar_resources.limits
+        }
         env = [
           { name = "AWS_REQUEST_CHECKSUM_CALCULATION", value = "when_required" },
           { name = "AWS_RESPONSE_CHECKSUM_VALIDATION", value = "when_required" },
