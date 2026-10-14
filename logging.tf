@@ -70,7 +70,7 @@ module "logging" {
   # Second integration on the existing email receiver (see alert_llm_enricher.tf)
   # — empty when that service is disabled, so this stays a no-op by default.
   # Push notifications next to e-mail (e.g. ntfy); empty = e-mail only.
-  push_webhook_url = try(local.platform.monitoring.alert_push_url, "")
+  push_webhook_url = local._alert_push_url
 
   ai_enrichment_webhook_url = (
     length(local.alert_llm_enrichment_instances) > 0

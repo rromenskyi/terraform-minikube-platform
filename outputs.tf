@@ -314,6 +314,6 @@ output "cheatsheet" {
 
 output "alert_push_url" {
   description = "Push channel that receives metric and log alerts next to e-mail (`monitoring.alert_push_url`, e.g. an ntfy topic URL). The topic name works like a password, hence sensitive. Read with `./tf output -raw alert_push_url`; subscribe to the topic in the ntfy app. Empty when unset."
-  value       = try(local.platform.monitoring.alert_push_url, "")
+  value       = local._alert_push_url
   sensitive   = true
 }

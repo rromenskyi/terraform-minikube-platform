@@ -19,6 +19,7 @@ locals {
   _metric_alert_nss = try(local._metric_alert.namespaces, [])
   _metric_alert_to  = try(local._metric_alert.address, "")
   _metric_alert_on  = local._metric_alert_to != "" && length(local._metric_alert_nss) > 0
+  _alert_push_url   = try(local.platform.monitoring.alert_push_url, "")
 }
 
 # Optional push channel next to e-mail (`monitoring.alert_push_url`, e.g.
@@ -26,7 +27,7 @@ locals {
 # because an AlertmanagerConfig can only reference its own namespace and a
 # push topic name works like a password.
 resource "kubernetes_secret_v1" "metric_alert_push" {
-  for_each = local._metric_alert_on && try(local.platform.monitoring.alert_push_url, "") != "" ? toset(local._metric_alert_nss) : toset([])
+  for_each = local._metric_alert_on && local._alert_push_url != "" ? toset(local._metric_alert_nss) : toset([])
 
   metadata {
     name      = "metric-alerts-push"
@@ -35,7 +36,7 @@ resource "kubernetes_secret_v1" "metric_alert_push" {
   }
 
   data = {
-    url = local.platform.monitoring.alert_push_url
+    url = local._alert_push_url
   }
 }
 
