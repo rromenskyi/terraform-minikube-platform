@@ -809,3 +809,17 @@ services:
 #   # Setting this (with Zitadel on) enables Grafana SSO via Zitadel —
 #   # see grafana_oidc.tf for the role mapping.
 #   grafana_external_url:      "https://grafana.example.com"
+#   # Devices outside the cluster that serve Prometheus metrics (external_scrape.tf).
+#   # A basic-auth password goes into terraform.tfvars:
+#   #   monitoring_scrape_passwords = { plugs = "..." }
+#   external_targets:
+#     plugs:
+#       basic_auth_user: admin
+#       interval: 30s
+#       targets:
+#         - address: 192.0.2.11
+#           labels: { plug: server-a, load: server }
+#         - address: 192.0.2.12
+#           labels: { plug: router, load: network }
+#   # Grafana dashboard for ESPHome smart plugs (esphome_power_dashboard.tf).
+#   esphome_power_dashboard: true

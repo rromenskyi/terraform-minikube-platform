@@ -63,6 +63,13 @@ variable "host_volume_path" {
   default     = "/data/vol"
 }
 
+variable "monitoring_scrape_passwords" {
+  description = "HTTP basic-auth passwords for `monitoring.external_targets`, keyed by target name (the name in the config). Set in the gitignored terraform.tfvars; the engine stores each in a Secret in `monitoring`."
+  type        = map(string)
+  default     = {}
+  sensitive   = true
+}
+
 variable "operator_secret_values" {
   description = <<-EOT
     Operator-supplied literal values for entries declared under a project's
