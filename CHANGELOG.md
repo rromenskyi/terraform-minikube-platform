@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `services.vault.github_actions`: GitHub Actions jobs log in to Vault with
+  their OIDC token. Each role is bound to repository, workflow file and
+  ref, and gets its own policy. For CI that pulls Terraform's secrets
+  without any secret stored in GitHub. Off by default.
 - `./tf` state lock for S3-compatible backends without native locking
   (Backblaze B2 answers conditional writes with 501, so `use_lockfile`
   cannot work). Before plan/apply/destroy/import/refresh/taint/untaint and
