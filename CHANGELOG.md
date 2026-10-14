@@ -29,6 +29,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     forget the cluster instead of destroying it.
 
 ### Added
+- `monitoring.placement.{prometheus,alertmanager,grafana}`: per-component
+  placement for the monitoring stack, so it can live on other nodes than
+  the data it watches (e.g. survive the loss of a site).
+  - `nodes`: required node affinity on the hostname.
+  - `tolerations`: to land on tainted nodes.
+  - `replicas` (Prometheus, Alertmanager): with more than one, each replica
+    runs on its own node. Prometheus replicas are independent, each with
+    its own storage; the operator drops the replica label from alerts, so
+    clustered Alertmanagers send each alert once. Grafana's Prometheus
+    Service gets ClientIP session affinity.
+  - It takes precedence over `monitoring.node_selector` for that
+    component.
 - `monitoring.external_targets` (external_scrape.tf): Prometheus scrapes
   devices outside the cluster through a ScrapeConfig per target group
   (static targets with per-target labels, metrics path, scheme, interval).
