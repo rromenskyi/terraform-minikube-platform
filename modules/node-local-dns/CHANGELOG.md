@@ -7,6 +7,11 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Fixed
+- Metrics (CoreDNS `:9253`, node-cache `:9353`) listen on the node's own
+  address (`status.hostIP`) instead of every address of the host network,
+  which on nodes with a public address exposed them publicly.
+
 ### Added
 - Initial module: NodeLocal DNSCache (`k8s-dns-node-cache` 1.27.1) as a
   DaemonSet on every node, bound to a link-local address and the cluster DNS

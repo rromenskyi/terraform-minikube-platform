@@ -58,7 +58,7 @@ locals {
         forward . __PILLAR__CLUSTER__DNS__ {
             force_tcp
         }
-        prometheus :9253
+        prometheus {$HOST_IP}:9253
         health ${var.local_ip}:8080
     }
     in-addr.arpa:53 {
@@ -70,7 +70,7 @@ locals {
         forward . __PILLAR__CLUSTER__DNS__ {
             force_tcp
         }
-        prometheus :9253
+        prometheus {$HOST_IP}:9253
     }
     ip6.arpa:53 {
         errors
@@ -81,7 +81,7 @@ locals {
         forward . __PILLAR__CLUSTER__DNS__ {
             force_tcp
         }
-        prometheus :9253
+        prometheus {$HOST_IP}:9253
     }
     .:53 {
         errors
@@ -90,7 +90,7 @@ locals {
         loop
         bind ${var.local_ip} ${local.cluster_dns_ip}
         forward . ${local.external_upstream}
-        prometheus :9253
+        prometheus {$HOST_IP}:9253
     }
   EOT
 }
@@ -221,7 +221,20 @@ resource "kubernetes_daemon_set_v1" "this" {
             "-localip", "${var.local_ip},${local.cluster_dns_ip}",
             "-conf", "/etc/Corefile",
             "-upstreamsvc", kubernetes_service_v1.upstream["enabled"].metadata[0].name,
+            "-metrics-listen-address", "$(HOST_IP):9353",
           ]
+
+          # Metrics listen on the node's own address, not on every address
+          # of the host network (nodes may have public ones). CoreDNS reads
+          # it in the Corefile as {$HOST_IP}.
+          env {
+            name = "HOST_IP"
+            value_from {
+              field_ref {
+                field_path = "status.hostIP"
+              }
+            }
+          }
 
           resources {
             requests = var.resources.requests
