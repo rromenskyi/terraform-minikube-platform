@@ -103,7 +103,9 @@ resource "kubectl_manifest" "github_actions_role" {
       path           = local.github_actions_path
       name           = each.key
       roleType       = "jwt"
-      boundAudiences = [var.github_actions.audience]
+      # Unused by `jwt` roles, but the operator's CRD requires the field.
+      allowedRedirectURIs = []
+      boundAudiences      = [var.github_actions.audience]
       # Globs, so a role can admit e.g. any pull request ref of one
       # workflow file while another admits only `refs/heads/main`.
       boundClaimsType = "glob"
