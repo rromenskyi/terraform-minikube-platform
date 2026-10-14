@@ -13,7 +13,7 @@ data "cloudflare_zero_trust_tunnel_cloudflared_token" "main" {
 }
 
 resource "kubernetes_secret_v1" "cloudflared_token" {
-  depends_on = [module.k8s]
+  depends_on = [terraform_data.kubeconfig_checks]
 
   metadata {
     name      = "cloudflared-token"
@@ -32,7 +32,7 @@ resource "kubernetes_secret_v1" "cloudflared_token" {
 }
 
 resource "kubernetes_deployment_v1" "cloudflared" {
-  depends_on = [module.k8s, cloudflare_zero_trust_tunnel_cloudflared.main]
+  depends_on = [terraform_data.kubeconfig_checks, cloudflare_zero_trust_tunnel_cloudflared.main]
 
   metadata {
     name      = "cloudflared"

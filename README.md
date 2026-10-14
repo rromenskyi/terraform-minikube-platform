@@ -68,7 +68,7 @@ Every hostname is declared inside `config/domains/<domain>.yaml`. Two flavours:
 
 The platform composes three upstream Terraform modules (all fetched from GitHub at pinned tags):
 
-1. **Cluster** — `terraform-minikube-k8s` (minikube) OR `terraform-k3s-k8s` (native k3s over SSH, current default). Both export the same output signature, so layers 2 and 3 are distribution-agnostic.
+1. **Cluster** — `terraform-minikube-k8s` (minikube) OR `terraform-k3s-k8s` (native k3s over SSH, current default), in its own stack under `cluster/` (see [Two stacks](#two-stacks)). Layers 2 and 3 only need the kubeconfig it writes.
 2. **Addons** — `terraform-k8s-addons` — Traefik (`Deployment` or `DaemonSet`, picked via `services.addons.traefik_deployment_kind`), cert-manager + Let's Encrypt, kube-prometheus-stack, PSS-labeled namespaces.
 3. **Tenant workloads** — this repo — shared `platform` namespace, per-tenant project namespaces with components, the Cloudflare tunnel, DNS records, the MetalLB pools.
 
@@ -76,7 +76,8 @@ The platform composes three upstream Terraform modules (all fetched from GitHub 
 
 ```
 terraform-minikube-platform/
-├── main.tf                                     # Wires module.k8s + module.addons + module.project
+├── cluster/                                    # Cluster stack: module.k8s (k3s over SSH or minikube), own state
+├── main.tf                                     # Wires module.addons + module.project
 ├── platform.tf                                 # Root-owned `platform` namespace + its ResourceQuota
 ├── locals.tf                                   # `services.<X>` defaults + merge with config/platform.yaml
 ├── variables.tf, outputs.tf
@@ -151,22 +152,63 @@ Three sibling modules are fetched directly from GitHub at pinned releases — no
   - [`terraform-k3s-k8s`](https://github.com/rromenskyi/terraform-k3s-k8s) — Option B (k3s, current default)
 - Layer 2 (platform addons): [`terraform-k8s-addons`](https://github.com/rromenskyi/terraform-k8s-addons)
 
-`terraform init` downloads the selected modules automatically. To upgrade, bump the `?ref=vX.Y.Z` in `main.tf` and re-run `terraform init -upgrade`.
+`terraform init` downloads the selected modules automatically. To upgrade, bump the `?ref=vX.Y.Z` in `main.tf` (or `cluster/main.tf` for the cluster module) and re-run `terraform init -upgrade`.
+
+### Two stacks
+
+- **`cluster/`** brings the cluster up (k3s over SSH, or minikube) and writes its admin kubeconfig. Run it with `./tf cluster <terraform args>` (`./tf cluster init`, `./tf cluster plan`, ...). It needs SSH to the host, so it runs only from the operator's machine. Its state is local by default; the wrapper's B2 lock does not cover it.
+- **The repository root** is the platform: everything inside the cluster, plus Cloudflare. Its providers read the kubeconfig from `TF_VAR_kubeconfig_path` (and `TF_VAR_kube_context`); empty means the file the k3s module writes, `cluster/.terraform/k3s-<cluster_name>.kubeconfig`. It needs no SSH, so a CI runner with its own kubeconfig can plan and apply it.
+
+Both read `cluster_name` from `TF_VAR_cluster_name`; keep it in `.env`, which the wrapper loads for both stacks (a root `terraform.tfvars` is not read by `cluster/`). Set `TF_VAR_cluster_distribution=minikube` (and `TF_VAR_kubeconfig_path`) for minikube; the default is `k3s`.
+
+With a kubeconfig of several contexts (`TF_VAR_kube_context`), also make that context the file's current-context: the add-ons module configures its own providers from the file and uses its current-context.
+
+#### Moving an existing install to two stacks
+
+Until this change the cluster was `module.k8s` in the root stack. The root now has a `removed { from = module.k8s; lifecycle { destroy = false } }` block: the next platform apply forgets the cluster without destroying it. Destroying it would run the k3s uninstaller on the host when the module installed k3s (`install_k3s = true`). Move its state to the cluster stack first: a cluster stack with an empty state would run the k3s installer again on its first apply.
+
+Before you start:
+- both stacks use local state for the move (no `cluster/_local_backend_override.tf` yet), so `-state-out` writes the cluster stack's real state;
+- every cluster input (`cluster_name`, `ssh_*`) comes from `.env`, not from a root `terraform.tfvars`: `cluster/` does not read the root's tfvars, and a changed value is a changed trigger, which replaces the k3s install.
+
+```bash
+# 1. Copy the platform state, then move module.k8s into the cluster stack's state.
+(umask 077; ./tf state pull > /tmp/platform.tfstate)    # private: it has secrets
+jq -e '.resources | length > 0' /tmp/platform.tfstate   # a state, not an error
+./tf cluster init
+terraform -chdir=cluster state mv \
+  -state=/tmp/platform.tfstate -state-out=terraform.tfstate \
+  module.k8s module.k8s
+terraform -chdir=cluster state mv \
+  -state=/tmp/platform.tfstate -state-out=terraform.tfstate \
+  terraform_data.k3s_checks terraform_data.k3s_checks
+rm -f /tmp/platform.tfstate /tmp/platform.tfstate.*.backup   # state mv leaves backups
+terraform -chdir=cluster state list                      # module.k8s.null_resource.k3s_install, terraform_data.k3s_checks
+# 2. The kubeconfig moves with it.
+cp .terraform/k3s-<cluster_name>.kubeconfig cluster/.terraform/
+# 3. Both must show no destroy and no replace. Stop here if either does.
+./tf cluster plan    # expected: No changes
+./tf plan            # expected: module.k8s and terraform_data.k3s_checks forgotten (not destroyed), kubeconfig_checks added
+./tf apply
+rm .terraform/k3s-<cluster_name>.kubeconfig              # the old copy is no longer read
+```
+
+Step 1 works on a copy: the platform state is changed only by the apply in step 3, through the `removed` blocks. Do not apply the platform before `state list` in the cluster stack shows the k3s install.
 
 ### Alternative cluster distribution
 
-The cluster module is swappable. `main.tf` has an **Option A — minikube** (commented out) and **Option B — k3s** (active default) block. Both modules export the same output signature (`cluster_host`, `client_certificate`, `client_key`, `cluster_ca_certificate`, `kubeconfig_path`, `cluster_name`, `cluster_distribution`), so layers 2 and 3 are distribution-agnostic.
+The cluster module is swappable. `cluster/main.tf` has an **Option A — minikube** (commented out) and **Option B — k3s** (active default) block. Both modules export the same outputs (`kubeconfig_path`, `cluster_name`, `cluster_distribution`).
 
 To switch to k3s (native install via SSH):
-1. In `main.tf`, comment out the Option A block and uncomment Option B.
+1. In `cluster/main.tf`, comment out the Option A block and uncomment Option B.
 2. In `.env`, set `TF_VAR_ssh_user`, `TF_VAR_ssh_host`, `TF_VAR_ssh_private_key_path`.
-3. `terraform init -upgrade`.
-4. `./tf bootstrap-k3s` — the root `kubernetes` / `helm` providers lazily open `module.k8s.kubeconfig_path`, so a single apply is enough.
+3. `./tf cluster init -upgrade`.
+4. `./tf bootstrap-k3s` — applies the cluster stack, then the platform.
 
 ## Prerequisites
 
 - **Docker** (minikube driver) or **a host with SSH + passwordless sudo** (k3s bootstrap)
-- **Terraform** >= 1.5.0
+- **Terraform** >= 1.7.0
 - **kubectl**
 - **jq**
 - **Cloudflare account** with at least one domain (see **First-time Cloudflare setup** below)
@@ -811,8 +853,9 @@ Local `terraform.tfstate` is the default. To move to Backblaze B2 (S3-compatible
 ./tf apply
 ./tf apply -auto-approve
 ./tf output -json projects | jq
-./tf bootstrap-minikube   # full reset + single-phase apply (minikube)
-./tf bootstrap-k3s        # full reset + single-phase apply (k3s)
+./tf bootstrap-minikube   # full reset: cluster stack, then the platform (minikube)
+./tf bootstrap-k3s        # full reset: cluster stack, then the platform (k3s)
+./tf cluster plan         # the cluster stack (cluster/), any terraform command
 ./tf cloudflare-purge     # delete the tunnel + its DNS records only
 ```
 

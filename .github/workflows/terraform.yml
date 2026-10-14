@@ -29,6 +29,12 @@ jobs:
     - name: Terraform Validate
       run: terraform validate
 
+    - name: Terraform Validate (cluster stack)
+      working-directory: cluster
+      run: |
+        terraform init -backend=false
+        terraform validate
+
     - name: Terraform Test (modules/component)
       working-directory: modules/component
       run: |

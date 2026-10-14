@@ -6,19 +6,17 @@
 # into Terraform state.
 provider "cloudflare" {}
 
-# Consume the kubeconfig emitted by the chosen cluster module. Both sibling
-# modules (`terraform-minikube-k8s` and `terraform-k3s-k8s`) export a
-# `kubeconfig_path` output as a static, plan-time-known string. `config_path`
-# is opened lazily — only when a resource actually makes an API call — so the
-# file does not have to exist at plan time, which removes the two-phase
-# `-target` bootstrap that inline host/cert attributes would otherwise force
-# on the k3s distribution.
+# The kubeconfig written by the cluster stack (`cluster/`), or one passed
+# through TF_VAR_kubeconfig_path / TF_VAR_kube_context (CI). `config_path`
+# is opened lazily, only when a resource makes an API call.
 provider "kubernetes" {
-  config_path = module.k8s.kubeconfig_path
+  config_path    = local.kubeconfig_path
+  config_context = local.kube_context
 }
 
 provider "kubectl" {
-  config_path      = module.k8s.kubeconfig_path
+  config_path      = local.kubeconfig_path
+  config_context   = local.kube_context
   load_config_file = true
 }
 
@@ -26,6 +24,7 @@ provider "helm" {
   # v3 schema: `kubernetes` is a nested attribute (`= {}`), not a
   # block. Same `config_path` semantics flow through.
   kubernetes = {
-    config_path = module.k8s.kubeconfig_path
+    config_path    = local.kubeconfig_path
+    config_context = local.kube_context
   }
 }
