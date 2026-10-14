@@ -586,6 +586,9 @@ locals {
     [for s in kubernetes_secret_v1.alert_push : {
       urlSecret    = { name = s.metadata[0].name, key = "url" }
       sendResolved = true
+      # Push services cap the message size (ntfy: ~4 KB after its
+      # template); the e-mail carries the full list.
+      maxAlerts = 3
     }],
   )
 }
