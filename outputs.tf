@@ -61,11 +61,11 @@ output "mysql" {
 output "postgres" {
   description = "Shared PostgreSQL connection info (host, port, namespace, service, superuser_password)."
   value = {
-    host               = module.postgres.host
-    port               = module.postgres.port
-    namespace          = module.postgres.namespace
-    service            = module.postgres.service_name
-    superuser_password = module.postgres.superuser_password
+    host               = local.postgres.host
+    port               = local.postgres.port
+    namespace          = local.postgres.namespace
+    service            = local.postgres.service_name
+    superuser_password = local.postgres.superuser_password
   }
   sensitive = true
 }

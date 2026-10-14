@@ -26,14 +26,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Nothing connects to it yet; switching the consumers over is a separate
   step.
 - `services.cnpg.sync_run` / `sync_mode`: a Job copies every database and
-  role from `postgres` into the CloudNativePG cluster (`rehearsal`, `cutover`
-  with `postgres` frozen first, `thaw`), and
-  `services.cnpg.serve_postgres_service` points the `postgres` Service at
-  the cluster's primary, so clients move over unchanged. Both off by
-  default.
-- `services.postgres.server_enabled`: false removes the single-instance
-  Postgres server and keeps its `postgres` Service (pointed at the
-  CloudNativePG primary) and superuser Secret, so clients are unaffected.
+  role from the single Postgres server into the CloudNativePG cluster
+  (`rehearsal`, `cutover` with the source frozen first, `thaw`).
+- `services.postgres.engine` (`single` | `cnpg`) and `service_name`: the
+  engine that serves clients owns the `service_name` Service and the
+  `<service_name>-superuser` Secret, so clients keep their host and
+  credentials across engines. Every client reads `local.postgres`; the
+  superuser password moved to the root (`random_password.postgres_superuser`).
+  Switching a running cluster's engine needs `terraform state mv` of the
+  Service, the Secret and the password (postgres.tf).
 - `airllm.tf` / `modules/airllm`: a second AirLLM instance for development,
   `services.airllm_dev`, next to the main one: own namespace, hostname,
   database and Redis index; tracks `main` by default. `seed_from_airllm`

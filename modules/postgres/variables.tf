@@ -40,14 +40,15 @@ variable "tolerations" {
   default = []
 }
 
-variable "service_selector" {
-  description = "Pod selector of the `postgres` Service. Empty = this module's own pod (`app = postgres`). Set it to another server's primary (e.g. a CloudNativePG cluster's `cnpg.io/cluster` + `cnpg.io/instanceRole = primary` labels) to move every client that connects to `postgres` over to that server without touching the clients; clearing it moves them back."
-  type        = map(string)
-  default     = {}
+variable "service_name" {
+  description = "Name of the Service clients connect to (`<service_name>.<namespace>.svc.cluster.local`); the superuser Secret is `<service_name>-superuser`."
+  type        = string
+  default     = "postgres"
 }
 
-variable "server_enabled" {
-  description = "Run this module's own Postgres server (StatefulSet, data volume, extensions Job). False keeps only the `postgres` Service and the superuser Secret, for when another server took over through `service_selector`: clients keep their host and credentials. The data directory on the host stays in place (the PersistentVolume is `Retain`)."
-  type        = bool
-  default     = true
+variable "superuser_password" {
+  description = "Password of the `postgres` superuser. Null = the module generates one. Pass one kept outside the module when the server may be replaced (another engine behind the same Service), so clients' credentials outlive it."
+  type        = string
+  default     = null
+  sensitive   = true
 }

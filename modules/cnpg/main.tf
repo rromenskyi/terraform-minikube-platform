@@ -41,7 +41,11 @@ locals {
   plugin_name       = "barman-cloud.cloudnative-pg.io"
   object_store_name = "${var.name}-backup"
 
-  superuser_secret_name = "${var.name}-superuser"
+  superuser_secret_name = var.superuser_secret_name != "" ? var.superuser_secret_name : "${var.name}-superuser"
+
+  # Labels the operator keeps on the current primary (moved on failover).
+  primary_selector = { "cnpg.io/cluster" = var.name, "cnpg.io/instanceRole" = "primary" }
+  services         = var.enabled && var.service_name != "" ? toset(["enabled"]) : toset([])
 
   # `preferred` keeps writes going when no replica is healthy; `required`
   # would stop them, which on a two-instance cluster means any replica
@@ -145,7 +149,10 @@ resource "kubernetes_secret_v1" "superuser" {
     labels    = local.tags
   }
 
-  type = "kubernetes.io/basic-auth"
+  # The operator reads only the `username` / `password` keys, not the type;
+  # Opaque keeps the Secret compatible with clients of a former
+  # single-instance server that read `POSTGRES_PASSWORD` from it.
+  type = "Opaque"
   data = {
     username = "postgres"
     password = var.superuser_password
@@ -167,6 +174,31 @@ resource "kubernetes_secret_v1" "backup_credentials" {
   data = {
     ACCESS_KEY_ID     = var.backup_access_key_id
     ACCESS_SECRET_KEY = var.backup_secret_access_key
+  }
+}
+
+# ── Client Service ─────────────────────────────────────────────────────────
+
+# A Service under a name of the caller's choice (e.g. the name clients of a
+# former server already use) that always selects the current primary, like
+# the operator's own `<name>-rw`.
+resource "kubernetes_service_v1" "primary" {
+  for_each = local.services
+
+  metadata {
+    name      = var.service_name
+    namespace = var.namespace
+    labels    = local.tags
+  }
+
+  spec {
+    selector = local.primary_selector
+
+    port {
+      name        = "postgres"
+      port        = 5432
+      target_port = 5432
+    }
   }
 }
 

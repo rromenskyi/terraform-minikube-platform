@@ -17,7 +17,7 @@ locals {
   # (the shared `platform` namespace). Null when disabled — every
   # resource here gates on that.
   dash_namespace     = try(module.platform_dash.namespace, null)
-  dash_pg_enabled    = module.postgres.host != null && local.dash_namespace != null
+  dash_pg_enabled    = local.postgres.host != null && local.dash_namespace != null
   dash_red_enabled   = module.redis.host != null && local.dash_namespace != null
   dash_mysql_enabled = module.mysql.host != null && local.dash_namespace != null
 
@@ -93,7 +93,7 @@ resource "kubernetes_secret_v1" "pg_dashboard_ro_setup_env" {
 
   metadata {
     name      = "pg-dashboard-ro-setup"
-    namespace = module.postgres.namespace
+    namespace = local.postgres.namespace
   }
 
   data = {
@@ -107,7 +107,7 @@ resource "kubernetes_job_v1" "pg_dashboard_ro_setup" {
 
   metadata {
     name      = "pg-dashboard-ro-setup"
-    namespace = module.postgres.namespace
+    namespace = local.postgres.namespace
     labels = {
       "managed-by" = "platform-dash-db-discovery"
     }
@@ -131,7 +131,7 @@ resource "kubernetes_job_v1" "pg_dashboard_ro_setup" {
 
           env_from {
             secret_ref {
-              name = module.postgres.superuser_secret_name
+              name = local.postgres.superuser_secret_name
             }
           }
           env {
@@ -160,10 +160,10 @@ resource "kubernetes_job_v1" "pg_dashboard_ro_setup" {
           command = [
             "sh", "-c",
             join(" && ", [
-              "psql -h ${module.postgres.host} -U postgres -tc \"SELECT 1 FROM pg_roles WHERE rolname = 'dashboard_ro'\" | grep -q 1 || psql -h ${module.postgres.host} -U postgres -c \"CREATE ROLE dashboard_ro WITH LOGIN PASSWORD '$RO_PASSWORD'\"",
-              "psql -h ${module.postgres.host} -U postgres -c \"ALTER ROLE dashboard_ro WITH PASSWORD '$RO_PASSWORD'\"",
-              "psql -h ${module.postgres.host} -U postgres -c \"GRANT pg_monitor TO dashboard_ro\"",
-              "psql -h ${module.postgres.host} -U postgres -c \"GRANT CONNECT ON DATABASE postgres TO dashboard_ro\""
+              "psql -h ${local.postgres.host} -U postgres -tc \"SELECT 1 FROM pg_roles WHERE rolname = 'dashboard_ro'\" | grep -q 1 || psql -h ${local.postgres.host} -U postgres -c \"CREATE ROLE dashboard_ro WITH LOGIN PASSWORD '$RO_PASSWORD'\"",
+              "psql -h ${local.postgres.host} -U postgres -c \"ALTER ROLE dashboard_ro WITH PASSWORD '$RO_PASSWORD'\"",
+              "psql -h ${local.postgres.host} -U postgres -c \"GRANT pg_monitor TO dashboard_ro\"",
+              "psql -h ${local.postgres.host} -U postgres -c \"GRANT CONNECT ON DATABASE postgres TO dashboard_ro\""
             ])
           ]
         }
@@ -307,7 +307,7 @@ resource "kubernetes_secret_v1" "platform_pg_dashboard" {
     }
   }
   data = {
-    URI = "postgres://dashboard_ro:${random_password.dashboard_ro_pg["enabled"].result}@${module.postgres.host}:${module.postgres.port}/postgres?sslmode=disable"
+    URI = "postgres://dashboard_ro:${random_password.dashboard_ro_pg["enabled"].result}@${local.postgres.host}:${local.postgres.port}/postgres?sslmode=disable"
   }
 }
 

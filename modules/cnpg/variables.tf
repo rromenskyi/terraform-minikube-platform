@@ -104,6 +104,18 @@ variable "parameters" {
   default     = {}
 }
 
+variable "service_name" {
+  description = "Extra Service clients connect to, selecting the current primary (e.g. the name clients of a server this cluster replaces already use). Empty = only the operator's `<name>-rw` / `-ro` / `-r` Services."
+  type        = string
+  default     = ""
+}
+
+variable "superuser_secret_name" {
+  description = "Name of the Secret with the `postgres` superuser credentials. Empty = `<name>-superuser`."
+  type        = string
+  default     = ""
+}
+
 variable "superuser_password" {
   description = "Password of the `postgres` superuser. Pass the current server's password so that tools logging in as `postgres` keep working after a switch."
   type        = string

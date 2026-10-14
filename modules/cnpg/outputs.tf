@@ -4,8 +4,8 @@ output "cluster_name" {
 }
 
 output "host" {
-  description = "In-cluster hostname of the read-write Service; it always points at the current primary. Null if disabled."
-  value       = var.enabled ? "${var.name}-rw.${var.namespace}.svc.cluster.local" : null
+  description = "In-cluster hostname that always points at the current primary: `service_name` when set, else the operator's `<name>-rw`. Null if disabled."
+  value       = var.enabled ? "${var.service_name != "" ? var.service_name : "${var.name}-rw"}.${var.namespace}.svc.cluster.local" : null
 }
 
 output "ro_host" {
@@ -28,7 +28,7 @@ output "backup_destination" {
   value       = local.backup_configured ? "s3://${var.backup_bucket}/${var.backup_prefix}/${var.name}/" : null
 }
 
-output "primary_selector" {
-  description = "Pod labels that select the cluster's current primary; the operator moves them on failover. Use it to point an existing Service at the primary. Null if disabled."
-  value       = var.enabled ? { "cnpg.io/cluster" = var.name, "cnpg.io/instanceRole" = "primary" } : null
+output "namespace" {
+  description = "Namespace the cluster runs in, or null if disabled."
+  value       = var.enabled ? var.namespace : null
 }

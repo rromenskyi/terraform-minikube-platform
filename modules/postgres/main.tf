@@ -15,9 +15,7 @@ terraform {
 locals {
   instances = var.enabled ? toset(["enabled"]) : toset([])
 
-  # The server itself; without it the module keeps only the `postgres`
-  # Service and the superuser Secret (see `server_enabled`).
-  server_instances = var.enabled && var.server_enabled ? toset(["enabled"]) : toset([])
+  superuser_password = var.superuser_password != null ? var.superuser_password : one([for p in random_password.superuser : p.result])
 
   # Shorthand for the propagated null-label tag set used by every
   # k8s resource the module emits via `merge(local.tags, { … })`.
@@ -42,7 +40,9 @@ module "label" {
 # ── Superuser password ────────────────────────────────────────────────────────
 
 resource "random_password" "superuser" {
-  for_each = local.instances
+  # Only whether a password was passed decides this; `for_each` rejects
+  # values derived from the sensitive input itself.
+  for_each = var.enabled && nonsensitive(var.superuser_password == null) ? toset(["enabled"]) : toset([])
 
   length  = 32
   special = false
@@ -52,7 +52,7 @@ resource "kubernetes_secret_v1" "superuser" {
   for_each = local.instances
 
   metadata {
-    name      = "postgres-superuser"
+    name      = "${var.service_name}-superuser"
     namespace = var.namespace
     labels    = local.tags
   }
@@ -61,14 +61,14 @@ resource "kubernetes_secret_v1" "superuser" {
   # `postgres` superuser on first init. The tenant-provisioner Job pulls
   # the same secret via env_from when it opens a `psql` connection.
   data = {
-    POSTGRES_PASSWORD = random_password.superuser["enabled"].result
+    POSTGRES_PASSWORD = local.superuser_password
   }
 }
 
 # ── Persistent storage ────────────────────────────────────────────────────────
 
 resource "kubernetes_persistent_volume_v1" "postgres" {
-  for_each = local.server_instances
+  for_each = local.instances
 
   metadata {
     name   = "platform-postgres-data"
@@ -93,7 +93,7 @@ resource "kubernetes_persistent_volume_v1" "postgres" {
 }
 
 resource "kubernetes_persistent_volume_claim_v1" "postgres" {
-  for_each = local.server_instances
+  for_each = local.instances
 
   metadata {
     name      = "postgres-data"
@@ -117,7 +117,7 @@ resource "kubernetes_persistent_volume_claim_v1" "postgres" {
 # ── StatefulSet ───────────────────────────────────────────────────────────────
 
 resource "kubernetes_stateful_set_v1" "postgres" {
-  for_each = local.server_instances
+  for_each = local.instances
 
   metadata {
     name      = "postgres"
@@ -127,7 +127,7 @@ resource "kubernetes_stateful_set_v1" "postgres" {
 
   spec {
     replicas     = 1
-    service_name = "postgres"
+    service_name = var.service_name
 
     selector {
       match_labels = { app = "postgres" }
@@ -313,7 +313,7 @@ resource "kubernetes_stateful_set_v1" "postgres" {
 # no spec change after the first successful apply unless the extension
 # list itself changes.
 resource "kubernetes_job_v1" "pg_extensions" {
-  for_each = local.server_instances
+  for_each = local.instances
 
   metadata {
     name      = "postgres-pg-extensions"
@@ -397,21 +397,14 @@ resource "kubernetes_job_v1" "pg_extensions" {
 resource "kubernetes_service_v1" "postgres" {
   for_each = local.instances
 
-  lifecycle {
-    precondition {
-      condition     = var.server_enabled || length(var.service_selector) > 0
-      error_message = "server_enabled = false leaves the `postgres` Service with no pods of its own: set service_selector to the server that replaces it."
-    }
-  }
-
   metadata {
-    name      = "postgres"
+    name      = var.service_name
     namespace = var.namespace
     labels    = merge(local.tags, { app = "postgres" })
   }
 
   spec {
-    selector = length(var.service_selector) > 0 ? var.service_selector : { app = "postgres" }
+    selector = { app = "postgres" }
 
     port {
       name        = "postgres"

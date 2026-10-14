@@ -8,12 +8,21 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 ## [Unreleased]
 
 ### Added
+- `service_name`: an extra Service under a caller-chosen name that selects
+  the current primary; `host` points at it when set.
+- `superuser_secret_name` (default `<name>-superuser`); `namespace` output.
+
+### Changed
+- The superuser Secret is `Opaque` (the operator reads only the
+  `username` / `password` keys), so a former server's Secret can be taken
+  over in place.
+
+### Added
 - `sync`: a Job that copies every database and role from another Postgres
   server (`pg_dumpall --roles-only` + `pg_dump --create --clean` per database)
   and verifies role lists and per-table row counts. Modes: `rehearsal`
   (source keeps running), `cutover` (source frozen first with
   `CONNECTION LIMIT 0`, any difference fails), `thaw` (lifts the freeze).
-- `primary_selector` output: the pod labels of the current primary.
 
 ### Fixed
 - CPU limit on the Postgres containers (default `1`) and requests/limits on

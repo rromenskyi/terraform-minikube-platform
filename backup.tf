@@ -96,8 +96,8 @@ data "kubernetes_secret_v1" "postgres_superuser" {
   for_each = local.platform.services.backup.enabled && local.platform.services.postgres.enabled ? toset(["enabled"]) : toset([])
 
   metadata {
-    name      = module.postgres.superuser_secret_name
-    namespace = module.postgres.namespace
+    name      = local.postgres.superuser_secret_name
+    namespace = local.postgres.namespace
   }
 }
 
@@ -173,7 +173,7 @@ module "backup" {
 
   # Postgres
   postgres_enabled          = local.platform.services.backup.enabled && local.platform.services.postgres.enabled
-  postgres_host             = module.postgres.host
+  postgres_host             = local.postgres.host
   postgres_superuser_secret = "postgres-superuser-mirror"
   postgres_databases        = local.platform.services.backup.postgres_databases
 

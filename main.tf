@@ -278,9 +278,9 @@ module "project" {
   # service with a clear error rather than a silent mis-deploy.
   mysql_namespace           = module.mysql.namespace
   mysql_host                = module.mysql.host
-  postgres_namespace        = module.postgres.namespace
-  postgres_host             = module.postgres.host
-  postgres_superuser_secret = module.postgres.superuser_secret_name
+  postgres_namespace        = local.postgres.namespace
+  postgres_host             = local.postgres.host
+  postgres_superuser_secret = local.postgres.superuser_secret_name
   redis_namespace           = module.redis.namespace
   redis_acl_namespace       = module.redis.acl_namespace
   redis_host                = module.redis.host
