@@ -79,6 +79,10 @@ resource "kubectl_manifest" "metric_alert_email" {
         webhookConfigs = [{
           urlSecret    = { name = kubernetes_secret_v1.metric_alert_push[each.value].metadata[0].name, key = "url" }
           sendResolved = true
+          # Push services cap the message size (ntfy: ~4 KB after its
+          # template; a group of 7 vulnerability alerts was rejected with
+          # 400). A push is the heads-up; the e-mail carries the full list.
+          maxAlerts = 3
         }]
       } : {})]
     }

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Alert push webhooks send at most 3 alerts per message (`maxAlerts`). ntfy
+  rejected a group of 7 vulnerability alerts as too large (400) after its
+  template; the e-mail still carries the full list.
+
 ### Added
 - `monitoring.alert_push_url`: a second notification channel next to e-mail
   for metric and log alerts, e.g. ntfy `https://ntfy.sh/<topic>?template=alertmanager`
