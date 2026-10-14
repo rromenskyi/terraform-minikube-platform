@@ -141,7 +141,11 @@ module "addons" {
   # stack adds nothing to the Grafana pod. The plugin downloads at pod start.
   monitoring_grafana_extra_values = merge(
     local.platform.services.logging.enabled ? { plugins = ["victoriametrics-logs-datasource"] } : {},
-    length(local.monitoring_node_selector) > 0 ? { nodeSelector = local.monitoring_node_selector } : {},
+    # `monitoring.placement.grafana` wins over the shared node_selector.
+    # (jsondecode/jsonencode: the two branches are objects of different shapes)
+    jsondecode(local._mon_placed["grafana"] ? jsonencode(local._mon_placement_values["grafana"]) : (
+      length(local.monitoring_node_selector) > 0 ? jsonencode({ nodeSelector = local.monitoring_node_selector }) : "{}"
+    )),
     length(local.grafana_resources) > 0 ? { resources = local.grafana_resources } : {},
     local.grafana_oidc_values, # Zitadel SSO, see grafana_oidc.tf
   )
@@ -167,14 +171,50 @@ module "addons" {
   # component. Empty config => {} => chart default (unchanged).
   monitoring_prometheus_memory_request = local.prometheus_memory_request
 
-  monitoring_prometheus_extra_values = length(local.prometheus_spec) > 0 ? { prometheusSpec = local.prometheus_spec } : {}
+  monitoring_prometheus_extra_values = merge(
+    length(local.prometheus_spec) > 0 ? { prometheusSpec = local.prometheus_spec } : {},
+    # Several replicas behind one Service: keep a client (Grafana) on one
+    # replica, so a dashboard does not jump between slightly different data.
+    local._mon_replicas["prometheus"] > 1 ? { service = { sessionAffinity = "ClientIP" } } : {},
+  )
 }
 
 locals {
   alertmanager_spec_values = merge(
     try(local.platform.monitoring.alertmanager_external_url, "") != "" ? { externalUrl = local.platform.monitoring.alertmanager_external_url } : {},
     local.alertmanager_builtin_spec,
+    jsondecode(local._mon_placed["alertmanager"] ? jsonencode(local._mon_placement_values["alertmanager"]) : "{}"),
   )
+
+  # Optional placement per component (`monitoring.placement.<component>`):
+  #   nodes:       [node names]  -> required node affinity on the hostname
+  #   tolerations: [...]          -> e.g. to land on tainted (edge) nodes
+  #   replicas:    N              -> Prometheus / Alertmanager only; with
+  #                                  N > 1 each replica on its own node
+  # Prometheus replicas are independent (each scrapes everything, own
+  # storage); the operator drops the replica label from alerts, so
+  # Alertmanager, itself clustered, sends each alert once.
+  _mon_placement = try(local.platform.monitoring.placement, {})
+  _mon_placed    = { for c in ["prometheus", "alertmanager", "grafana"] : c => length(try(local._mon_placement[c], {})) > 0 }
+  _mon_replicas  = { for c in ["prometheus", "alertmanager"] : c => tonumber(try(local._mon_placement[c].replicas, 1)) }
+  _mon_placement_values = {
+    for c in ["prometheus", "alertmanager", "grafana"] : c => merge(
+      length(try(local._mon_placement[c].nodes, [])) > 0 ? {
+        affinity = {
+          nodeAffinity = {
+            requiredDuringSchedulingIgnoredDuringExecution = {
+              nodeSelectorTerms = [{
+                matchExpressions = [{ key = "kubernetes.io/hostname", operator = "In", values = local._mon_placement[c].nodes }]
+              }]
+            }
+          }
+        }
+      } : {},
+      length(try(local._mon_placement[c].tolerations, [])) > 0 ? { tolerations = local._mon_placement[c].tolerations } : {},
+      c != "grafana" && try(local._mon_placement[c].replicas, null) != null ? { replicas = tonumber(local._mon_placement[c].replicas) } : {},
+      c != "grafana" && try(tonumber(local._mon_placement[c].replicas), 1) > 1 ? { podAntiAffinity = "hard" } : {},
+    )
+  }
 
   # Optional placement for Prometheus + Grafana (`monitoring.node_selector`),
   # and a PVC for Prometheus (`monitoring.prometheus_storage_size`). Without
@@ -190,7 +230,10 @@ locals {
   grafana_resources         = try(local.platform.monitoring.grafana_resources, {})
   prometheus_spec = merge(
     try(local.platform.monitoring.prometheus_external_url, "") != "" ? { externalUrl = local.platform.monitoring.prometheus_external_url } : {},
-    length(local.monitoring_node_selector) > 0 ? { nodeSelector = local.monitoring_node_selector } : {},
+    # `monitoring.placement.prometheus` wins over the shared node_selector.
+    jsondecode(local._mon_placed["prometheus"] ? jsonencode(local._mon_placement_values["prometheus"]) : (
+      length(local.monitoring_node_selector) > 0 ? jsonencode({ nodeSelector = local.monitoring_node_selector }) : "{}"
+    )),
     local.prometheus_storage_size != "" ? {
       storageSpec = {
         volumeClaimTemplate = {
