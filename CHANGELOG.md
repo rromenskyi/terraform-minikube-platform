@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `coredns_replicas.tf`: `services.coredns.replicas` pins the k3s CoreDNS
+  Deployment's replica count with an HPA (min = max), removing the
+  single-replica DNS outage when its node fails. 0 (default) keeps the k3s
+  default.
+- `node_local_dns.tf` / `modules/node-local-dns`: NodeLocal DNSCache,
+  `services.node_local_dns` (off by default). A DNS cache on every node in
+  front of CoreDNS. Pods keep the cluster DNS address, and outside names
+  still go through CoreDNS, so `coredns-custom` overrides apply. It serves
+  stale entries through short CoreDNS or network outages.
 - `cnpg.tf` / `modules/cnpg`: a highly available Postgres cluster run by
   CloudNativePG, `services.cnpg` (off by default), next to the
   single-instance `postgres`. Instances on different nodes (`nodes` limits

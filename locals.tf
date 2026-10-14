@@ -172,6 +172,13 @@ locals {
       coredns = {
         host_overrides  = {}
         zone_forwarders = {}
+        replicas        = 0 # 0 = k3s default (1); see coredns_replicas.tf
+      }
+      # DNS cache on every node in front of CoreDNS (node_local_dns.tf).
+      node_local_dns = {
+        enabled       = false
+        serve_stale   = "1h"
+        node_selector = {} # empty = every node
       }
       traefik_public = {
         enabled = false
@@ -551,6 +558,7 @@ locals {
       addons               = merge(local._platform_defaults.services.addons, try(local._platform_services.addons, {}))
       buildkitd            = merge(local._platform_defaults.services.buildkitd, try(local._platform_services.buildkitd, {}))
       coredns              = merge(local._platform_defaults.services.coredns, try(local._platform_services.coredns, {}))
+      node_local_dns       = merge(local._platform_defaults.services.node_local_dns, try(local._platform_services.node_local_dns, {}))
       cluster_oidc         = merge(local._platform_defaults.services.cluster_oidc, try(local._platform_services.cluster_oidc, {}))
       gcp_wif              = merge(local._platform_defaults.services.gcp_wif, try(local._platform_services.gcp_wif, {}))
       seafile              = merge(local._platform_defaults.services.seafile, try(local._platform_services.seafile, {}))
