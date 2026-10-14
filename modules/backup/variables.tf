@@ -236,3 +236,29 @@ variable "image_alpine" {
   type        = string
   default     = "alpine:3.24"
 }
+
+# ── Alerting ────────────────────────────────────────────────────────────────
+
+variable "schedule_verify" {
+  description = "Cron schedule of `backup-verify`, which checks the age of the newest snapshot per tag. Run it after the nightly backups."
+  type        = string
+  default     = "0 6 * * *"
+}
+
+variable "freshness_max_age_hours" {
+  description = "Snapshot tag => maximum age in hours for `backup-verify`, merged over the built-in limits (26 h for the daily postgres/mysql/redis/vault tags, 192 h for the weekly `pv`). Add tags pushed from outside the cluster, e.g. `{ operator-config = 26 }`."
+  type        = map(number)
+  default     = {}
+}
+
+variable "prometheus_rule_labels" {
+  description = "Labels the cluster's Prometheus selects PrometheusRules by (kube-prometheus-stack: `release = <its release name>`). Null = no alert rule."
+  type        = map(string)
+  default     = null
+}
+
+variable "alert_labels" {
+  description = "Extra labels on the backup alert, e.g. the label an Alertmanager route matches on to send it by e-mail."
+  type        = map(string)
+  default     = {}
+}

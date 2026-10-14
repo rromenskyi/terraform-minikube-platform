@@ -256,11 +256,13 @@ STATE_LOCK_REGION=""
 STATE_LOCK_ID=""
 STATE_LOCK_RENEW_PID=""
 
-# Sets STATE_LOCK_URL / STATE_LOCK_REGION; fails when the wrapper lock does
-# not apply to the configured backend.
+# Sets STATE_LOCK_URL / STATE_LOCK_REGION. Returns 0 when the wrapper lock
+# applies, 1 when it does not (native locking, plain AWS, non-S3 backend),
+# 2 when the backend cannot be determined (not initialised, jq missing).
 state_lock_backend() {
   local backend="${SCRIPT_DIR}/.terraform/terraform.tfstate"
-  [[ -f "${backend}" ]] || return 1
+  [[ -f "${backend}" ]] || return 2
+  command -v jq >/dev/null 2>&1 || return 2
   [[ "$(jq -r '.backend.type // empty' "${backend}")" == "s3" ]] || return 1
   [[ "$(jq -r '(.backend.config.use_lockfile // false) or ((.backend.config.dynamodb_table // "") != "")' "${backend}")" == "false" ]] || return 1
   local bucket key endpoint region
@@ -362,7 +364,7 @@ acquire_state_lock() {
   fi
   echo "tf: state lock held by ${STATE_LOCK_ID}"
 
-  local since="${STATE_LOCK_SEEN_SINCE}" id="${STATE_LOCK_ID}"
+  local since="${STATE_LOCK_SEEN_SINCE}" id="${STATE_LOCK_ID}" wrapper_pid="$$"
   # The renew loop sleeps in a child it can kill: a plain `sleep` left
   # behind after the loop is stopped keeps the wrapper's stdout open, and a
   # pipe reading it (`./tf plan | tee`, CI) would hang until it ends.
@@ -379,7 +381,12 @@ acquire_state_lock() {
         STATE_LOCK_ID="${id}" write_state_lock "${command}" "${since}" \
           || echo "tf: failed to renew the state lock" >&2
       else
-        echo "tf: WARNING: the state lock is no longer ours (now: $(describe_seen_lock))" >&2
+        # Someone took the lock over (we did not renew for a stale period,
+        # or it was removed with `unlock`). Two writers must not continue:
+        # stop Terraform the way Ctrl-C does, once.
+        echo "tf: ERROR: the state lock is no longer ours (now: $(describe_seen_lock)); stopping Terraform." >&2
+        pkill -INT -P "${wrapper_pid}" -x terraform 2>/dev/null || true
+        exit 0
       fi
     done
   ) &
@@ -427,8 +434,17 @@ lock_state_for() {
     echo "tf: state lock skipped (--no-lock)" >&2
     return 0
   fi
-  state_lock_backend || return 0
-  acquire_state_lock "$1"
+  local rc=0
+  state_lock_backend || rc=$?
+  case "${rc}" in
+    0) acquire_state_lock "$1" ;;
+    1) return 0 ;;
+    *)
+      # Fail closed: an unknown backend must not mean "unlocked".
+      echo "tf: cannot determine the backend (.terraform/terraform.tfstate missing or jq not installed); run './tf init' first, or --no-lock if you are sure nobody else is running." >&2
+      exit 1
+      ;;
+  esac
 }
 
 cleanup() {
@@ -795,7 +811,10 @@ case "${SUBCOMMAND}" in
     # doesn't have to assume the tfstate key/bucket survived.
     SNAPSHOT="${SCRIPT_DIR}/terraform.tfstate.snapshot.json"
     cleanup_snapshot() { rm -f "${SNAPSHOT}"; }
-    trap cleanup_snapshot EXIT
+    # Chain with the wrapper's cleanup instead of replacing it, and keep the
+    # plaintext state snapshot private while it exists.
+    trap 'cleanup_snapshot; cleanup' EXIT
+    umask 077
     echo "tf: terraform state pull -> $(basename "${SNAPSHOT}")"
     terraform state pull > "${SNAPSHOT}"
 
@@ -1025,10 +1044,13 @@ database / mail credentials — Terraform state is reset, so passwords are regen
     ;;
 
   lock-status)
-    if ! state_lock_backend; then
-      echo "tf: the wrapper lock does not apply to this backend (native locking or non-S3)."
-      exit 0
-    fi
+    rc=0
+    state_lock_backend || rc=$?
+    case "${rc}" in
+      0) ;;
+      1) echo "tf: the wrapper lock does not apply to this backend (native locking or non-S3)."; exit 0 ;;
+      *) echo "tf: cannot determine the backend; run './tf init' first." >&2; exit 1 ;;
+    esac
     rc=0
     read_state_lock || rc=$?
     case "${rc}" in
@@ -1039,15 +1061,29 @@ database / mail credentials — Terraform state is reset, so passwords are regen
     ;;
 
   unlock)
-    state_lock_backend || { echo "tf: no wrapper lock for this backend."; exit 0; }
+    rc=0
+    state_lock_backend || rc=$?
+    case "${rc}" in
+      0) ;;
+      1) echo "tf: no wrapper lock for this backend."; exit 0 ;;
+      *) echo "tf: cannot determine the backend; run './tf init' first." >&2; exit 1 ;;
+    esac
     rc=0
     read_state_lock || rc=$?
-    if [[ "${rc}" == "1" ]]; then
-      echo "unlocked"
-      exit 0
-    fi
+    case "${rc}" in
+      1) echo "unlocked"; exit 0 ;;
+      2) echo "tf: cannot read the state lock (${STATE_LOCK_SEEN_ERROR}); not removing anything." >&2; exit 1 ;;
+    esac
     echo "removing the state lock held by $(describe_seen_lock)"
-    state_lock_s3 DELETE /dev/null >/dev/null
+    code="$(state_lock_s3 DELETE /dev/null)"
+    if [[ "${code}" != "204" && "${code}" != "200" ]]; then
+      echo "tf: removing the lock failed (HTTP ${code})." >&2
+      exit 1
+    fi
+    rc=0
+    read_state_lock || rc=$?
+    [[ "${rc}" == "1" ]] || { echo "tf: the lock is still there after removal." >&2; exit 1; }
+    echo "unlocked"
     ;;
 
   bootstrap)

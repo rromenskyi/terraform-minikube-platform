@@ -235,21 +235,24 @@ locals {
         affinity = {}
       }
       backup = {
-        enabled                = false
-        postgres_databases     = []
-        mysql_databases        = []
-        pv_paths               = []
-        pv_node_selector       = {}
-        pv_tolerations         = []
-        schedule_postgres      = "0 3 * * *"
-        schedule_mysql         = "15 3 * * *"
-        schedule_redis         = "30 3 * * *"
-        schedule_vault         = "45 3 * * *"
-        schedule_pv            = "0 4 * * 0"
-        schedule_prune         = "0 5 * * 0"
-        retention_keep_daily   = 7
-        retention_keep_weekly  = 4
-        retention_keep_monthly = 6
+        enabled            = false
+        postgres_databases = []
+        mysql_databases    = []
+        pv_paths           = []
+        pv_node_selector   = {}
+        pv_tolerations     = []
+        schedule_postgres  = "0 3 * * *"
+        schedule_mysql     = "15 3 * * *"
+        schedule_redis     = "30 3 * * *"
+        schedule_vault     = "45 3 * * *"
+        schedule_pv        = "0 4 * * 0"
+        schedule_prune     = "0 5 * * 0"
+        # backup-verify: extra snapshot tags and their max age in hours,
+        # e.g. { operator-config = 26 } for `./tf backup-config` pushes.
+        freshness_max_age_hours = {}
+        retention_keep_daily    = 7
+        retention_keep_weekly   = 4
+        retention_keep_monthly  = 6
       }
       zitadel = {
         enabled              = false
