@@ -21,7 +21,10 @@
 # writes the kubeconfig the platform reads. The pass-through above runs the
 # platform stack; the cluster stack runs through:
 #   ./tf cluster <terraform args>    e.g. ./tf cluster init, ./tf cluster plan
-#   (local state, no wrapper lock: it runs from the operator's machine only)
+#   ./tf cluster lock-status | unlock
+#   Its state is separate (local by default, or its own key next to the
+#   platform's), and so is its wrapper lock. The bootstrap-* flows hold only
+#   the platform's lock while they also drive the cluster stack.
 #
 # Subcommands with extra orchestration:
 #   ./tf cloudflare-purge
@@ -266,6 +269,11 @@ STATE_LOCK_STALE_SECONDS="${TF_WRAPPER_LOCK_STALE_SECONDS:-3600}"
 STATE_LOCK_RENEW_SECONDS="${TF_WRAPPER_LOCK_RENEW_SECONDS:-300}"
 STATE_LOCK_SETTLE_SECONDS=5
 STATE_LOCK_URL=""
+# The stack whose state is locked: the platform (repository root) by default,
+# `cluster/` for `./tf cluster ...`. Each has its own state, so its own lock.
+STATE_LOCK_STACK_DIR="${SCRIPT_DIR}"
+# How the operator names this stack on the command line, for hints.
+STATE_LOCK_CMD="./tf"
 STATE_LOCK_REGION=""
 STATE_LOCK_ID=""
 STATE_LOCK_RENEW_PID=""
@@ -274,7 +282,7 @@ STATE_LOCK_RENEW_PID=""
 # applies, 1 when it does not (native locking, plain AWS, non-S3 backend),
 # 2 when the backend cannot be determined (not initialised, jq missing).
 state_lock_backend() {
-  local backend="${SCRIPT_DIR}/.terraform/terraform.tfstate"
+  local backend="${STATE_LOCK_STACK_DIR}/.terraform/terraform.tfstate"
   [[ -f "${backend}" ]] || return 2
   command -v jq >/dev/null 2>&1 || return 2
   [[ "$(jq -r '.backend.type // empty' "${backend}")" == "s3" ]] || return 1
@@ -354,7 +362,7 @@ acquire_state_lock() {
     age=$(( now - ${STATE_LOCK_SEEN_RENEWED:-0} ))
     if (( age < STATE_LOCK_STALE_SECONDS )); then
       echo "tf: the state is locked by $(describe_seen_lock)." >&2
-      echo "tf: wait for it, or run './tf unlock' if you are sure that run is gone." >&2
+      echo "tf: wait for it, or run '${STATE_LOCK_CMD} unlock' if you are sure that run is gone." >&2
       exit 1
     fi
     echo "tf: taking over a stale state lock: $(describe_seen_lock)." >&2
@@ -455,7 +463,7 @@ lock_state_for() {
     1) return 0 ;;
     *)
       # Fail closed: an unknown backend must not mean "unlocked".
-      echo "tf: cannot determine the backend (.terraform/terraform.tfstate missing or jq not installed); run './tf init' first, or --no-lock if you are sure nobody else is running." >&2
+      echo "tf: cannot determine the backend (.terraform/terraform.tfstate missing or jq not installed); run '${STATE_LOCK_CMD} init' first, or --no-lock if you are sure nobody else is running." >&2
       exit 1
       ;;
   esac
@@ -501,6 +509,51 @@ reset_terraform_state() {
     "${SCRIPT_DIR}/cluster/terraform.tfstate" \
     "${SCRIPT_DIR}/cluster/terraform.tfstate.backup" \
     "${SCRIPT_DIR}/cluster/.terraform.tfstate.lock.info"
+}
+
+# `./tf lock-status` / `./tf cluster lock-status`: who holds the stack's lock.
+show_state_lock() {
+  local rc=0
+  state_lock_backend || rc=$?
+  case "${rc}" in
+    0) ;;
+    1) echo "tf: the wrapper lock does not apply to this backend (native locking or non-S3)."; exit 0 ;;
+    *) echo "tf: cannot determine the backend; run '${STATE_LOCK_CMD} init' first." >&2; exit 1 ;;
+  esac
+  rc=0
+  read_state_lock || rc=$?
+  case "${rc}" in
+    0) echo "locked by $(describe_seen_lock)" ;;
+    1) echo "unlocked" ;;
+    *) echo "cannot read the lock (${STATE_LOCK_SEEN_ERROR})" >&2; exit 1 ;;
+  esac
+}
+
+# `./tf unlock` / `./tf cluster unlock`: remove a stuck lock of the stack.
+remove_state_lock() {
+  local rc=0 code
+  state_lock_backend || rc=$?
+  case "${rc}" in
+    0) ;;
+    1) echo "tf: no wrapper lock for this backend."; exit 0 ;;
+    *) echo "tf: cannot determine the backend; run '${STATE_LOCK_CMD} init' first." >&2; exit 1 ;;
+  esac
+  rc=0
+  read_state_lock || rc=$?
+  case "${rc}" in
+    1) echo "unlocked"; exit 0 ;;
+    2) echo "tf: cannot read the state lock (${STATE_LOCK_SEEN_ERROR}); not removing anything." >&2; exit 1 ;;
+  esac
+  echo "removing the state lock held by $(describe_seen_lock)"
+  code="$(state_lock_s3 DELETE /dev/null)"
+  if [[ "${code}" != "204" && "${code}" != "200" ]]; then
+    echo "tf: removing the lock failed (HTTP ${code})." >&2
+    exit 1
+  fi
+  rc=0
+  read_state_lock || rc=$?
+  [[ "${rc}" == "1" ]] || { echo "tf: the lock is still there after removal." >&2; exit 1; }
+  echo "unlocked"
 }
 
 # The cluster stack (`cluster/`): k3s over SSH or minikube. Initialised on
@@ -836,13 +889,19 @@ case "${SUBCOMMAND}" in
     # copy under a separate B2 key — full disaster recovery
     # doesn't have to assume the tfstate key/bucket survived.
     SNAPSHOT="${SCRIPT_DIR}/terraform.tfstate.snapshot.json"
-    cleanup_snapshot() { rm -f "${SNAPSHOT}"; }
+    CLUSTER_SNAPSHOT="${SCRIPT_DIR}/cluster.tfstate.snapshot.json"
+    cleanup_snapshot() { rm -f "${SNAPSHOT}" "${CLUSTER_SNAPSHOT}"; }
     # Chain with the wrapper's cleanup instead of replacing it, and keep the
     # plaintext state snapshot private while it exists.
     trap 'cleanup_snapshot; cleanup' EXIT
     umask 077
     echo "tf: terraform state pull -> $(basename "${SNAPSHOT}")"
     terraform state pull > "${SNAPSHOT}"
+    # The cluster stack's state, when that stack is initialised here.
+    if [[ -d "${SCRIPT_DIR}/cluster/.terraform" ]]; then
+      echo "tf: terraform -chdir=cluster state pull -> $(basename "${CLUSTER_SNAPSHOT}")"
+      terraform -chdir="${SCRIPT_DIR}/cluster" state pull > "${CLUSTER_SNAPSHOT}"
+    fi
 
     # Step 2: pull restic repo URL + passphrase from outputs.
     REPO_URL="$(terraform output -raw backup_repository_url 2>/dev/null)"
@@ -863,7 +922,7 @@ case "${SUBCOMMAND}" in
     export AWS_ACCESS_KEY_ID="${TF_VAR_backup_b2_access_key_id}"
     export AWS_SECRET_ACCESS_KEY="${TF_VAR_backup_b2_secret_access_key}"
 
-    TARGETS=(.env config "$(basename "${SNAPSHOT}")")
+    TARGETS=(.env config "$(basename "${SNAPSHOT}")" "$(basename "${CLUSTER_SNAPSHOT}")")
     EXISTING=()
     for t in "${TARGETS[@]}"; do
       if [[ -e "$t" ]]; then EXISTING+=("$t"); fi
@@ -1074,51 +1133,32 @@ database / mail credentials — Terraform state is reset, so passwords are regen
     ;;
 
   lock-status)
-    rc=0
-    state_lock_backend || rc=$?
-    case "${rc}" in
-      0) ;;
-      1) echo "tf: the wrapper lock does not apply to this backend (native locking or non-S3)."; exit 0 ;;
-      *) echo "tf: cannot determine the backend; run './tf init' first." >&2; exit 1 ;;
-    esac
-    rc=0
-    read_state_lock || rc=$?
-    case "${rc}" in
-      0) echo "locked by $(describe_seen_lock)" ;;
-      1) echo "unlocked" ;;
-      *) echo "cannot read the lock (${STATE_LOCK_SEEN_ERROR})" >&2; exit 1 ;;
-    esac
+    show_state_lock
     ;;
 
   unlock)
-    rc=0
-    state_lock_backend || rc=$?
-    case "${rc}" in
-      0) ;;
-      1) echo "tf: no wrapper lock for this backend."; exit 0 ;;
-      *) echo "tf: cannot determine the backend; run './tf init' first." >&2; exit 1 ;;
-    esac
-    rc=0
-    read_state_lock || rc=$?
-    case "${rc}" in
-      1) echo "unlocked"; exit 0 ;;
-      2) echo "tf: cannot read the state lock (${STATE_LOCK_SEEN_ERROR}); not removing anything." >&2; exit 1 ;;
-    esac
-    echo "removing the state lock held by $(describe_seen_lock)"
-    code="$(state_lock_s3 DELETE /dev/null)"
-    if [[ "${code}" != "204" && "${code}" != "200" ]]; then
-      echo "tf: removing the lock failed (HTTP ${code})." >&2
-      exit 1
-    fi
-    rc=0
-    read_state_lock || rc=$?
-    [[ "${rc}" == "1" ]] || { echo "tf: the lock is still there after removal." >&2; exit 1; }
-    echo "unlocked"
+    remove_state_lock
     ;;
 
   cluster)
     shift
-    cluster_terraform "$@"
+    # The cluster stack has its own state on its own backend, so its own lock.
+    STATE_LOCK_STACK_DIR="${SCRIPT_DIR}/cluster"
+    STATE_LOCK_CMD="./tf cluster"
+    case "${1:-}" in
+      lock-status) show_state_lock ;;
+      unlock) remove_state_lock ;;
+      *)
+        # Initialise first: the lock reads the backend that init records.
+        if [[ "${1:-}" != "init" && ! -d "${SCRIPT_DIR}/cluster/.terraform" ]]; then
+          terraform -chdir="${SCRIPT_DIR}/cluster" init -input=false
+        fi
+        if state_lock_needed "$@"; then
+          lock_state_for "cluster $*"
+        fi
+        cluster_terraform "$@"
+        ;;
+    esac
     ;;
 
   bootstrap)

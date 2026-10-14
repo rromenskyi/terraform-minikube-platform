@@ -40,6 +40,8 @@ manifests/**/secret*.yaml
 
 # Terraform internals
 *.tfstate
+# State snapshots `./tf backup-config` writes before pushing them to restic
+*.tfstate.snapshot.json
 *.tfstate.backup
 *.tfstate.*.backup
 .terraform.tfstate.lock.info

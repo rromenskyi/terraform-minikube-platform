@@ -156,7 +156,7 @@ Three sibling modules are fetched directly from GitHub at pinned releases — no
 
 ### Two stacks
 
-- **`cluster/`** brings the cluster up (k3s over SSH, or minikube) and writes its admin kubeconfig. Run it with `./tf cluster <terraform args>` (`./tf cluster init`, `./tf cluster plan`, ...). It needs SSH to the host, so it runs only from the operator's machine. Its state is local by default; the wrapper's B2 lock does not cover it.
+- **`cluster/`** brings the cluster up (k3s over SSH, or minikube) and writes its admin kubeconfig. Run it with `./tf cluster <terraform args>` (`./tf cluster init`, `./tf cluster plan`, ...). It needs SSH to the host, so it runs only from the operator's machine. Its state is local by default; with a remote S3-compatible backend (e.g. a `cluster/_local_backend_override.tf` with its own key next to the platform state), `./tf cluster plan/apply/...` takes the wrapper's state lock for this stack, separate from the platform's (`./tf cluster lock-status`, `./tf cluster unlock`). `./tf backup-config` snapshots both states.
 - **The repository root** is the platform: everything inside the cluster, plus Cloudflare. Its providers read the kubeconfig from `TF_VAR_kubeconfig_path` (and `TF_VAR_kube_context`); empty means the file the k3s module writes, `cluster/.terraform/k3s-<cluster_name>.kubeconfig`. It needs no SSH, so a CI runner with its own kubeconfig can plan and apply it.
 
 Both read `cluster_name` from `TF_VAR_cluster_name`; keep it in `.env`, which the wrapper loads for both stacks (a root `terraform.tfvars` is not read by `cluster/`). Set `TF_VAR_cluster_distribution=minikube` (and `TF_VAR_kubeconfig_path`) for minikube; the default is `k3s`.
