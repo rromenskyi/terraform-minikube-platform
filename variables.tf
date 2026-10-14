@@ -15,6 +15,11 @@ variable "cluster_distribution" {
   description = "Distribution of the cluster (`k3s` or `minikube`), the cluster stack's `cluster_distribution` output. The add-ons pick storage class and Traefik service type by it."
   type        = string
   default     = "k3s"
+
+  validation {
+    condition     = contains(["k3s", "minikube"], var.cluster_distribution)
+    error_message = "cluster_distribution must be k3s or minikube."
+  }
 }
 
 variable "kubeconfig_path" {
@@ -24,7 +29,7 @@ variable "kubeconfig_path" {
 }
 
 variable "kube_context" {
-  description = "Context in `kubeconfig_path` to use. Empty: the file's current context."
+  description = "Context in `kubeconfig_path` for the root providers. Empty: the file's current context. The add-ons module (terraform-k8s-addons) always uses the file's current context, so when they differ the add-ons land elsewhere: set current-context to this context too."
   type        = string
   default     = ""
 }

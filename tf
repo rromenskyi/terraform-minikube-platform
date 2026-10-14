@@ -69,9 +69,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ENV_FILE="${SCRIPT_DIR}/.env"
 
 if [[ ! -f "$ENV_FILE" ]]; then
-  echo "Warning: $ENV_FILE not found"
+  echo "Warning: $ENV_FILE not found" >&2
 else
-  echo "Loading variables from .env..."
+  echo "Loading variables from .env..." >&2
   while IFS= read -r line || [[ -n "$line" ]]; do
     [[ "$line" =~ ^[[:space:]]*(#|$) ]] && continue
     if [[ "$line" == *"="* ]]; then
@@ -111,13 +111,13 @@ else
       if [[ "$lower_key" == tf_var_* ]]; then
         tf_var_name="TF_VAR_${lower_key#tf_var_}"
         export "$tf_var_name"="$value"
-        echo "  $tf_var_name=*** (hidden)"
+        echo "  $tf_var_name=*** (hidden)" >&2
       else
         export "$key"="$value"
         tf_var_name="TF_VAR_${lower_key}"
         export "$tf_var_name"="$value"
-        echo "  $key=*** (hidden)"
-        echo "  $tf_var_name=*** (hidden)"
+        echo "  $key=*** (hidden)" >&2
+        echo "  $tf_var_name=*** (hidden)" >&2
       fi
     fi
   done < "$ENV_FILE"
@@ -166,6 +166,13 @@ resolve_cloudflare_tunnel_name() {
 # want bootstrap to break on its absence.
 ZITADEL_PF_PID=""
 
+# kubectl talks to the same cluster as the Terraform providers: the platform
+# stack's TF_VAR_kubeconfig_path / TF_VAR_kube_context when set (CI), else
+# kubectl's own default.
+KUBECTL_ARGS=()
+[[ -n "${TF_VAR_kubeconfig_path:-}" ]] && KUBECTL_ARGS+=(--kubeconfig "${TF_VAR_kubeconfig_path}")
+[[ -n "${TF_VAR_kube_context:-}" ]] && KUBECTL_ARGS+=(--context "${TF_VAR_kube_context}")
+
 # Read the operator-supplied transport mode from config/platform.yaml.
 # Default (when the file is missing or the key is unset) is the
 # port-forward path so a clean clone with Cloudflare in the chain
@@ -194,18 +201,18 @@ start_zitadel_port_forward() {
   if [[ "${mode}" != "port_forward" ]]; then
     return 0
   fi
-  if ! kubectl get svc zitadel -n platform >/dev/null 2>&1; then
+  if ! kubectl "${KUBECTL_ARGS[@]+"${KUBECTL_ARGS[@]}"}" get svc zitadel -n platform >/dev/null 2>&1; then
     return 0
   fi
   # Only a listener the provider can reach on 127.0.0.1 counts: services
   # bound to a specific other address (e.g. NodeLocal DNSCache's health
   # check on 169.254.20.10:8080) do not.
   if ss -tln 2>/dev/null | grep -qE '(127\.0\.0\.1|0\.0\.0\.0|\*|\[::\]|\[::1\]):8080 '; then
-    echo "tf: localhost:8080 already in use — skipping kubectl port-forward (assumed already running)"
+    echo "tf: localhost:8080 already in use — skipping kubectl port-forward (assumed already running)" >&2
     return 0
   fi
-  echo "tf: kubectl port-forward svc/zitadel 8080:8080 (provider transport, bypasses Cloudflare gRPC trailer-strip)"
-  kubectl port-forward -n platform svc/zitadel 8080:8080 >/dev/null 2>&1 &
+  echo "tf: kubectl port-forward svc/zitadel 8080:8080 (provider transport, bypasses Cloudflare gRPC trailer-strip)" >&2
+  kubectl "${KUBECTL_ARGS[@]+"${KUBECTL_ARGS[@]}"}" port-forward -n platform svc/zitadel 8080:8080 >/dev/null 2>&1 &
   ZITADEL_PF_PID=$!
   # Probe the local TCP listener only — that's all the wrapper has to wait for.
   # Whether Zitadel itself is ready behind the listener is the provider's
@@ -369,7 +376,7 @@ acquire_state_lock() {
     echo "tf: lost the state lock to $(describe_seen_lock); not running." >&2
     exit 1
   fi
-  echo "tf: state lock held by ${STATE_LOCK_ID}"
+  echo "tf: state lock held by ${STATE_LOCK_ID}" >&2
 
   local since="${STATE_LOCK_SEEN_SINCE}" id="${STATE_LOCK_ID}" wrapper_pid="$$"
   # The renew loop sleeps in a child it can kill: a plain `sleep` left
@@ -409,7 +416,7 @@ release_state_lock() {
   [[ -n "${STATE_LOCK_ID}" ]] || return 0
   if read_state_lock && [[ "${STATE_LOCK_SEEN_HOLDER}" == "${STATE_LOCK_ID}" ]]; then
     state_lock_s3 DELETE /dev/null >/dev/null
-    echo "tf: state lock released"
+    echo "tf: state lock released" >&2
   fi
   STATE_LOCK_ID=""
 }
@@ -497,9 +504,9 @@ reset_terraform_state() {
 }
 
 # The cluster stack (`cluster/`): k3s over SSH or minikube. Initialised on
-# first use; `terraform init` is a no-op when nothing changed.
+# first use, unless the command is `init` itself (with its own arguments).
 cluster_terraform() {
-  if [[ ! -d "${SCRIPT_DIR}/cluster/.terraform" ]]; then
+  if [[ "${1:-}" != "init" && ! -d "${SCRIPT_DIR}/cluster/.terraform" ]]; then
     terraform -chdir="${SCRIPT_DIR}/cluster" init -input=false
   fi
   terraform -chdir="${SCRIPT_DIR}/cluster" "$@"
@@ -879,7 +886,7 @@ case "${SUBCOMMAND}" in
     confirm_bootstrap_destructive \
       "Bootstrap: minikube (Option A) — cluster \"${MINIKUBE_PROFILE}\"" \
       "minikube profile \"${MINIKUBE_PROFILE}\" — the docker-driver VM container plus ${HOME}/.minikube/profiles/${MINIKUBE_PROFILE} and ${HOME}/.minikube/machines/${MINIKUBE_PROFILE}
-local Terraform state — ${SCRIPT_DIR}/terraform.tfstate, ${SCRIPT_DIR}/terraform.tfstate.backup, ${SCRIPT_DIR}/.terraform.tfstate.lock.info" \
+local Terraform state of both stacks — ${SCRIPT_DIR}/terraform.tfstate, ${SCRIPT_DIR}/terraform.tfstate.backup, ${SCRIPT_DIR}/.terraform.tfstate.lock.info and the same under ${SCRIPT_DIR}/cluster/" \
       "host volume data at ${TF_VAR_host_volume_path:-${HOST_VOLUME_PATH:-/data/vol}} — tenant PVCs on disk survive
 Cloudflare tunnel \"${CLOUDFLARE_TUNNEL_NAME}\" and its DNS CNAMEs — bootstrap does NOT touch Cloudflare. If you want to destroy them, run './tf cloudflare-purge' as a deliberate separate step
 remote tfstate in B2 if the remote backend was ever configured (local backend override wins while active)" \
@@ -1043,7 +1050,7 @@ remote tfstate in B2 if the remote backend was ever configured (local backend ov
     confirm_bootstrap_destructive \
       "Bootstrap: k3s (Option B) — ssh target \"${TF_VAR_ssh_user:-?}@${TF_VAR_ssh_host:-?}\"" \
       "the k3s cluster on ${TF_VAR_ssh_user:-?}@${TF_VAR_ssh_host:-?}:${TF_VAR_ssh_port:-22} — \`terraform destroy\` then \`/usr/local/bin/k3s-uninstall.sh\` over SSH. All pods, Services, PVCs, in-cluster data disappear with k3s
-local Terraform state — ${SCRIPT_DIR}/terraform.tfstate, ${SCRIPT_DIR}/terraform.tfstate.backup, ${SCRIPT_DIR}/.terraform.tfstate.lock.info" \
+local Terraform state of both stacks — ${SCRIPT_DIR}/terraform.tfstate, ${SCRIPT_DIR}/terraform.tfstate.backup, ${SCRIPT_DIR}/.terraform.tfstate.lock.info and the same under ${SCRIPT_DIR}/cluster/" \
       "host volume data at ${TF_VAR_host_volume_path:-${HOST_VOLUME_PATH:-/data/vol}} on ${TF_VAR_ssh_host:-?} — k3s hostPath PVs survive because only the k3s control plane / kubelet are uninstalled, not the directory tree
 the SSH host itself — OS, user accounts, other services running on ${TF_VAR_ssh_host:-?} are untouched
 Cloudflare zones and DNS records outside Terraform — but NOTE: the Cloudflare tunnel \"${CLOUDFLARE_TUNNEL_NAME}\" and its Terraform-managed DNS CNAMEs ARE destroyed by the \`terraform destroy\` step and recreated (new tunnel ID) by the apply
@@ -1128,7 +1135,7 @@ EOF
       lock_state_for "$*"
     fi
     start_zitadel_port_forward
-    echo "Running: terraform $*"
+    echo "Running: terraform $*" >&2
     terraform "$@"
     ;;
 esac

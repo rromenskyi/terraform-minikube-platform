@@ -185,11 +185,12 @@ A separate top-level stack for `mail.<primary_mail_domain>`, wired in `mail.tf`.
 
 ```
 ./tf bootstrap-k3s
-  Step 0:    terraform destroy -auto-approve
+  Step 0:    terraform destroy -auto-approve (platform), then the cluster stack's destroy (SSH uninstall)
   Step 0.5:  Force-uninstall k3s over SSH (no-op if already gone)
   Step 0.25: rm local terraform.tfstate / backup / .terraform.lock.hcl
   Step 0.5:  Purge the platform's Cloudflare tunnel + its DNS records (scoped by tunnel UUID, never touches unrelated DNS)
-  Step 1:    terraform apply -auto-approve (single phase — providers open kubeconfig_path lazily)
+  Step 1:    cluster stack apply (installs k3s, writes cluster/.terraform/k3s-<name>.kubeconfig)
+  Step 2:    terraform apply -auto-approve (the platform)
 ```
 
 `./tf bootstrap-minikube` is the same flow against a minikube profile (Option A).
