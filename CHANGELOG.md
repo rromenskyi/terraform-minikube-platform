@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `./tf` state lock for S3-compatible backends without native locking
+  (Backblaze B2 answers conditional writes with 501, so `use_lockfile`
+  cannot work). Before plan/apply/destroy/import/refresh/taint/untaint and
+  `state mv|rm|push`, the wrapper writes `<key>.wrapper-lock` next to the
+  state. It refuses while another holder renewed it within an hour, then
+  writes, waits and reads it back, because there is no atomic
+  create-if-absent. The lock is renewed every 5 minutes and removed on exit,
+  including Ctrl-C. It works while the cluster is down.
+  - New subcommands: `./tf lock-status`, `./tf unlock`.
+  - `--no-lock` skips the lock.
+  - `TF_WRAPPER_LOCK_HOLDER` names the holder (for CI).
+  - Native-locking, plain-AWS and non-S3 backends are left to Terraform.
 - `coredns_replicas.tf`: `services.coredns.replicas` pins the k3s CoreDNS
   Deployment's replica count with an HPA (min = max), removing the
   single-replica DNS outage when its node fails. 0 (default) keeps the k3s

@@ -8,6 +8,14 @@
 #   ./tf init
 #   ./tf <anything else>
 #
+#   On an S3-compatible backend without native locking (e.g. Backblaze B2),
+#   plan/apply/destroy/import/refresh/taint/untaint and state mv/rm/push
+#   take the wrapper's state lock first (see "State lock" below).
+#   `--no-lock` skips it.
+#
+#   ./tf lock-status   who holds the wrapper's state lock, if anyone
+#   ./tf unlock        remove a stuck wrapper lock (after checking the holder is gone)
+#
 # Subcommands with extra orchestration:
 #   ./tf cloudflare-purge
 #     Deletes the platform Cloudflare tunnel + any DNS CNAMEs that still point
@@ -216,7 +224,232 @@ stop_zitadel_port_forward() {
   fi
 }
 
-trap stop_zitadel_port_forward EXIT INT TERM
+# ── State lock for S3-compatible backends without native locking ─────────
+#
+# Terraform's S3 backend locks only with `use_lockfile` (conditional writes)
+# or a DynamoDB table. Some S3-compatible stores have neither: Backblaze B2
+# answers a conditional PUT with 501 NotImplemented. Two runs (an operator
+# and CI) could then write the state at the same time. For such a backend
+# the wrapper keeps its own lock object next to the state
+# (`<key>.wrapper-lock`):
+#
+#   - acquire: a lock renewed within STATE_LOCK_STALE_SECONDS belongs to
+#     someone else, so refuse. Otherwise write ours, wait, read it back and
+#     own it only if it is still ours. The store has no atomic
+#     create-if-absent, so this narrows the two-writers window to runs that
+#     start within the same few seconds;
+#   - renewed every STATE_LOCK_RENEW_SECONDS while Terraform runs;
+#   - removed on exit, success or not, if it is still ours.
+#
+# The lock lives where the state lives, so it works while the cluster is
+# down. `--no-lock` (or TF_WRAPPER_NO_LOCK=1) skips it; `./tf lock-status`
+# shows the holder and `./tf unlock` removes a stuck lock.
+# TF_WRAPPER_LOCK_HOLDER names the holder (CI sets its run). Backends with
+# native locking (`use_lockfile`, `dynamodb_table`), plain AWS S3 and
+# non-S3 backends are left to Terraform.
+
+STATE_LOCK_STALE_SECONDS="${TF_WRAPPER_LOCK_STALE_SECONDS:-3600}"
+STATE_LOCK_RENEW_SECONDS="${TF_WRAPPER_LOCK_RENEW_SECONDS:-300}"
+STATE_LOCK_SETTLE_SECONDS=5
+STATE_LOCK_URL=""
+STATE_LOCK_REGION=""
+STATE_LOCK_ID=""
+STATE_LOCK_RENEW_PID=""
+
+# Sets STATE_LOCK_URL / STATE_LOCK_REGION; fails when the wrapper lock does
+# not apply to the configured backend.
+state_lock_backend() {
+  local backend="${SCRIPT_DIR}/.terraform/terraform.tfstate"
+  [[ -f "${backend}" ]] || return 1
+  [[ "$(jq -r '.backend.type // empty' "${backend}")" == "s3" ]] || return 1
+  [[ "$(jq -r '(.backend.config.use_lockfile // false) or ((.backend.config.dynamodb_table // "") != "")' "${backend}")" == "false" ]] || return 1
+  local bucket key endpoint region
+  bucket="$(jq -r '.backend.config.bucket // empty' "${backend}")"
+  key="$(jq -r '.backend.config.key // empty' "${backend}")"
+  endpoint="$(jq -r '.backend.config.endpoints.s3 // .backend.config.endpoint // empty' "${backend}")"
+  [[ -n "${bucket}" && -n "${key}" && -n "${endpoint}" ]] || return 1
+  region="$(jq -r '.backend.config.region // "us-east-1"' "${backend}")"
+  # S3-compatible stores name their region in the endpoint host
+  # (`s3.<region>.<domain>`) and expect signatures for it.
+  if [[ "${endpoint}" =~ ://s3\.([a-z0-9-]+)\. ]]; then
+    region="${BASH_REMATCH[1]}"
+  fi
+  STATE_LOCK_URL="${endpoint%/}/${bucket}/${key}.wrapper-lock"
+  STATE_LOCK_REGION="${TF_WRAPPER_LOCK_REGION:-${region}}"
+}
+
+# state_lock_s3 <METHOD> <body-out-file> [curl args...]; prints the HTTP code.
+# Credentials go through a curl config on a file descriptor, not argv.
+state_lock_s3() {
+  local method="$1" out="$2"
+  shift 2
+  curl -sS -o "${out}" -w '%{http_code}' --max-time 30 \
+    -K <(printf 'user = "%s:%s"\n' "${AWS_ACCESS_KEY_ID:-}" "${AWS_SECRET_ACCESS_KEY:-}") \
+    --aws-sigv4 "aws:amz:${STATE_LOCK_REGION}:s3" \
+    -H 'x-amz-content-sha256: UNSIGNED-PAYLOAD' \
+    -X "${method}" "$@" "${STATE_LOCK_URL}" || true
+}
+
+# Reads the lock into STATE_LOCK_SEEN_* ; returns 0 locked, 1 free, 2 error.
+read_state_lock() {
+  local tmp code
+  tmp="$(mktemp)"
+  code="$(state_lock_s3 GET "${tmp}")"
+  STATE_LOCK_SEEN_HOLDER="$(sed -n 's/^holder=//p' "${tmp}")"
+  STATE_LOCK_SEEN_COMMAND="$(sed -n 's/^command=//p' "${tmp}")"
+  STATE_LOCK_SEEN_SINCE="$(sed -n 's/^since=//p' "${tmp}")"
+  STATE_LOCK_SEEN_RENEWED="$(sed -n 's/^renewed=//p' "${tmp}")"
+  rm -f "${tmp}"
+  case "${code}" in
+    200) return 0 ;;
+    404) return 1 ;;
+    *) STATE_LOCK_SEEN_ERROR="HTTP ${code}"; return 2 ;;
+  esac
+}
+
+write_state_lock() {
+  local command="$1" since="$2" tmp code
+  tmp="$(mktemp)"
+  printf 'holder=%s\ncommand=%s\nsince=%s\nrenewed=%s\n' \
+    "${STATE_LOCK_ID}" "${command}" "${since}" "$(date +%s)" > "${tmp}"
+  code="$(state_lock_s3 PUT /dev/null --data-binary "@${tmp}")"
+  rm -f "${tmp}"
+  [[ "${code}" == "200" ]]
+}
+
+describe_seen_lock() {
+  local now
+  now="$(date +%s)"
+  printf '%s (%s, since %s, renewed %ss ago)' \
+    "${STATE_LOCK_SEEN_HOLDER:-?}" "${STATE_LOCK_SEEN_COMMAND:-?}" \
+    "$(date -d "@${STATE_LOCK_SEEN_SINCE:-0}" '+%F %T %Z' 2>/dev/null || echo '?')" \
+    "$(( now - ${STATE_LOCK_SEEN_RENEWED:-0} ))"
+}
+
+acquire_state_lock() {
+  local command="$1" rc=0 now age
+  read_state_lock || rc=$?
+  if [[ "${rc}" == "2" ]]; then
+    echo "tf: cannot read the state lock (${STATE_LOCK_SEEN_ERROR}). Rerun with --no-lock only if you are sure nobody else is running Terraform." >&2
+    exit 1
+  fi
+  if [[ "${rc}" == "0" ]]; then
+    now="$(date +%s)"
+    age=$(( now - ${STATE_LOCK_SEEN_RENEWED:-0} ))
+    if (( age < STATE_LOCK_STALE_SECONDS )); then
+      echo "tf: the state is locked by $(describe_seen_lock)." >&2
+      echo "tf: wait for it, or run './tf unlock' if you are sure that run is gone." >&2
+      exit 1
+    fi
+    echo "tf: taking over a stale state lock: $(describe_seen_lock)." >&2
+  fi
+
+  STATE_LOCK_ID="${TF_WRAPPER_LOCK_HOLDER:-$(id -un)@$(hostname)}/$$-${RANDOM}"
+  if ! write_state_lock "${command}" "$(date +%s)"; then
+    STATE_LOCK_ID=""
+    echo "tf: cannot write the state lock." >&2
+    exit 1
+  fi
+  # No atomic create-if-absent: let a concurrent writer land, then check
+  # whose lock survived.
+  sleep "${STATE_LOCK_SETTLE_SECONDS}"
+  rc=0
+  read_state_lock || rc=$?
+  if [[ "${rc}" != "0" || "${STATE_LOCK_SEEN_HOLDER}" != "${STATE_LOCK_ID}" ]]; then
+    STATE_LOCK_ID=""
+    echo "tf: lost the state lock to $(describe_seen_lock); not running." >&2
+    exit 1
+  fi
+  echo "tf: state lock held by ${STATE_LOCK_ID}"
+
+  local since="${STATE_LOCK_SEEN_SINCE}" id="${STATE_LOCK_ID}"
+  # The renew loop sleeps in a child it can kill: a plain `sleep` left
+  # behind after the loop is stopped keeps the wrapper's stdout open, and a
+  # pipe reading it (`./tf plan | tee`, CI) would hang until it ends.
+  (
+    set +e
+    sleeper=""
+    trap '[[ -n "${sleeper}" ]] && kill "${sleeper}" 2>/dev/null; exit 0' TERM
+    while :; do
+      sleep "${STATE_LOCK_RENEW_SECONDS}" &
+      sleeper=$!
+      wait "${sleeper}"
+      sleeper=""
+      if read_state_lock && [[ "${STATE_LOCK_SEEN_HOLDER}" == "${id}" ]]; then
+        STATE_LOCK_ID="${id}" write_state_lock "${command}" "${since}" \
+          || echo "tf: failed to renew the state lock" >&2
+      else
+        echo "tf: WARNING: the state lock is no longer ours (now: $(describe_seen_lock))" >&2
+      fi
+    done
+  ) &
+  STATE_LOCK_RENEW_PID=$!
+}
+
+release_state_lock() {
+  if [[ -n "${STATE_LOCK_RENEW_PID}" ]]; then
+    kill "${STATE_LOCK_RENEW_PID}" 2>/dev/null || true
+    wait "${STATE_LOCK_RENEW_PID}" 2>/dev/null || true
+    STATE_LOCK_RENEW_PID=""
+  fi
+  [[ -n "${STATE_LOCK_ID}" ]] || return 0
+  if read_state_lock && [[ "${STATE_LOCK_SEEN_HOLDER}" == "${STATE_LOCK_ID}" ]]; then
+    state_lock_s3 DELETE /dev/null >/dev/null
+    echo "tf: state lock released"
+  fi
+  STATE_LOCK_ID=""
+}
+
+# Commands that read the state to change it (or plan against it) take the
+# lock. `-chdir=...` style global flags before the command are skipped.
+state_lock_needed() {
+  local arg sub="" in_state=0
+  for arg in "$@"; do
+    [[ "${arg}" == -* ]] && continue
+    if [[ "${in_state}" == "1" ]]; then
+      case "${arg}" in mv|rm|push|replace-provider) return 0 ;; esac
+      return 1
+    fi
+    if [[ -z "${sub}" ]]; then
+      sub="${arg}"
+      case "${sub}" in
+        plan|apply|destroy|import|refresh|taint|untaint) return 0 ;;
+        state) in_state=1 ;;
+        *) return 1 ;;
+      esac
+    fi
+  done
+  return 1
+}
+
+lock_state_for() {
+  if [[ "${TF_WRAPPER_NO_LOCK:-}" == "1" ]]; then
+    echo "tf: state lock skipped (--no-lock)" >&2
+    return 0
+  fi
+  state_lock_backend || return 0
+  acquire_state_lock "$1"
+}
+
+cleanup() {
+  release_state_lock
+  stop_zitadel_port_forward
+}
+
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+# `--no-lock` belongs to the wrapper, not to Terraform.
+ARGS=()
+for arg in "$@"; do
+  if [[ "${arg}" == "--no-lock" ]]; then
+    TF_WRAPPER_NO_LOCK=1
+  else
+    ARGS+=("${arg}")
+  fi
+done
+set -- "${ARGS[@]+"${ARGS[@]}"}"
 
 reset_minikube_profile() {
   local profile="$1"
@@ -614,6 +847,7 @@ Cloudflare tunnel \"${CLOUDFLARE_TUNNEL_NAME}\" and its DNS CNAMEs — bootstrap
 remote tfstate in B2 if the remote backend was ever configured (local backend override wins while active)" \
       "$@"
 
+    lock_state_for "${SUBCOMMAND}"
     echo "=== Phased Bootstrap Mode (minikube / Option A) ==="
     reset_minikube_profile "${MINIKUBE_PROFILE}"
     reset_terraform_state
@@ -778,6 +1012,7 @@ Cloudflare zones and DNS records outside Terraform — but NOTE: the Cloudflare 
 database / mail credentials — Terraform state is reset, so passwords are regenerated; MySQL/Postgres re-assert the new superuser passwords on start and tenant setup Jobs re-assert theirs, but other app-held secrets stored in the volumes keep their old values" \
       "$@"
 
+    lock_state_for "${SUBCOMMAND}"
     echo "=== Single-phase Bootstrap Mode (k3s / Option B) ==="
     echo "Step 0: Destroying existing Terraform state (if any)..."
     terraform destroy -auto-approve
@@ -787,6 +1022,32 @@ database / mail credentials — Terraform state is reset, so passwords are regen
 
     echo "Step 1: Applying platform (single phase — k3s providers are config_path-lazy)..."
     terraform apply -auto-approve
+    ;;
+
+  lock-status)
+    if ! state_lock_backend; then
+      echo "tf: the wrapper lock does not apply to this backend (native locking or non-S3)."
+      exit 0
+    fi
+    rc=0
+    read_state_lock || rc=$?
+    case "${rc}" in
+      0) echo "locked by $(describe_seen_lock)" ;;
+      1) echo "unlocked" ;;
+      *) echo "cannot read the lock (${STATE_LOCK_SEEN_ERROR})" >&2; exit 1 ;;
+    esac
+    ;;
+
+  unlock)
+    state_lock_backend || { echo "tf: no wrapper lock for this backend."; exit 0; }
+    rc=0
+    read_state_lock || rc=$?
+    if [[ "${rc}" == "1" ]]; then
+      echo "unlocked"
+      exit 0
+    fi
+    echo "removing the state lock held by $(describe_seen_lock)"
+    state_lock_s3 DELETE /dev/null >/dev/null
     ;;
 
   bootstrap)
@@ -799,6 +1060,9 @@ EOF
     ;;
 
   *)
+    if state_lock_needed "$@"; then
+      lock_state_for "$*"
+    fi
     start_zitadel_port_forward
     echo "Running: terraform $*"
     terraform "$@"
