@@ -8,6 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Backup alerting (`modules/backup` `alerts.tf`):
+  - **`backup-verify`**, a nightly CronJob. It opens the restic repository
+    and fails when the newest snapshot of an expected tag is missing or
+    older than its limit: 26 h for the daily tags, 192 h for `pv`, plus
+    `services.backup.freshness_max_age_hours` (e.g. `operator-config`).
+  - **`BackupJobFailing`**, a PrometheusRule that fires when the latest
+    scheduled run of any CronJob in the backup namespace has not succeeded
+    within 2 h. It carries `alert_source = metric`, so the metric-alert
+    e-mail route delivers it.
+
+### Fixed
+- `./tf` state lock hardening:
+  - an undetermined backend now fails closed instead of running unlocked;
+  - `unlock` refuses on a read error, checks the DELETE result and verifies
+    the lock is gone;
+  - a lock taken over mid-run stops Terraform gracefully (SIGINT) instead of
+    only warning;
+  - `backup-config` keeps the wrapper's exit cleanup and writes the
+    plaintext state snapshot with `umask 077`.
 - `./tf` state lock for S3-compatible backends without native locking
   (Backblaze B2 answers conditional writes with 501, so `use_lockfile`
   cannot work). Before plan/apply/destroy/import/refresh/taint/untaint and

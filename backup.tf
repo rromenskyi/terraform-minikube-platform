@@ -196,6 +196,14 @@ module "backup" {
   vault_auth_role = "backup-snapshot"
 
   # PV
+  # Alert when a backup stops working: kube-prometheus-stack selects the rule
+  # by its release label, and `alert_source = metric` is what the
+  # metric-alert e-mail route matches (alertmanager_metric_email.tf; list
+  # the backup namespace under `monitoring.metric_alert_email.namespaces`).
+  prometheus_rule_labels  = { release = "kube-prometheus-stack" }
+  alert_labels            = { alert_source = "metric" }
+  freshness_max_age_hours = local.platform.services.backup.freshness_max_age_hours
+
   pv_enabled       = local.platform.services.backup.enabled && length(local.platform.services.backup.pv_paths) > 0
   pv_paths         = local.platform.services.backup.pv_paths
   pv_node_selector = local.platform.services.backup.pv_node_selector

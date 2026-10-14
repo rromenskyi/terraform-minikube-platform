@@ -7,6 +7,15 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- `backup-verify` CronJob: snapshot freshness per tag; built-in limits for
+  the enabled targets, `freshness_max_age_hours` to override or add.
+  `schedule_verify` controls when it runs.
+- `BackupJobFailing` PrometheusRule (`prometheus_rule_labels`,
+  `alert_labels`): the latest scheduled run of a CronJob in the namespace
+  has not succeeded within 2 h.
+- The module now requires the `gavinbunney/kubectl` provider.
+
 ### Security
 - `vault_auth_role`: the Vault snapshot Job logs in with ServiceAccount
   `backup-vault` (kubernetes auth) instead of a root-token Secret.
