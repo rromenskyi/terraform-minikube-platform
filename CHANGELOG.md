@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `*.tfstate.snapshot.json` is gitignored: a `./tf backup-config` stopped
+  before its cleanup no longer leaves a plaintext state snapshot that git
+  would offer to commit.
+
 ### Changed
 - **BREAKING: the cluster is now its own stack, `cluster/`** (`./tf cluster <args>`).
   The root stack (the platform) reads the cluster's kubeconfig from
@@ -29,6 +34,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     forget the cluster instead of destroying it.
 
 ### Added
+- `./tf cluster ...` takes the wrapper's state lock for the cluster stack's
+  own state (when that state is on an S3-compatible backend without native
+  locking), separate from the platform's: `./tf cluster lock-status`,
+  `./tf cluster unlock`. Before, only the platform state was locked.
+- `./tf backup-config` also snapshots the cluster stack's state.
 - `ci_access.tf`: `services.ci_access` gives Kubernetes access to an
   external CI that runs Terraform: a ServiceAccount with cluster-admin and a
   long-lived token, revocable on its own. The sensitive `ci_kubeconfig`
