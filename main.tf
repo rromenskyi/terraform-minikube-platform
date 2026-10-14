@@ -169,11 +169,14 @@ module "addons" {
   # in-cluster Service name. Requires the matching `alertmanager` route +
   # `config/components/alertmanager.yaml`. Empty config => {} => chart
   # default (unchanged), so this is a no-op until an operator opts in.
-  monitoring_alertmanager_extra_values = try(local.platform.monitoring.alertmanager_external_url, "") != "" ? {
-    alertmanagerSpec = {
-      externalUrl = local.platform.monitoring.alertmanager_external_url
-    }
-  } : {}
+  #
+  # Plus, with `monitoring.route_builtin_alerts`, the root route that delivers
+  # the built-in alerts and the push Secret it mounts
+  # (alertmanager_default_route.tf).
+  monitoring_alertmanager_extra_values = merge(
+    local.alertmanager_builtin_route_values,
+    length(local.alertmanager_spec_values) > 0 ? { alertmanagerSpec = local.alertmanager_spec_values } : {},
+  )
 
   # Same treatment for Prometheus — pins prometheusSpec.externalUrl so a
   # metric alert's "Source" link resolves to the browser-reachable host
@@ -185,6 +188,11 @@ module "addons" {
 }
 
 locals {
+  alertmanager_spec_values = merge(
+    try(local.platform.monitoring.alertmanager_external_url, "") != "" ? { externalUrl = local.platform.monitoring.alertmanager_external_url } : {},
+    local.alertmanager_builtin_spec,
+  )
+
   # Optional placement for Prometheus + Grafana (`monitoring.node_selector`),
   # and a PVC for Prometheus (`monitoring.prometheus_storage_size`). Without
   # the PVC the TSDB lives in an emptyDir and every Prometheus restart drops
