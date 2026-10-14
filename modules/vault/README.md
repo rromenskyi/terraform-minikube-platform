@@ -2,41 +2,6 @@
 
 Vault (Community Edition) StatefulSet with auto-init Job, OIDC mount, and optional VSO operator wiring. Replaces Infisical (whose Phase 1 hit a paywall).
 
-## GitHub Actions login
-
-`github_actions` mounts a JWT auth method that trusts GitHub's OIDC issuer.
-A job with `permissions: id-token: write` requests a token for `audience`,
-logs in to a role, and gets a short-lived Vault token with that role's
-policy. No secret is stored in GitHub. A role admits only tokens whose
-claims match its `bound_claims` (globs). Bind at least `repository` and
-`job_workflow_ref`, for example a plan role for any ref of one workflow and
-an apply role for that workflow on `refs/heads/main` only.
-
-```hcl
-github_actions = {
-  audience = "https://vault.example.com"
-  roles = {
-    terraform-apply = {
-      bound_claims = {
-        repository       = ["example-org/live"]
-        job_workflow_ref = ["example-org/live/.github/workflows/terraform.yml@refs/heads/main"]
-      }
-      policy = <<-HCL
-        path "secret/data/terraform/*" { capabilities = ["read"] }
-      HCL
-    }
-  }
-}
-```
-
-In the workflow:
-
-```sh
-JWT=$(curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-  "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://vault.example.com" | jq -r .value)
-VAULT_TOKEN=$(vault write -field=token auth/github/login role=terraform-apply jwt="$JWT")
-```
-
 <!-- BEGIN_TF_DOCS -->
 ## Requirements
 

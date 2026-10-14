@@ -7,15 +7,6 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-### Added
-- `github_actions`: Vault login for GitHub Actions jobs with their OIDC token.
-  It adds a JWT auth mount trusting `token.actions.githubusercontent.com`,
-  with an audience check. Each role carries glob-bound claims (bind
-  `repository` and `job_workflow_ref`), its own `github-<role>` policy and a
-  short token TTL. The Vault audit log identifies the job by
-  `job_workflow_ref`. Configured through vault-config-operator CRs, so
-  Terraform still never talks to Vault. Default null (off).
-
 ### Security
 - `snapshot_backup`: kubernetes-auth role `backup-snapshot` with read on
   `sys/storage/raft/snapshot` only, for the backup Job.
