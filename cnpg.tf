@@ -52,7 +52,9 @@ module "cnpg" {
   backup_retention         = local.cnpg.backup_retention
   backup_schedule          = local.cnpg.backup_schedule
 
-  sync = local.platform.services.postgres.enabled ? {
+  # Only from a running `postgres` server: once it is off, `postgres` is
+  # this cluster itself.
+  sync = local.platform.services.postgres.enabled && local.platform.services.postgres.server_enabled ? {
     source_host   = module.postgres.host
     source_secret = module.postgres.superuser_secret_name
     run           = local.cnpg.sync_run

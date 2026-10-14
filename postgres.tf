@@ -19,4 +19,5 @@ module "postgres" {
   # `services.cnpg.serve_postgres_service` hands the `postgres` Service to
   # the CloudNativePG cluster's primary (cnpg.tf).
   service_selector = local.cnpg.enabled && local.cnpg.serve_postgres_service ? module.cnpg.primary_selector : {}
+  server_enabled   = local.platform.services.postgres.server_enabled
 }

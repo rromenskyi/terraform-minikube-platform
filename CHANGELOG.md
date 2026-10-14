@@ -31,6 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `services.cnpg.serve_postgres_service` points the `postgres` Service at
   the cluster's primary, so clients move over unchanged. Both off by
   default.
+- `services.postgres.server_enabled`: false removes the single-instance
+  Postgres server and keeps its `postgres` Service (pointed at the
+  CloudNativePG primary) and superuser Secret, so clients are unaffected.
 - `airllm.tf` / `modules/airllm`: a second AirLLM instance for development,
   `services.airllm_dev`, next to the main one: own namespace, hostname,
   database and Redis index; tracks `main` by default. `seed_from_airllm`

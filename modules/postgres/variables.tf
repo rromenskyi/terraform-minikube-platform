@@ -45,3 +45,9 @@ variable "service_selector" {
   type        = map(string)
   default     = {}
 }
+
+variable "server_enabled" {
+  description = "Run this module's own Postgres server (StatefulSet, data volume, extensions Job). False keeps only the `postgres` Service and the superuser Secret, for when another server took over through `service_selector`: clients keep their host and credentials. The data directory on the host stays in place (the PersistentVolume is `Retain`)."
+  type        = bool
+  default     = true
+}
