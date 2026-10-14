@@ -108,8 +108,8 @@ module "zitadel" {
   context                   = module.platform_label.context
   enabled                   = local.platform.services.zitadel.enabled
   namespace                 = kubernetes_namespace_v1.platform.metadata[0].name
-  postgres_host             = module.postgres.host
-  postgres_superuser_secret = module.postgres.superuser_secret_name
+  postgres_host             = local.postgres.host
+  postgres_superuser_secret = local.postgres.superuser_secret_name
   external_domain           = local.platform.services.zitadel.external_domain
   first_admin_email         = local.platform.services.zitadel.first_admin_email
   first_admin_username      = local.platform.services.zitadel.first_admin_username

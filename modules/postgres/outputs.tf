@@ -23,7 +23,7 @@ output "port" {
 }
 
 output "superuser_password" {
-  value       = one([for p in random_password.superuser : p.result])
+  value       = var.enabled ? local.superuser_password : null
   sensitive   = true
   description = "Password for the `postgres` superuser (also in the postgres-superuser Secret). Null if disabled."
 }

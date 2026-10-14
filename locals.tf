@@ -21,13 +21,15 @@ locals {
         enabled       = false
         node_selector = {}
         tolerations   = []
-        # false = no server of its own, only the `postgres` Service and
-        # superuser Secret (after `cnpg.serve_postgres_service` took over).
-        server_enabled = true
+        # single = one server (modules/postgres); cnpg = the CloudNativePG
+        # cluster (`services.cnpg`), see postgres.tf.
+        engine = "single"
+        # Service clients connect to; the superuser Secret is
+        # `<service_name>-superuser`. Same for either engine.
+        service_name = "postgres"
       }
-      # CloudNativePG: a highly available Postgres cluster next to the
-      # single-instance `postgres` (modules/cnpg). Nothing connects to it
-      # until the consumers are switched over.
+      # CloudNativePG: a highly available Postgres cluster (modules/cnpg);
+      # clients use it with `postgres.engine = cnpg`.
       cnpg = {
         enabled      = false
         name         = "pg"
@@ -39,14 +41,12 @@ locals {
         backup_prefix    = "cnpg"
         backup_retention = "30d"
         backup_schedule  = "0 0 2 * * *" # six fields, seconds first
-        # One-off copy of every database and role from `postgres`
-        # (modules/cnpg `sync`): a Job per `sync_run` id; empty = none.
-        # `sync_mode`: rehearsal | cutover (freezes `postgres` first) | thaw.
+        # One-off copy of every database and role from the single server
+        # (modules/cnpg `sync`, only with `postgres.engine = single`): a Job
+        # per `sync_run` id; empty = none.
+        # `sync_mode`: rehearsal | cutover (freezes the source first) | thaw.
         sync_run  = ""
         sync_mode = "rehearsal"
-        # Point the `postgres` Service at this cluster's primary: every
-        # client of `postgres` moves over without changes. False = back.
-        serve_postgres_service = false
       }
       redis = {
         enabled       = false

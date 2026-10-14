@@ -75,10 +75,12 @@ password hashes, so clients' credentials stay valid:
    gets `CONNECTION LIMIT 0` and non-superuser sessions end, so nothing is
    written after the dump starts. Then the Job copies and fails on any
    difference.
-3. **Point clients at the cluster.** With the source's own Service, use
-   `primary_selector` as its selector (`modules/postgres` `service_selector`).
-4. **Roll back.** Restore the old selector, then run `mode = "thaw"`. Writes
-   made to the cluster in between stay there.
+3. **Point clients at the cluster.** Give the cluster the source's Service
+   name (`service_name`) and Secret name (`superuser_secret_name`). Then move
+   those two objects from the source's module to this one in the state
+   (`terraform state mv`), so they are updated in place, not recreated.
+4. **Roll back.** Move them back, then run `mode = "thaw"`. Writes made to the
+   cluster in between stay there.
 
 ## Operating
 

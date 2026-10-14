@@ -42,8 +42,8 @@ module "airllm" {
 
   argocd_namespace          = local.platform.services.argocd.namespace
   setup_namespace           = kubernetes_namespace_v1.platform.metadata[0].name
-  postgres_host             = module.postgres.host
-  postgres_superuser_secret = module.postgres.superuser_secret_name
+  postgres_host             = local.postgres.host
+  postgres_superuser_secret = local.postgres.superuser_secret_name
   database_name             = "airllm"
   redis_host                = module.redis.host
   redis_port                = module.redis.port
@@ -79,8 +79,8 @@ module "airllm_dev" {
 
   argocd_namespace          = local.platform.services.argocd.namespace
   setup_namespace           = kubernetes_namespace_v1.platform.metadata[0].name
-  postgres_host             = module.postgres.host
-  postgres_superuser_secret = module.postgres.superuser_secret_name
+  postgres_host             = local.postgres.host
+  postgres_superuser_secret = local.postgres.superuser_secret_name
   database_name             = "airllm_dev"
   seed_from_database        = local.airllm_dev.seed_from_airllm ? "airllm" : ""
   master_key                = local.airllm_dev.seed_from_airllm ? module.airllm.master_key : ""
