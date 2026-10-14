@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `ci_access.tf`: `services.ci_access` gives Kubernetes access to an
+  external CI that runs Terraform: a ServiceAccount with cluster-admin and a
+  long-lived token, revocable on its own. The sensitive `ci_kubeconfig`
+  output renders one context per address in `api_servers`, so a job can
+  fall back between API servers. Off by default.
 - `alertmanager_default_route.tf`: `monitoring.route_builtin_alerts` delivers
   the built-in kube-prometheus-stack alerts by e-mail plus the push channel.
   Until now the chart routed them to `null`.

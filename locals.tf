@@ -177,6 +177,13 @@ locals {
         zone_forwarders = {}
         replicas        = 0 # 0 = k3s default (1); see coredns_replicas.tf
       }
+      # Kubernetes access for an external CI (ci_access.tf): a ServiceAccount
+      # with cluster-admin; `api_servers` = API URLs the CI reaches.
+      ci_access = {
+        enabled     = false
+        name        = "platform-ci"
+        api_servers = []
+      }
       # DNS cache on every node in front of CoreDNS (node_local_dns.tf).
       node_local_dns = {
         enabled       = false
@@ -565,6 +572,7 @@ locals {
       buildkitd            = merge(local._platform_defaults.services.buildkitd, try(local._platform_services.buildkitd, {}))
       coredns              = merge(local._platform_defaults.services.coredns, try(local._platform_services.coredns, {}))
       node_local_dns       = merge(local._platform_defaults.services.node_local_dns, try(local._platform_services.node_local_dns, {}))
+      ci_access            = merge(local._platform_defaults.services.ci_access, try(local._platform_services.ci_access, {}))
       cluster_oidc         = merge(local._platform_defaults.services.cluster_oidc, try(local._platform_services.cluster_oidc, {}))
       gcp_wif              = merge(local._platform_defaults.services.gcp_wif, try(local._platform_services.gcp_wif, {}))
       seafile              = merge(local._platform_defaults.services.seafile, try(local._platform_services.seafile, {}))
