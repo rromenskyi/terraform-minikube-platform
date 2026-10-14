@@ -8,6 +8,10 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- `server_enabled`: false removes the server (StatefulSet, PV/PVC,
+  extensions Job) and keeps the `postgres` Service and superuser Secret for
+  clients now served by another server via `service_selector`. The host data
+  directory stays (`Retain`).
 - `service_selector`: point the `postgres` Service at another server's pods
   (e.g. a CloudNativePG primary) without touching clients. Empty (default)
   keeps `app = postgres`.

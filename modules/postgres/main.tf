@@ -15,6 +15,10 @@ terraform {
 locals {
   instances = var.enabled ? toset(["enabled"]) : toset([])
 
+  # The server itself; without it the module keeps only the `postgres`
+  # Service and the superuser Secret (see `server_enabled`).
+  server_instances = var.enabled && var.server_enabled ? toset(["enabled"]) : toset([])
+
   # Shorthand for the propagated null-label tag set used by every
   # k8s resource the module emits via `merge(local.tags, { … })`.
   # Existing-wins on key collision so the StatefulSet/Service
@@ -64,7 +68,7 @@ resource "kubernetes_secret_v1" "superuser" {
 # ── Persistent storage ────────────────────────────────────────────────────────
 
 resource "kubernetes_persistent_volume_v1" "postgres" {
-  for_each = local.instances
+  for_each = local.server_instances
 
   metadata {
     name   = "platform-postgres-data"
@@ -89,7 +93,7 @@ resource "kubernetes_persistent_volume_v1" "postgres" {
 }
 
 resource "kubernetes_persistent_volume_claim_v1" "postgres" {
-  for_each = local.instances
+  for_each = local.server_instances
 
   metadata {
     name      = "postgres-data"
@@ -113,7 +117,7 @@ resource "kubernetes_persistent_volume_claim_v1" "postgres" {
 # ── StatefulSet ───────────────────────────────────────────────────────────────
 
 resource "kubernetes_stateful_set_v1" "postgres" {
-  for_each = local.instances
+  for_each = local.server_instances
 
   metadata {
     name      = "postgres"
@@ -309,7 +313,7 @@ resource "kubernetes_stateful_set_v1" "postgres" {
 # no spec change after the first successful apply unless the extension
 # list itself changes.
 resource "kubernetes_job_v1" "pg_extensions" {
-  for_each = local.instances
+  for_each = local.server_instances
 
   metadata {
     name      = "postgres-pg-extensions"
@@ -392,6 +396,13 @@ resource "kubernetes_job_v1" "pg_extensions" {
 
 resource "kubernetes_service_v1" "postgres" {
   for_each = local.instances
+
+  lifecycle {
+    precondition {
+      condition     = var.server_enabled || length(var.service_selector) > 0
+      error_message = "server_enabled = false leaves the `postgres` Service with no pods of its own: set service_selector to the server that replaces it."
+    }
+  }
 
   metadata {
     name      = "postgres"

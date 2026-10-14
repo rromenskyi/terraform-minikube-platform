@@ -182,7 +182,10 @@ start_zitadel_port_forward() {
   if ! kubectl get svc zitadel -n platform >/dev/null 2>&1; then
     return 0
   fi
-  if ss -tln 2>/dev/null | grep -q ":8080 "; then
+  # Only a listener the provider can reach on 127.0.0.1 counts: services
+  # bound to a specific other address (e.g. NodeLocal DNSCache's health
+  # check on 169.254.20.10:8080) do not.
+  if ss -tln 2>/dev/null | grep -qE '(127\.0\.0\.1|0\.0\.0\.0|\*|\[::\]|\[::1\]):8080 '; then
     echo "tf: localhost:8080 already in use — skipping kubectl port-forward (assumed already running)"
     return 0
   fi

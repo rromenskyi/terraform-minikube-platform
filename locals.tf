@@ -21,6 +21,9 @@ locals {
         enabled       = false
         node_selector = {}
         tolerations   = []
+        # false = no server of its own, only the `postgres` Service and
+        # superuser Secret (after `cnpg.serve_postgres_service` took over).
+        server_enabled = true
       }
       # CloudNativePG: a highly available Postgres cluster next to the
       # single-instance `postgres` (modules/cnpg). Nothing connects to it
