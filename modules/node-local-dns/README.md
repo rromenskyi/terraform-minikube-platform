@@ -27,7 +27,9 @@
 - **Placement.** It tolerates every taint, so every node gets a cache.
   `node_selector` limits it, e.g. to one node while introducing it: a new
   DaemonSet starts everywhere at once. Updates roll one node at a time.
-- **Metrics.** A PodMonitor for CoreDNS metrics on port 9253.
+- **Metrics.** CoreDNS metrics on port 9253 and node-cache metrics on port
+  9353 listen on the node's own address (`status.hostIP`), not on every
+  host address. A PodMonitor scrapes 9253.
 
 ## Usage
 
