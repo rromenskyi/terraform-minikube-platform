@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `alertmanager_default_route.tf`: `monitoring.route_builtin_alerts` delivers
+  the built-in kube-prometheus-stack alerts by e-mail plus the push channel.
+  Until now the chart routed them to `null`.
+  - Delivered: warning and critical alerts without `alert_source`
+    metric/log, which already have their own routes.
+  - Still on `null`: `info` and `Watchdog`.
+  - The push URL is mounted from a Secret and read with `url_file`, so it is
+    never in the chart values or a plan.
+  - Off by default.
+
 ### Fixed
 - Alert push webhooks send at most 3 alerts per message (`maxAlerts`). ntfy
   rejected a group of 7 vulnerability alerts as too large (400) after its
