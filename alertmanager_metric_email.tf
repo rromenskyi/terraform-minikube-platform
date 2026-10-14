@@ -19,6 +19,25 @@ locals {
   _metric_alert_nss = try(local._metric_alert.namespaces, [])
   _metric_alert_to  = try(local._metric_alert.address, "")
   _metric_alert_on  = local._metric_alert_to != "" && length(local._metric_alert_nss) > 0
+  _alert_push_url   = try(local.platform.monitoring.alert_push_url, "")
+}
+
+# Optional push channel next to e-mail (`monitoring.alert_push_url`, e.g.
+# ntfy with `?template=alertmanager`), kept in a Secret in each namespace
+# because an AlertmanagerConfig can only reference its own namespace and a
+# push topic name works like a password.
+resource "kubernetes_secret_v1" "metric_alert_push" {
+  for_each = local._metric_alert_on && local._alert_push_url != "" ? toset(local._metric_alert_nss) : toset([])
+
+  metadata {
+    name      = "metric-alerts-push"
+    namespace = each.value
+    labels    = { "app.kubernetes.io/managed-by" = "terraform" }
+  }
+
+  data = {
+    url = local._alert_push_url
+  }
 }
 
 resource "kubectl_manifest" "metric_alert_email" {
@@ -44,7 +63,9 @@ resource "kubectl_manifest" "metric_alert_email" {
         repeatInterval = try(local._metric_alert.repeat_intervals[each.value], "3h")
         matchers       = [{ name = "alert_source", value = "metric", matchType = "=" }]
       }
-      receivers = [{
+      # Alertmanager fires every integration of a matched receiver, so the
+      # push webhook adds to the e-mail, never replaces it.
+      receivers = [merge({
         name = "email"
         emailConfigs = [{
           to           = local._metric_alert_to
@@ -54,7 +75,12 @@ resource "kubectl_manifest" "metric_alert_email" {
           requireTLS   = false
           sendResolved = true
         }]
-      }]
+        }, contains(keys(kubernetes_secret_v1.metric_alert_push), each.value) ? {
+        webhookConfigs = [{
+          urlSecret    = { name = kubernetes_secret_v1.metric_alert_push[each.value].metadata[0].name, key = "url" }
+          sendResolved = true
+        }]
+      } : {})]
     }
   })
 }

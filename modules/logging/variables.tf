@@ -144,6 +144,13 @@ variable "ai_enrichment_webhook_url" {
   default     = ""
 }
 
+variable "push_webhook_url" {
+  description = "Second notification channel for log alerts, next to e-mail: a URL taking Alertmanager webhook payloads, e.g. ntfy `https://ntfy.sh/<topic>?template=alertmanager`. Kept in a Secret (`urlSecret`), since a push topic name works like a password. Empty = e-mail only."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
 variable "alert_rules" {
   description = "Log alert rules the module renders into a vmalert `type: vlogs` rule group. Each: `query` is a LogsQL stats query ending in `stats count() as <name> | filter <name>:>N` (the time window lives in the query's `_time:` filter, the threshold in `| filter`); `for` is the sustain duration; `summary` is the notification text. The caller supplies these — the root wires a generic default set (panic/fatal/OOM) merged with the operator's `services.logging.alert_rules`."
   type = map(object({

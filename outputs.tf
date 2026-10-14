@@ -231,6 +231,19 @@ output "cheatsheet" {
     Vault URL (paste in browser, sign in with the token above):
       https://${try(local.platform.services.vault.hostname, "<vault disabled>")}
 
+    ── Alerts & backups ───────────────────────────────────────────
+    Push channel for alerts (e.g. an ntfy topic; subscribe to it in the
+    ntfy app; the topic name works like a password):
+      terraform output -raw alert_push_url
+
+    Backup freshness right now (newest snapshot age per restic tag):
+      kubectl -n backups create job backup-verify-manual --from=cronjob/backup-verify
+      kubectl -n backups logs -f job/backup-verify-manual
+
+    Terraform state lock (S3 backends without native locking, e.g. B2):
+      ./tf lock-status
+      ./tf unlock        # only after checking the holder is gone
+
 
     Mail — Roundcube webmail (Zitadel SSO; auto-provisions Stalwart UserAccount on first login):
       https://${try(local.mail.hostname, "<configure mail in a domain yaml>")}/
@@ -310,4 +323,10 @@ output "cheatsheet" {
     Projects:   terraform output -json projects | jq .
 
   EOT
+}
+
+output "alert_push_url" {
+  description = "Push channel that receives metric and log alerts next to e-mail (`monitoring.alert_push_url`, e.g. an ntfy topic URL). The topic name works like a password, hence sensitive. Read with `./tf output -raw alert_push_url`; subscribe to the topic in the ntfy app. Empty when unset."
+  value       = local._alert_push_url
+  sensitive   = true
 }
