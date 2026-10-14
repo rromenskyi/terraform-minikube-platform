@@ -49,3 +49,9 @@ variable "ssh_private_key_path" {
   type        = string
   default     = ""
 }
+
+variable "pod_cidr" {
+  description = "Pod CIDR for the minikube distribution (Option A in main.tf). Unused by k3s."
+  type        = string
+  default     = "10.244.0.0/16"
+}
