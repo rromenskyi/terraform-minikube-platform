@@ -8,6 +8,11 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- `push_webhook_url`: a second integration on the log-alert e-mail receiver
+  (e.g. ntfy), stored in a Secret and referenced by `urlSecret`. Empty =
+  e-mail only.
+
+### Added
 - **`ai_enrichment_webhook_url` — optional second integration on the
   existing email receiver.** When set, Alertmanager also POSTs each firing
   alert to this URL alongside the plain-text email (same receiver, not a

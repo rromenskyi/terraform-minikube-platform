@@ -556,12 +556,40 @@ resource "kubernetes_deployment_v1" "vmalert" {
   }
 }
 
+# Push channel URL for the receiver below, in a Secret: a push topic name
+# (e.g. ntfy) is enough to read or post to it.
+resource "kubernetes_secret_v1" "alert_push" {
+  for_each = nonsensitive(var.push_webhook_url != "") ? local.alerting : toset([])
+
+  metadata {
+    name      = "log-alerts-push"
+    namespace = var.namespace
+    labels    = local.tags
+  }
+
+  data = {
+    url = var.push_webhook_url
+  }
+}
+
 # Email receiver on the existing kube-prometheus-stack Alertmanager. The
 # Alertmanager CR selects AlertmanagerConfigs cluster-wide (selector `{}`); the
 # default `OnNamespace` matcher strategy scopes this to alerts labelled
 # `namespace=<this ns>` — which the vmalert rules above all carry. Sends through
 # the in-cluster Stalwart inbound listener (plaintext, in-cluster hop) to the
 # operator's local mailbox; no relay-trust change or SMTP credentials.
+locals {
+  # Every webhook integration on the e-mail receiver: the optional enricher
+  # and the optional push channel.
+  alert_webhooks = concat(
+    var.ai_enrichment_webhook_url != "" ? [{ url = var.ai_enrichment_webhook_url }] : [],
+    [for s in kubernetes_secret_v1.alert_push : {
+      urlSecret    = { name = s.metadata[0].name, key = "url" }
+      sendResolved = true
+    }],
+  )
+}
+
 resource "kubectl_manifest" "alertmanager_email" {
   for_each = local.alerting
 
@@ -613,11 +641,7 @@ resource "kubectl_manifest" "alertmanager_email" {
         # fire — an operator adding a second config with an overlapping
         # matcher risks silently replacing this email receiver instead of
         # adding to it.
-        var.ai_enrichment_webhook_url != "" ? {
-          webhookConfigs = [{
-            url = var.ai_enrichment_webhook_url
-          }]
-        } : {}
+        length(local.alert_webhooks) > 0 ? { webhookConfigs = local.alert_webhooks } : {}
       )]
     }
   })

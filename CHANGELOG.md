@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `monitoring.alert_push_url`: a second notification channel next to e-mail
+  for metric and log alerts, e.g. ntfy `https://ntfy.sh/<topic>?template=alertmanager`
+  (push to a phone).
+  - It is added as `webhookConfigs` on the existing e-mail receivers.
+    Alertmanager fires every integration of a matched receiver, so e-mail
+    always still goes out.
+  - The URL is kept in a Secret per namespace (`urlSecret`), because a topic
+    name works like a password.
+  - Read it back with `./tf output -raw alert_push_url`.
+  - `modules/logging`: new input `push_webhook_url`.
 - Backup alerting (`modules/backup` `alerts.tf`):
   - **`backup-verify`**, a nightly CronJob. It opens the restic repository
     and fails when the newest snapshot of an expected tag is missing or
