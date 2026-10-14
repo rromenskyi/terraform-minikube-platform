@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - The push URL is mounted from a Secret and read with `url_file`, so it is
     never in the chart values or a plan.
   - Off by default.
+- `monitoring.deadman_url`: dead man's switch. The always-firing `Watchdog`
+  alert is sent every minute to an external check-in URL (e.g.
+  healthchecks.io) instead of `null`. When the cluster, Prometheus or
+  Alertmanager dies, the pings stop and the external service alerts on its
+  own. The URL is mounted from a Secret (`url_file`).
 
 ### Fixed
 - Alert push webhooks send at most 3 alerts per message (`maxAlerts`). ntfy
