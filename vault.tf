@@ -140,4 +140,9 @@ module "vault" {
   # makes no sense, and operating Vault without it leaves the
   # engine's vault_path mode broken).
   vso_enabled = local.platform.services.vault.enabled
+
+  # GitHub Actions login (OIDC → JWT auth), e.g. for CI that pulls
+  # Terraform's secrets. Repository, workflow and policies come from the
+  # operator's config; null = off.
+  github_actions = local.platform.services.vault.github_actions
 }
