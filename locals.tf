@@ -79,9 +79,6 @@ locals {
         hostname                            = ""
         storage_class                       = ""
         vault_config_operator_chart_version = "1.0.3"
-        # GitHub Actions OIDC login: { audience, roles = { <name> = {
-        # bound_claims, policy } } }; see modules/vault `github_actions`.
-        github_actions = null
       }
       argocd = {
         enabled       = false

@@ -208,25 +208,3 @@ variable "init_image" {
   type        = string
   default     = "bitnami/kubectl:latest@sha256:f7f9e4f64d9e114650c115a4ac6fd383394b3d494061a8f17b1a0f6c8d55bc25"
 }
-
-variable "github_actions" {
-  description = <<-EOT
-    Vault login for GitHub Actions jobs with their OIDC token (JWT auth mounted at `path`). Null = off.
-    - `audience`: the `aud` jobs request for their token (e.g. `core.getIDToken(<audience>)`); tokens for any other audience are refused.
-    - `roles`: role name => what a token must carry and what it gets:
-      - `bound_claims`: claim => allowed values, `*` globs allowed. Bind at least `repository` and `job_workflow_ref` (the exact workflow file and ref), so only a reviewed workflow on a given branch can log in.
-      - `policy`: the Vault policy (HCL) attached to the role's tokens; created as `github-<role>`.
-      - `token_ttl` / `token_max_ttl`: lifetime of the issued Vault token.
-  EOT
-  type = object({
-    path     = optional(string, "github")
-    audience = string
-    roles = map(object({
-      bound_claims  = map(list(string))
-      policy        = string
-      token_ttl     = optional(string, "15m")
-      token_max_ttl = optional(string, "1h")
-    }))
-  })
-  default = null
-}
