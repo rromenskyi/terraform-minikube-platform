@@ -63,6 +63,23 @@ module "cnpg" {
 Applications connect to `host` (the `<name>-rw` Service). Read-only queries
 can go to `ro_host`.
 
+## Moving off another Postgres server
+
+`sync` copies every database and role from another server, keeping the
+password hashes, so clients' credentials stay valid:
+
+1. **Rehearsal** (`mode = "rehearsal"`, new `run` id each time): copies while
+   the source keeps running and reports how long it takes. The copy is a
+   throwaway; row counts may differ because the source takes writes.
+2. **Cutover** (`mode = "cutover"`): freezes the source first. Every database
+   gets `CONNECTION LIMIT 0` and non-superuser sessions end, so nothing is
+   written after the dump starts. Then the Job copies and fails on any
+   difference.
+3. **Point clients at the cluster.** With the source's own Service, use
+   `primary_selector` as its selector (`modules/postgres` `service_selector`).
+4. **Roll back.** Restore the old selector, then run `mode = "thaw"`. Writes
+   made to the cluster in between stay there.
+
 ## Operating
 
 - **Switchover** (planned primary move, e.g. before a node reboot):

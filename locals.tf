@@ -36,6 +36,14 @@ locals {
         backup_prefix    = "cnpg"
         backup_retention = "30d"
         backup_schedule  = "0 0 2 * * *" # six fields, seconds first
+        # One-off copy of every database and role from `postgres`
+        # (modules/cnpg `sync`): a Job per `sync_run` id; empty = none.
+        # `sync_mode`: rehearsal | cutover (freezes `postgres` first) | thaw.
+        sync_run  = ""
+        sync_mode = "rehearsal"
+        # Point the `postgres` Service at this cluster's primary: every
+        # client of `postgres` moves over without changes. False = back.
+        serve_postgres_service = false
       }
       redis = {
         enabled       = false

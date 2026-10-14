@@ -7,6 +7,14 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Added
+- `sync`: a Job that copies every database and role from another Postgres
+  server (`pg_dumpall --roles-only` + `pg_dump --create --clean` per database)
+  and verifies role lists and per-table row counts. Modes: `rehearsal`
+  (source keeps running), `cutover` (source frozen first with
+  `CONNECTION LIMIT 0`, any difference fails), `thaw` (lifts the freeze).
+- `primary_selector` output: the pod labels of the current primary.
+
 ### Fixed
 - CPU limit on the Postgres containers (default `1`) and requests/limits on
   the Barman Cloud sidecar (`backup_sidecar_resources`): a namespace

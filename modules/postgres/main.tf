@@ -400,7 +400,7 @@ resource "kubernetes_service_v1" "postgres" {
   }
 
   spec {
-    selector = { app = "postgres" }
+    selector = length(var.service_selector) > 0 ? var.service_selector : { app = "postgres" }
 
     port {
       name        = "postgres"

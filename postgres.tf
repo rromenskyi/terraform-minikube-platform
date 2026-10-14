@@ -15,4 +15,8 @@ module "postgres" {
 
   node_selector = local.platform.services.postgres.node_selector
   tolerations   = local.platform.services.postgres.tolerations
+
+  # `services.cnpg.serve_postgres_service` hands the `postgres` Service to
+  # the CloudNativePG cluster's primary (cnpg.tf).
+  service_selector = local.cnpg.enabled && local.cnpg.serve_postgres_service ? module.cnpg.primary_selector : {}
 }

@@ -1,9 +1,15 @@
 # CloudNativePG — a highly available Postgres cluster (modules/cnpg),
 # configured under `services.cnpg` in the gitignored `config/platform.yaml`.
 #
-# It runs next to the single-instance `module.postgres` and nothing connects
-# to it yet: consumers still get `module.postgres` outputs. Switching them over
-# is a separate step.
+# It runs next to the single-instance `module.postgres`. Clients keep using
+# `module.postgres` outputs (host `postgres`); moving them over takes three
+# config steps, no client changes:
+#   1. `sync_run` + `sync_mode = cutover`: a Job freezes `postgres` and copies
+#      every database and role here, then verifies the copy;
+#   2. `serve_postgres_service = true`: the `postgres` Service selects this
+#      cluster's primary (postgres.tf);
+#   3. rollback, if needed: `serve_postgres_service = false` and a
+#      `sync_mode = thaw` run.
 #
 # The superuser password is the current server's, so tools that log in as
 # `postgres` keep working on either server. Without a `module.postgres` the
@@ -45,4 +51,11 @@ module "cnpg" {
   backup_prefix            = local.cnpg.backup_prefix
   backup_retention         = local.cnpg.backup_retention
   backup_schedule          = local.cnpg.backup_schedule
+
+  sync = local.platform.services.postgres.enabled ? {
+    source_host   = module.postgres.host
+    source_secret = module.postgres.superuser_secret_name
+    run           = local.cnpg.sync_run
+    mode          = local.cnpg.sync_mode
+  } : null
 }

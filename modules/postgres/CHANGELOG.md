@@ -7,6 +7,11 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- `service_selector`: point the `postgres` Service at another server's pods
+  (e.g. a CloudNativePG primary) without touching clients. Empty (default)
+  keeps `app = postgres`.
+
 ### Fixed
 - Superuser password is re-asserted after start over the local socket
   (`postStart`, never fails the container); the image sets it only on an
