@@ -374,3 +374,185 @@ resource "kubectl_manifest" "prometheus_rule" {
     }
   })
 }
+
+# ── One-off copy from another server ───────────────────────────────────────
+
+locals {
+  sync_runs = var.enabled && var.sync != null ? (var.sync.run != "" ? toset([var.sync.run]) : toset([])) : toset([])
+
+  # Runs in the cluster's own image, so pg_dump matches the server version.
+  sync_script = <<-EOT
+    set -euo pipefail
+    src() { PGPASSWORD="$SRC_PASSWORD" psql -h "$SRC_HOST" -U postgres -X -v ON_ERROR_STOP=1 "$@"; }
+    dst() { PGPASSWORD="$DST_PASSWORD" psql -h "$DST_HOST" -U postgres -X -v ON_ERROR_STOP=1 "$@"; }
+    started=$(date +%s)
+
+    dbs=$(src -d postgres -tAc "SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate AND datname <> 'postgres' ORDER BY 1")
+
+    if [ "$MODE" = thaw ]; then
+      for db in $dbs; do
+        printf 'ALTER DATABASE :"db" CONNECTION LIMIT -1;\n' | src -d postgres -q -v db="$db"
+      done
+      echo "source thawed: $(echo $dbs | wc -w) databases accept connections again"
+      exit 0
+    fi
+
+    # Roles before the freeze, while the source is unchanged. The target
+    # manages its own `postgres` role; for a role that already exists
+    # CREATE ROLE fails harmlessly and the ALTER ROLE after it still sets the
+    # attributes and the password hash, so a rerun converges.
+    PGPASSWORD="$SRC_PASSWORD" pg_dumpall -h "$SRC_HOST" -U postgres --roles-only \
+      | grep -vE '^(CREATE|ALTER) ROLE postgres[ ;]' > /tmp/roles.sql
+    PGPASSWORD="$DST_PASSWORD" psql -h "$DST_HOST" -U postgres -X -q -d postgres -f /tmp/roles.sql 2>&1 \
+      | grep -v 'already exists' || true
+
+    if [ "$MODE" = cutover ]; then
+      # CONNECTION LIMIT binds every role but superusers, owners included,
+      # so clients are locked out while pg_dump still connects.
+      for db in $dbs; do
+        printf 'ALTER DATABASE :"db" CONNECTION LIMIT 0;\nSELECT count(pg_terminate_backend(a.pid)) AS ended FROM pg_stat_activity a JOIN pg_roles r ON r.oid = a.usesysid WHERE a.datname = :%s AND NOT r.rolsuper;\n' "'db'" \
+          | src -d postgres -q -tA -v db="$db" > /dev/null
+      done
+      echo "source frozen"
+    fi
+
+    for db in $dbs; do
+      printf 'SELECT count(pg_terminate_backend(pid)) FROM pg_stat_activity WHERE datname = :%s AND pid <> pg_backend_pid();\n' "'db'" \
+        | dst -d postgres -q -tA -v db="$db" > /dev/null
+      PGPASSWORD="$SRC_PASSWORD" pg_dump -h "$SRC_HOST" -U postgres --create --clean --if-exists -d "$db" \
+        | dst -d postgres -q > /dev/null
+      # The copy carries the source's (possibly frozen) limit.
+      printf 'ALTER DATABASE :"db" CONNECTION LIMIT -1;\n' | dst -d postgres -q -v db="$db"
+      echo "copied $db"
+    done
+
+    rows() {
+      "$1" -d "$2" -tA <<'SQL'
+    SELECT format('%I.%I', table_schema, table_name) || ' ' ||
+           (xpath('/row/c/text()', query_to_xml(format('SELECT count(*) AS c FROM %I.%I', table_schema, table_name), false, true, '')))[1]::text
+      FROM information_schema.tables
+     WHERE table_type = 'BASE TABLE' AND table_schema NOT IN ('pg_catalog', 'information_schema')
+     ORDER BY 1;
+    SQL
+    }
+    roles() { "$1" -d postgres -tAc "SELECT rolname FROM pg_roles WHERE rolname !~ '^pg_' AND rolname <> 'postgres' ORDER BY 1"; }
+
+    differs=0
+    missing=$(comm -23 <(roles src) <(roles dst))
+    if [ -n "$missing" ]; then echo "roles missing on the target: $missing"; differs=1; fi
+    for db in $dbs; do
+      if ! diff <(rows src "$db") <(rows dst "$db") > /tmp/diff; then
+        echo "row counts differ in $db:"; cat /tmp/diff; differs=1
+      fi
+    done
+
+    echo "copied $(echo $dbs | wc -w) databases in $(( $(date +%s) - started ))s"
+    if [ "$differs" = 1 ]; then
+      if [ "$MODE" = cutover ]; then echo "verification FAILED"; exit 1; fi
+      echo "differences above are expected while the source takes writes (rehearsal)"
+    else
+      echo "verification passed: roles and row counts match"
+    fi
+  EOT
+}
+
+resource "kubernetes_job_v1" "sync" {
+  for_each = local.sync_runs
+
+  depends_on = [kubectl_manifest.cluster]
+
+  metadata {
+    name      = "${var.name}-sync-${each.key}"
+    namespace = var.namespace
+    labels    = local.tags
+  }
+
+  spec {
+    # A failed copy is rerun deliberately with a new `run` id, never
+    # retried behind the operator's back.
+    backoff_limit = 0
+
+    template {
+      metadata {
+        labels = local.tags
+      }
+
+      spec {
+        restart_policy = "Never"
+
+        security_context {
+          run_as_non_root = true
+          run_as_user     = 26 # `postgres` in the CloudNativePG images
+          seccomp_profile {
+            type = "RuntimeDefault"
+          }
+        }
+
+        container {
+          name    = "sync"
+          image   = var.image
+          command = ["/usr/bin/bash", "-c", local.sync_script]
+
+          env {
+            name  = "MODE"
+            value = var.sync.mode
+          }
+          env {
+            name  = "SRC_HOST"
+            value = var.sync.source_host
+          }
+          env {
+            name = "SRC_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = var.sync.source_secret
+                key  = "POSTGRES_PASSWORD"
+              }
+            }
+          }
+          env {
+            name  = "DST_HOST"
+            value = "${var.name}-rw.${var.namespace}.svc.cluster.local"
+          }
+          env {
+            name = "DST_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret_v1.superuser["enabled"].metadata[0].name
+                key  = "password"
+              }
+            }
+          }
+
+          resources {
+            requests = { cpu = "100m", memory = "128Mi" }
+            limits   = { cpu = "1", memory = "512Mi" }
+          }
+
+          security_context {
+            allow_privilege_escalation = false
+            read_only_root_filesystem  = true
+            capabilities {
+              drop = ["ALL"]
+            }
+          }
+
+          volume_mount {
+            name       = "tmp"
+            mount_path = "/tmp"
+          }
+        }
+
+        volume {
+          name = "tmp"
+          empty_dir {}
+        }
+      }
+    }
+  }
+
+  wait_for_completion = true
+  timeouts {
+    create = "30m"
+  }
+}

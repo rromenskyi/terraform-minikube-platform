@@ -172,3 +172,35 @@ variable "prometheus_selector_labels" {
   type        = map(string)
   default     = { release = "kube-prometheus-stack" }
 }
+
+# ── One-off copy from another Postgres server ───────────────────────────────
+
+variable "sync" {
+  description = <<-EOT
+    Copy every database and role from another Postgres server into this cluster with a Job, e.g. to move off a single-instance server. Null = no Job.
+    - `source_host` / `source_secret`: the server and a Secret in `namespace` with its superuser password under `POSTGRES_PASSWORD`.
+    - `run`: any id; the Job runs once per value (change it to run again). Empty = no Job.
+    - `mode`:
+      - `rehearsal` copies while the source keeps running and taking writes; the copy is a throwaway, row-count differences are reported, not fatal.
+      - `cutover` first freezes the source (`CONNECTION LIMIT 0` on its databases and ends non-superuser sessions; superusers still connect), so nothing is written after the dump starts; then copies and fails on any row-count or role difference.
+      - `thaw` only lifts the freeze (`CONNECTION LIMIT -1`), to roll a cutover back.
+    Every copy recreates the target databases (`pg_dump --create --clean`), so nothing may use them yet. Roles keep their password hashes, so client credentials stay valid.
+  EOT
+  type = object({
+    source_host   = string
+    source_secret = string
+    run           = optional(string, "")
+    mode          = optional(string, "rehearsal")
+  })
+  default = null
+
+  validation {
+    condition     = var.sync == null || contains(["rehearsal", "cutover", "thaw"], try(var.sync.mode, ""))
+    error_message = "sync.mode must be `rehearsal`, `cutover` or `thaw`."
+  }
+
+  validation {
+    condition     = var.sync == null || can(regex("^([a-z0-9]([-a-z0-9]{0,30}[a-z0-9])?)?$", try(var.sync.run, "")))
+    error_message = "sync.run must be empty or a short DNS label (it is part of the Job name)."
+  }
+}

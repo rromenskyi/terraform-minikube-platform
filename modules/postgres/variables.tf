@@ -39,3 +39,9 @@ variable "tolerations" {
   }))
   default = []
 }
+
+variable "service_selector" {
+  description = "Pod selector of the `postgres` Service. Empty = this module's own pod (`app = postgres`). Set it to another server's primary (e.g. a CloudNativePG cluster's `cnpg.io/cluster` + `cnpg.io/instanceRole = primary` labels) to move every client that connects to `postgres` over to that server without touching the clients; clearing it moves them back."
+  type        = map(string)
+  default     = {}
+}

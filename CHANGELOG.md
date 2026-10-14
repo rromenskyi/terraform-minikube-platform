@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   daily base backups to the `services.backup` B2 bucket under `cnpg/`.
   Nothing connects to it yet; switching the consumers over is a separate
   step.
+- `services.cnpg.sync_run` / `sync_mode`: a Job copies every database and
+  role from `postgres` into the CloudNativePG cluster (`rehearsal`, `cutover`
+  with `postgres` frozen first, `thaw`), and
+  `services.cnpg.serve_postgres_service` points the `postgres` Service at
+  the cluster's primary, so clients move over unchanged. Both off by
+  default.
 - `airllm.tf` / `modules/airllm`: a second AirLLM instance for development,
   `services.airllm_dev`, next to the main one: own namespace, hostname,
   database and Redis index; tracks `main` by default. `seed_from_airllm`

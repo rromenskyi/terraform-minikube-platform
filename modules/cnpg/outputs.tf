@@ -27,3 +27,8 @@ output "backup_destination" {
   description = "Object-store path the WAL archive and base backups go to, or null when backups are off."
   value       = local.backup_configured ? "s3://${var.backup_bucket}/${var.backup_prefix}/${var.name}/" : null
 }
+
+output "primary_selector" {
+  description = "Pod labels that select the cluster's current primary; the operator moves them on failover. Use it to point an existing Service at the primary. Null if disabled."
+  value       = var.enabled ? { "cnpg.io/cluster" = var.name, "cnpg.io/instanceRole" = "primary" } : null
+}
