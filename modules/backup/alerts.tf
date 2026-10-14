@@ -90,7 +90,16 @@ resource "kubernetes_cron_job_v1" "verify" {
                     stale="$stale $tag"
                     continue
                   fi
+                  # restic records the creating host's offset (e.g. -06:00
+                  # for a snapshot pushed from outside the cluster) or Z:
+                  # parse the wall time as UTC, then undo the offset.
                   ts=$(date -u -d "$(echo "$t" | cut -c1-19 | tr T ' ')" +%s)
+                  off=$(echo "$t" | sed -n 's/.*\([+-]\)\([0-9][0-9]\):\([0-9][0-9]\)$/\1 \2 \3/p')
+                  if [ -n "$off" ]; then
+                    set -- $off
+                    secs=$(( $${2#0} * 3600 + $${3#0} * 60 ))
+                    if [ "$1" = "+" ]; then ts=$((ts - secs)); else ts=$((ts + secs)); fi
+                  fi
                   age=$(( (now - ts) / 3600 ))
                   if [ "$age" -gt "$hours" ]; then
                     echo "[verify] $tag: newest snapshot $${age}h old, limit $${hours}h"
