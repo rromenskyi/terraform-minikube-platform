@@ -29,6 +29,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     forget the cluster instead of destroying it.
 
 ### Added
+- `monitoring.external_targets` (external_scrape.tf): Prometheus scrapes
+  devices outside the cluster through a ScrapeConfig per target group
+  (static targets with per-target labels, metrics path, scheme, interval).
+  Optional HTTP basic auth: the password comes from the sensitive variable
+  `monitoring_scrape_passwords` (tfvars) into a Secret, never from config.
+- `monitoring.esphome_power_dashboard`: a Grafana dashboard for ESPHome
+  smart plugs (power, voltage, today's energy, relay and reachability), by
+  the target label `plug`.
 - `ci_access.tf`: `services.ci_access` gives Kubernetes access to an
   external CI that runs Terraform: a ServiceAccount with cluster-admin and a
   long-lived token, revocable on its own. The sensitive `ci_kubeconfig`
