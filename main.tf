@@ -5,13 +5,9 @@
 # Three-layer stack
 # =============================================================================
 #
-# Layer 1 — module "k8s"    (cluster bootstrap)
-#   Picks ONE of:
-#     `terraform-minikube-k8s` — local minikube via the minikube provider
-#     `terraform-k3s-k8s`      — native k3s over SSH
-#   Both export an identical signature (cluster_host, *_certificate,
-#   cluster_ca_certificate, kubeconfig_path, cluster_name,
-#   cluster_distribution) so everything above is distribution-agnostic.
+# Layer 1 — the cluster (its own stack, `cluster/`)
+#   `terraform-minikube-k8s` or `terraform-k3s-k8s`; writes the admin
+#   kubeconfig that this stack reads (`kubeconfig_path`).
 #
 # Layer 2 — module "addons"  (platform services)
 #   `terraform-k8s-addons` — Traefik, cert-manager + Let's Encrypt,
@@ -25,55 +21,42 @@
 #   module.addons.
 
 # -----------------------------------------------------------------------------
-# Layer 1: Cluster distribution — pick ONE (the other stays commented out).
+# Layer 1: the cluster itself lives in its own stack, `cluster/`
+# (`./tf cluster apply`). This stack only needs its admin kubeconfig, so it
+# also runs where SSH to the hosts is not available (CI).
 # -----------------------------------------------------------------------------
 
-# --- Option A: minikube ------------------------------------------------------
-# module "k8s" {
-#   source = "git::https://github.com/rromenskyi/terraform-minikube-k8s.git?ref=v3.0.0"
-#
-#   cluster_name       = var.cluster_name
-#   kubernetes_version = var.kubernetes_version
-#   memory             = var.memory
-#
-#   # Keep Pod and Service ranges in separate CGNAT slices so neither collides
-#   # with the host LAN nor with each other.
-#   pod_cidr     = var.pod_cidr
-#   service_cidr = "100.64.0.0/12"
-#   dns_ip       = "100.64.0.10"
-#   cni          = "flannel"
-# }
-
-# --- Option B: k3s -----------------------------------------------------------
-module "k8s" {
-  source = "git::https://github.com/rromenskyi/terraform-k3s-k8s.git?ref=v0.3.1"
-
-  cluster_name = var.cluster_name
-
-  # Leave kubernetes_version unset to pull the default k3s channel ("stable"),
-  # or pin a specific build like "v1.31.4+k3s1". The minikube-style "stable"
-  # string is not a valid k3s version.
-  # kubernetes_version = "v1.31.4+k3s1"
-
-  ssh_host             = var.ssh_host
-  ssh_port             = var.ssh_port
-  ssh_user             = var.ssh_user
-  ssh_private_key_path = var.ssh_private_key_path
+locals {
+  # The cluster stack's k3s module writes the kubeconfig here; minikube (or a
+  # CI runner) passes its own through TF_VAR_kubeconfig_path.
+  kubeconfig_path = var.kubeconfig_path != "" ? var.kubeconfig_path : "${path.root}/cluster/.terraform/k3s-${var.cluster_name}.kubeconfig"
+  kube_context    = var.kube_context != "" ? var.kube_context : null
 }
 
-# Fail the plan when the k3s SSH inputs are missing. Module blocks take no
-# `lifecycle { precondition }`, so a terraform_data carries it. It belongs to
-# the k3s module above: comment both out when switching to minikube.
-resource "terraform_data" "k3s_checks" {
+# The cluster used to be `module.k8s` in this stack. Forget it here without
+# destroying it: destroying the k3s install would run the uninstaller on the
+# host. Its state moves to the cluster stack (README, "Two stacks").
+removed {
+  from = module.k8s
+
+  lifecycle {
+    destroy = false
+  }
+}
+
+removed {
+  from = terraform_data.k3s_checks
+
+  lifecycle {
+    destroy = false
+  }
+}
+
+resource "terraform_data" "kubeconfig_checks" {
   lifecycle {
     precondition {
-      condition     = var.ssh_user != "" && var.ssh_private_key_path != ""
-      error_message = "ssh_user and ssh_private_key_path are required when the k3s distribution is active (set TF_VAR_ssh_user and TF_VAR_ssh_private_key_path, see .env.example)."
-    }
-
-    precondition {
-      condition     = var.ssh_private_key_path == "" || fileexists(var.ssh_private_key_path)
-      error_message = "ssh_private_key_path does not point to a readable file: ${var.ssh_private_key_path}"
+      condition     = fileexists(local.kubeconfig_path)
+      error_message = "No kubeconfig at ${local.kubeconfig_path}. Bring the cluster up first (`./tf cluster apply`), or set TF_VAR_kubeconfig_path."
     }
   }
 }
@@ -84,9 +67,9 @@ resource "terraform_data" "k3s_checks" {
 module "addons" {
   source = "git::https://github.com/rromenskyi/terraform-k8s-addons.git?ref=v2.12.0"
 
-  kubeconfig_path      = module.k8s.kubeconfig_path
-  cluster_name         = module.k8s.cluster_name
-  cluster_distribution = module.k8s.cluster_distribution
+  kubeconfig_path      = local.kubeconfig_path
+  cluster_name         = var.cluster_name
+  cluster_distribution = var.cluster_distribution
 
   letsencrypt_email = var.letsencrypt_email
 

@@ -41,8 +41,10 @@ config/domains/*.yaml         → local.projects (domain × env expansion; route
 config/components/*.yaml      → local.components
 config/limits/*.yaml          → local.namespace_limits (keyed by namespace name)
 
-main.tf
+cluster/main.tf               (own stack: ./tf cluster ...)
   → module.k8s                (cluster — Option A minikube or Option B k3s)
+
+main.tf                       (reads the cluster's kubeconfig_path)
   → module.addons             (Traefik + cert-manager + monitoring + namespaces)
   → module.project (for_each) (per tenant)
 

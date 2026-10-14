@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **The cluster is now its own stack, `cluster/`** (`./tf cluster <args>`).
+  The root stack (the platform) reads the cluster's kubeconfig from
+  `kubeconfig_path` / `kube_context`. It no longer needs SSH or the k3s
+  admin kubeconfig on disk, so a CI runner with its own kubeconfig can
+  plan and apply it. The k3s admin client key also leaves the platform
+  state (the module's `local_sensitive_file` data source moved with it).
+  - Requires Terraform >= 1.7 (`removed` blocks).
+  - New root variables: `kubeconfig_path`, `kube_context`,
+    `cluster_distribution` (default `k3s`).
+  - `ssh_*`, `memory` and `kubernetes_version` moved to `cluster/variables.tf`.
+  - `bootstrap-k3s` / `bootstrap-minikube` apply the cluster stack, then the
+    platform.
+  - **Upgrade:** move `module.k8s` into the cluster stack's state before the
+    first platform apply (README, "Moving an existing install to two
+    stacks"). A `removed` block with `destroy = false` makes that apply
+    forget the cluster instead of destroying it.
+
 ### Added
 - `ci_access.tf`: `services.ci_access` gives Kubernetes access to an
   external CI that runs Terraform: a ServiceAccount with cluster-admin and a

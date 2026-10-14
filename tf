@@ -16,6 +16,13 @@
 #   ./tf lock-status   who holds the wrapper's state lock, if anyone
 #   ./tf unlock        remove a stuck wrapper lock (after checking the holder is gone)
 #
+# Two stacks: the repository root is the platform (everything inside the
+# cluster); `cluster/` brings the cluster itself up over SSH / minikube and
+# writes the kubeconfig the platform reads. The pass-through above runs the
+# platform stack; the cluster stack runs through:
+#   ./tf cluster <terraform args>    e.g. ./tf cluster init, ./tf cluster plan
+#   (local state, no wrapper lock: it runs from the operator's machine only)
+#
 # Subcommands with extra orchestration:
 #   ./tf cloudflare-purge
 #     Deletes the platform Cloudflare tunnel + any DNS CNAMEs that still point
@@ -23,7 +30,7 @@
 #     and the tunnel or DNS records were orphaned on the Cloudflare side.
 #
 #   ./tf bootstrap-minikube [-y|--yes]
-#     Full-reset flow for the minikube distribution (Option A in main.tf):
+#     Full-reset flow for the minikube distribution (Option A in cluster/main.tf):
 #     resets the local minikube profile, wipes local Terraform state, runs a
 #     phased apply (cluster first, then MySQL, then the rest) with
 #     Flannel/CNI cleanup between phases. Host volume data is NOT deleted —
@@ -33,12 +40,12 @@
 #     (nuke) or `terraform import` (adopt).
 #
 #   ./tf bootstrap-k3s [-y|--yes]
-#     Full-reset flow for the k3s distribution (Option B in main.tf):
-#     `terraform destroy` (tears down the tunnel + tries SSH uninstall of k3s),
-#     force-uninstalls k3s over SSH in case the destroy-time provisioner was
-#     skipped, wipes local Terraform state, then runs a single-phase
-#     `terraform apply` (k3s single-phase works with lazy `config_path`
-#     providers). Host volume data under `$HOST_VOLUME_PATH` is NOT deleted.
+#     Full-reset flow for the k3s distribution (Option B in cluster/main.tf):
+#     `terraform destroy` of the platform (tears down the tunnel), then of the
+#     cluster stack (SSH uninstall of k3s), force-uninstalls k3s over SSH in
+#     case the destroy-time provisioner was skipped, wipes local Terraform
+#     state of both stacks, then applies the cluster stack and the platform.
+#     Host volume data under `$HOST_VOLUME_PATH` is NOT deleted.
 #     Cloudflare-side behaviour same as bootstrap-minikube: preflight fails
 #     if a named tunnel already exists; operator decides purge vs import.
 #
@@ -483,7 +490,19 @@ reset_terraform_state() {
   local lock_path="${SCRIPT_DIR}/.terraform.tfstate.lock.info"
 
   echo "Step 0.25: Resetting local Terraform state..."
-  rm -f "${state_path}" "${backup_path}" "${lock_path}"
+  rm -f "${state_path}" "${backup_path}" "${lock_path}" \
+    "${SCRIPT_DIR}/cluster/terraform.tfstate" \
+    "${SCRIPT_DIR}/cluster/terraform.tfstate.backup" \
+    "${SCRIPT_DIR}/cluster/.terraform.tfstate.lock.info"
+}
+
+# The cluster stack (`cluster/`): k3s over SSH or minikube. Initialised on
+# first use; `terraform init` is a no-op when nothing changed.
+cluster_terraform() {
+  if [[ ! -d "${SCRIPT_DIR}/cluster/.terraform" ]]; then
+    terraform -chdir="${SCRIPT_DIR}/cluster" init -input=false
+  fi
+  terraform -chdir="${SCRIPT_DIR}/cluster" "$@"
 }
 
 purge_cloudflare_tunnel() {
@@ -871,8 +890,8 @@ remote tfstate in B2 if the remote backend was ever configured (local backend ov
     reset_minikube_profile "${MINIKUBE_PROFILE}"
     reset_terraform_state
 
-    echo "Step 1: Creating Minikube cluster first..."
-    terraform apply -target=module.k8s.minikube_cluster.this -auto-approve
+    echo "Step 1: Creating Minikube cluster first (cluster stack)..."
+    cluster_terraform apply -auto-approve
 
     echo "Step 1.5: Neutralising kicbase's bundled podman stack (fights Flannel for 10.244.0.1)..."
     if docker ps --format '{{.Names}}' | grep -q "^${MINIKUBE_PROFILE}$"; then
@@ -1033,13 +1052,17 @@ database / mail credentials — Terraform state is reset, so passwords are regen
 
     lock_state_for "${SUBCOMMAND}"
     echo "=== Single-phase Bootstrap Mode (k3s / Option B) ==="
-    echo "Step 0: Destroying existing Terraform state (if any)..."
+    echo "Step 0: Destroying existing Terraform state (if any): platform, then cluster..."
     terraform destroy -auto-approve
+    cluster_terraform destroy -auto-approve
 
     uninstall_k3s_over_ssh
     reset_terraform_state
 
-    echo "Step 1: Applying platform (single phase — k3s providers are config_path-lazy)..."
+    echo "Step 1: Installing k3s (cluster stack)..."
+    cluster_terraform apply -auto-approve
+
+    echo "Step 2: Applying platform..."
     terraform apply -auto-approve
     ;;
 
@@ -1086,11 +1109,16 @@ database / mail credentials — Terraform state is reset, so passwords are regen
     echo "unlocked"
     ;;
 
+  cluster)
+    shift
+    cluster_terraform "$@"
+    ;;
+
   bootstrap)
     cat >&2 <<'EOF'
 The generic `./tf bootstrap` subcommand was split by distribution. Pick one:
-  ./tf bootstrap-minikube   (Option A in main.tf)
-  ./tf bootstrap-k3s        (Option B in main.tf)
+  ./tf bootstrap-minikube   (Option A in cluster/main.tf)
+  ./tf bootstrap-k3s        (Option B in cluster/main.tf)
 EOF
     exit 2
     ;;
