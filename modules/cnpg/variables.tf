@@ -122,6 +122,51 @@ variable "superuser_password" {
   sensitive   = true
 }
 
+# ── Second cluster (distributed topology) ──────────────────────────────────
+
+variable "replica_cluster" {
+  description = <<-EOT
+    A second Cluster in `namespace` that continuously copies the main one, e.g. on nodes at another site so the data survives losing the first. Null = none.
+    - `name`: its Cluster name (Services `<name>-rw` / `-ro` / `-r`); must differ from `name`.
+    - `instances`, `nodes`: like the main cluster's.
+    - `tolerations`: for nodes with taints (e.g. edge nodes), Kubernetes toleration objects.
+    - `storage_size`: null = `storage_size`.
+    It starts as a `pg_basebackup` copy of the main cluster and then streams from it (TLS client certificate of the operator's `streaming_replica` user), with the main cluster's WAL archive as fallback when backups are on. It uses the same superuser Secret, image, parameters and backup store (archived under its own name). Asynchronous: a failover to it loses what it had not received yet.
+  EOT
+  type = object({
+    name      = string
+    instances = optional(number, 1)
+    nodes     = optional(list(string), [])
+    tolerations = optional(list(object({
+      key      = optional(string)
+      operator = optional(string)
+      value    = optional(string)
+      effect   = optional(string)
+    })), [])
+    storage_size = optional(string)
+  })
+  default = null
+
+  validation {
+    condition     = var.replica_cluster == null || can(regex("^[a-z]([-a-z0-9]*[a-z0-9])?$", var.replica_cluster.name))
+    error_message = "replica_cluster.name must be a DNS label starting with a letter."
+  }
+
+  validation {
+    condition     = var.replica_cluster == null || try(var.replica_cluster.instances >= 1, false)
+    error_message = "replica_cluster.instances must be at least 1."
+  }
+}
+
+variable "primary_cluster" {
+  description = <<-EOT
+    With `replica_cluster`: which of the two clusters takes writes, `name` or `replica_cluster.name`. Empty = `name`. Both clusters and `service_name` follow it.
+    Changing it is a failover: the named cluster promotes at once, without waiting for the other; the other demotes when (or as soon as) the operator reaches it. A former primary that had diverged must be recreated afterwards (see the README).
+  EOT
+  type        = string
+  default     = ""
+}
+
 # ── Backups (Barman Cloud plugin → S3-compatible storage) ─────────────────
 
 variable "backup_bucket" {

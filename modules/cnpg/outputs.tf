@@ -3,14 +3,24 @@ output "cluster_name" {
   value       = one([for c in kubectl_manifest.cluster : var.name])
 }
 
+output "replica_cluster_name" {
+  description = "Name of the second Cluster (`replica_cluster`), or null without one."
+  value       = one([for c in kubectl_manifest.replica_cluster : local.replica_name])
+}
+
+output "primary_cluster" {
+  description = "The Cluster that takes writes (`primary_cluster`, defaulting to the main cluster), or null if disabled."
+  value       = var.enabled ? local.primary_cluster : null
+}
+
 output "host" {
-  description = "In-cluster hostname that always points at the current primary: `service_name` when set, else the operator's `<name>-rw`. Null if disabled."
-  value       = var.enabled ? "${var.service_name != "" ? var.service_name : "${var.name}-rw"}.${var.namespace}.svc.cluster.local" : null
+  description = "In-cluster hostname that always points at the current primary: `service_name` when set, else the operator's `<primary_cluster>-rw`. Null if disabled."
+  value       = var.enabled ? "${var.service_name != "" ? var.service_name : "${local.primary_cluster}-rw"}.${var.namespace}.svc.cluster.local" : null
 }
 
 output "ro_host" {
-  description = "In-cluster hostname of the read-only Service (replicas only). Null if disabled."
-  value       = var.enabled ? "${var.name}-ro.${var.namespace}.svc.cluster.local" : null
+  description = "In-cluster hostname of the read-only Service (replicas only) of `primary_cluster`. Null if disabled."
+  value       = var.enabled ? "${local.primary_cluster}-ro.${var.namespace}.svc.cluster.local" : null
 }
 
 output "port" {

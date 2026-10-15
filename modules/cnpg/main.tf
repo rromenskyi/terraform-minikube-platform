@@ -9,6 +9,11 @@
 # With an S3-compatible bucket configured, the Barman Cloud plugin archives
 # every WAL segment and takes scheduled base backups, so the cluster can be
 # restored to any point inside the retention window.
+#
+# An optional second cluster (`replica_cluster`, e.g. on nodes at another
+# site) follows the main one as a CloudNativePG distributed topology: both
+# name the same `primary_cluster`, the other one replays its WAL read-only,
+# and moving `primary_cluster` promotes it and demotes the former primary.
 
 terraform {
   required_providers {
@@ -43,20 +48,104 @@ locals {
 
   superuser_secret_name = var.superuser_secret_name != "" ? var.superuser_secret_name : "${var.name}-superuser"
 
-  # Labels the operator keeps on the current primary (moved on failover).
-  primary_selector = { "cnpg.io/cluster" = var.name, "cnpg.io/instanceRole" = "primary" }
+  # ── Second cluster (distributed topology) ──
+  replica_on      = var.enabled && var.replica_cluster != null
+  replica_set     = local.replica_on ? toset(["enabled"]) : toset([])
+  replica_name    = local.replica_on ? var.replica_cluster.name : ""
+  primary_cluster = var.primary_cluster != "" ? var.primary_cluster : var.name
+
+  # Labels the operator keeps on the current primary (moved on failover),
+  # in whichever cluster `primary_cluster` names.
+  primary_selector = { "cnpg.io/cluster" = local.primary_cluster, "cnpg.io/instanceRole" = "primary" }
   services         = var.enabled && var.service_name != "" ? toset(["enabled"]) : toset([])
+
+  # How either cluster reaches the other: streaming over TLS as the
+  # operator's `streaming_replica` user, with the client certificate and CA
+  # the operator keeps in `<name>-replication` / `<name>-ca`; with backups
+  # on, the other cluster's WAL archive is the fallback when streaming
+  # breaks or the source already recycled the WAL. Every cluster of the
+  # topology lists all of them, itself included.
+  external_clusters = [for n in compact([var.name, local.replica_name]) : merge({
+    name = n
+    connectionParameters = {
+      host    = "${n}-rw.${var.namespace}.svc"
+      user    = "streaming_replica"
+      sslmode = "verify-full"
+      dbname  = "postgres"
+    }
+    sslKey      = { name = "${n}-replication", key = "tls.key" }
+    sslCert     = { name = "${n}-replication", key = "tls.crt" }
+    sslRootCert = { name = "${n}-ca", key = "ca.crt" }
+    }, local.backup_configured ? {
+    plugin = {
+      name       = local.plugin_name
+      parameters = { barmanObjectName = local.object_store_name, serverName = n }
+    }
+  } : {})]
+
+  # The main cluster joins the topology only when there is a second one.
+  main_topology = local.replica_on ? {
+    externalClusters = local.external_clusters
+    replica          = { primary = local.primary_cluster, source = local.replica_name }
+  } : {}
+
+  # The main cluster is created empty. Once the second cluster is the
+  # primary, the main one can only come back as a fresh copy of it (a
+  # failover leaves the old primary diverged), so recreating it then must
+  # clone. The operator reads `bootstrap` only when it creates a cluster.
+  main_bootstrap = local.primary_cluster == var.name ? {
+    initdb = {
+      # Page checksums catch corruption the storage layer did not.
+      # They can only be chosen when the cluster is created.
+      dataChecksums = true
+    }
+    } : {
+    pg_basebackup = { source = local.replica_name }
+  }
+
+  replica_synchronous = local.replica_on && var.synchronous ? (var.replica_cluster.instances > 1 ? local.synchronous_settings : {}) : {}
+
+  replica_affinity = local.replica_on ? merge(
+    {
+      enablePodAntiAffinity = true
+      podAntiAffinityType   = "required"
+      topologyKey           = "kubernetes.io/hostname"
+    },
+    length(var.replica_cluster.nodes) > 0 ? {
+      nodeAffinity = {
+        requiredDuringSchedulingIgnoredDuringExecution = {
+          nodeSelectorTerms = [{
+            matchExpressions = [{
+              key      = "kubernetes.io/hostname"
+              operator = "In"
+              values   = var.replica_cluster.nodes
+            }]
+          }]
+        }
+      }
+    } : {},
+    length(var.replica_cluster.tolerations) > 0 ? {
+      tolerations = [for t in var.replica_cluster.tolerations : { for k, v in t : k => v if v != null }]
+    } : {},
+  ) : {}
+
+  # Clusters the PodMonitor and alerts cover.
+  monitored_clusters = concat(
+    [{ name = var.name, instances = var.instances }],
+    local.replica_on ? [{ name = local.replica_name, instances = var.replica_cluster.instances }] : [],
+  )
 
   # `preferred` keeps writes going when no replica is healthy; `required`
   # would stop them, which on a two-instance cluster means any replica
   # outage stops the database.
-  synchronous = var.synchronous && var.instances > 1 ? {
+  synchronous_settings = {
     synchronous = {
       method         = "any"
       number         = 1
       dataDurability = "preferred"
     }
-  } : {}
+  }
+  synchronous = var.synchronous && var.instances > 1 ? local.synchronous_settings : {}
 
   node_affinity = length(var.nodes) > 0 ? {
     nodeAffinity = {
@@ -271,13 +360,7 @@ resource "kubectl_manifest" "cluster" {
       enableSuperuserAccess = true
       superuserSecret       = { name = kubernetes_secret_v1.superuser["enabled"].metadata[0].name }
 
-      bootstrap = {
-        initdb = {
-          # Page checksums catch corruption the storage layer did not.
-          # They can only be chosen when the cluster is created.
-          dataChecksums = true
-        }
-      }
+      bootstrap = local.main_bootstrap
 
       storage = {
         storageClass = var.storage_class
@@ -296,6 +379,65 @@ resource "kubectl_manifest" "cluster" {
         podAntiAffinityType   = "required"
         topologyKey           = "kubernetes.io/hostname"
       }, local.node_affinity)
+    }, local.backup_plugin, local.main_topology)
+  })
+
+  lifecycle {
+    precondition {
+      condition     = local.primary_cluster == var.name || (local.replica_on && local.primary_cluster == local.replica_name)
+      error_message = "primary_cluster must be empty, `name`, or `replica_cluster.name`."
+    }
+    precondition {
+      condition     = !local.replica_on || local.replica_name != var.name
+      error_message = "replica_cluster.name must differ from name."
+    }
+  }
+}
+
+# The second cluster: same image, superuser, parameters and backup store as
+# the main one, so either can take over from the other. It starts as a
+# streaming copy of the main cluster (`pg_basebackup`); while the main
+# cluster is the primary its designated primary replays the main
+# cluster's WAL, read-only, and archives it under its own name.
+resource "kubectl_manifest" "replica_cluster" {
+  for_each = local.replica_set
+
+  depends_on = [kubectl_manifest.cluster]
+
+  yaml_body = yamlencode({
+    apiVersion = "postgresql.cnpg.io/v1"
+    kind       = "Cluster"
+    metadata = {
+      name      = local.replica_name
+      namespace = var.namespace
+      labels    = local.tags
+    }
+    spec = merge({
+      instances = var.replica_cluster.instances
+      imageName = var.image
+
+      enableSuperuserAccess = true
+      superuserSecret       = { name = kubernetes_secret_v1.superuser["enabled"].metadata[0].name }
+
+      bootstrap = {
+        pg_basebackup = { source = var.name }
+      }
+      externalClusters = local.external_clusters
+      replica          = { primary = local.primary_cluster, source = var.name }
+
+      storage = {
+        storageClass = var.storage_class
+        size         = coalesce(var.replica_cluster.storage_size, var.storage_size)
+      }
+
+      resources = {
+        requests = var.resources.requests
+        limits   = var.resources.limits
+      }
+
+      postgresql = merge({ parameters = var.parameters }, local.replica_synchronous)
+
+      affinity = local.replica_affinity
     }, local.backup_plugin)
   })
 }
@@ -326,6 +468,33 @@ resource "kubectl_manifest" "scheduled_backup" {
   })
 }
 
+# The second cluster's own backups, taken from its designated primary while
+# it replicates, so that it has a restorable archive the moment it becomes
+# the primary.
+resource "kubectl_manifest" "replica_scheduled_backup" {
+  for_each = local.backup_configured && local.replica_on ? toset(["enabled"]) : toset([])
+
+  depends_on = [kubectl_manifest.replica_cluster]
+
+  yaml_body = yamlencode({
+    apiVersion = "postgresql.cnpg.io/v1"
+    kind       = "ScheduledBackup"
+    metadata = {
+      name      = "${local.replica_name}-daily"
+      namespace = var.namespace
+      labels    = local.tags
+    }
+    spec = {
+      schedule             = var.backup_schedule
+      cluster              = { name = local.replica_name }
+      backupOwnerReference = "self"
+      method               = "plugin"
+      pluginConfiguration  = { name = local.plugin_name }
+      immediate            = true
+    }
+  })
+}
+
 # ── Monitoring ─────────────────────────────────────────────────────────────
 
 # The operator deprecated `spec.monitoring.enablePodMonitor`, so the
@@ -346,9 +515,13 @@ resource "kubectl_manifest" "pod_monitor" {
     spec = {
       selector = {
         matchLabels = {
-          "cnpg.io/cluster" = var.name
           "cnpg.io/podRole" = "instance"
         }
+        matchExpressions = [{
+          key      = "cnpg.io/cluster"
+          operator = "In"
+          values   = [for c in local.monitored_clusters : c.name]
+        }]
       }
       podMetricsEndpoints = [{ port = "metrics" }]
     }
@@ -367,39 +540,53 @@ resource "kubectl_manifest" "prometheus_rule" {
       labels    = local.monitoring_labels
     }
     spec = {
-      groups = [{
-        name = "cnpg-${var.namespace}-${var.name}"
+      groups = [for c in local.monitored_clusters : {
+        name = "cnpg-${var.namespace}-${c.name}"
         rules = concat([
           {
             alert = "CNPGInstancesMissing"
             # `or vector(0)`: with every instance down there are no series
             # left to count.
-            expr   = "(count(cnpg_collector_up{namespace=\"${var.namespace}\",pod=~\"${var.name}-[0-9]+\"} == 1) or vector(0)) < ${var.instances}"
+            expr   = "(count(cnpg_collector_up{namespace=\"${var.namespace}\",pod=~\"${c.name}-[0-9]+\"} == 1) or vector(0)) < ${c.instances}"
             for    = "5m"
             labels = { severity = "critical" }
             annotations = {
-              summary     = "Postgres cluster ${var.namespace}/${var.name} runs fewer than ${var.instances} instances"
+              summary     = "Postgres cluster ${var.namespace}/${c.name} runs fewer than ${c.instances} instances"
               description = "An instance is down or not ready; the cluster has less redundancy than configured, or no primary at all."
             }
           },
           {
             alert  = "CNPGReplicationLag"
-            expr   = "max(cnpg_pg_replication_lag{namespace=\"${var.namespace}\",pod=~\"${var.name}-[0-9]+\"}) > 300"
+            expr   = "max(cnpg_pg_replication_lag{namespace=\"${var.namespace}\",pod=~\"${c.name}-[0-9]+\"}) > 300"
             for    = "5m"
             labels = { severity = "warning" }
             annotations = {
-              summary     = "Postgres cluster ${var.namespace}/${var.name}: a replica is more than 5 minutes behind"
+              summary     = "Postgres cluster ${var.namespace}/${c.name}: a replica is more than 5 minutes behind"
               description = "A failover now would lose the replica's missing transactions."
             }
           },
           ], local.backup_configured ? [{
             alert  = "CNPGWALArchivingFailing"
-            expr   = "max(cnpg_pg_stat_archiver_last_failed_time{namespace=\"${var.namespace}\",pod=~\"${var.name}-[0-9]+\"} - cnpg_pg_stat_archiver_last_archived_time{namespace=\"${var.namespace}\",pod=~\"${var.name}-[0-9]+\"}) > 1"
+            expr   = "max(cnpg_pg_stat_archiver_last_failed_time{namespace=\"${var.namespace}\",pod=~\"${c.name}-[0-9]+\"} - cnpg_pg_stat_archiver_last_archived_time{namespace=\"${var.namespace}\",pod=~\"${c.name}-[0-9]+\"}) > 1"
             for    = "10m"
             labels = { severity = "critical" }
             annotations = {
-              summary     = "Postgres cluster ${var.namespace}/${var.name} fails to archive WAL"
+              summary     = "Postgres cluster ${var.namespace}/${c.name} fails to archive WAL"
               description = "The last archive attempt failed after the last success: point-in-time recovery stops at the last archived segment, and WAL piles up on the primary's disk."
+            }
+            }] : [], c.name != local.primary_cluster ? [{
+            # Every instance of the cluster that is not the primary streams:
+            # its designated primary from the primary cluster, the others
+            # from the designated primary. Without streaming it only replays
+            # what reaches the WAL archive (or nothing, with backups off),
+            # minutes behind.
+            alert  = "CNPGReplicaClusterNotStreaming"
+            expr   = "min(cnpg_pg_replication_is_wal_receiver_up{namespace=\"${var.namespace}\",pod=~\"${c.name}-[0-9]+\"}) < 1"
+            for    = "15m"
+            labels = { severity = "warning" }
+            annotations = {
+              summary     = "Postgres cluster ${var.namespace}/${c.name} does not stream from the primary cluster ${local.primary_cluster}"
+              description = "It falls back to the WAL archive, if any. A failover to it now would lose more than the last few seconds."
             }
         }] : [])
       }]
