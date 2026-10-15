@@ -841,6 +841,15 @@ case "${SUBCOMMAND}" in
     # plaintext state snapshot private while it exists.
     trap 'cleanup_snapshot; cleanup' EXIT
     umask 077
+    # Usually run from cron, where nobody runs `./tf init` after a pull that
+    # changed a module source (e.g. a new tag of a sibling module): every
+    # terraform command below would then fail with "Module source has
+    # changed". Init first; with nothing changed it only re-reads .terraform.
+    echo "tf: terraform init"
+    if ! terraform init -input=false >/dev/null; then
+      echo "tf: terraform init failed; nothing backed up" >&2
+      exit 1
+    fi
     echo "tf: terraform state pull -> $(basename "${SNAPSHOT}")"
     terraform state pull > "${SNAPSHOT}"
 

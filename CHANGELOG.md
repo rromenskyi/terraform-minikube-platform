@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `./tf backup-config` runs `terraform init` first. Run from cron, it failed with "Module source has changed" after a pull that moved a module tag (2026-10-15: the nightly operator-config snapshot was skipped and backup-verify alerted).
+
 ### Added
 - `monitoring.openwrt_dashboard: <external_targets entry>`: Grafana dashboard "Router (OpenWrt)" for a router scraped with prometheus-node-exporter-lua (active uplink, traffic, drops and errors per interface, CPU by mode and softirq per core, conntrack, memory, temperature, hardware NAT table from an optional `router_*` collector).
 
