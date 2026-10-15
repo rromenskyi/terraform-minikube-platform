@@ -84,34 +84,36 @@ locals {
   } : {})]
 
   # The main cluster joins the topology only when there is a second one.
-  main_topology = local.replica_on ? {
+  # (jsonencode/jsondecode: the two branches of a conditional must have the
+  # same type, and an object with attributes is not `{}`.)
+  main_topology = jsondecode(local.replica_on ? jsonencode({
     externalClusters = local.external_clusters
     replica          = { primary = local.primary_cluster, source = local.replica_name }
-  } : {}
+  }) : "{}")
 
   # The main cluster is created empty. Once the second cluster is the
   # primary, the main one can only come back as a fresh copy of it (a
   # failover leaves the old primary diverged), so recreating it then must
   # clone. The operator reads `bootstrap` only when it creates a cluster.
-  main_bootstrap = local.primary_cluster == var.name ? {
+  main_bootstrap = jsondecode(local.primary_cluster == var.name ? jsonencode({
     initdb = {
       # Page checksums catch corruption the storage layer did not.
       # They can only be chosen when the cluster is created.
       dataChecksums = true
     }
-    } : {
+    }) : jsonencode({
     pg_basebackup = { source = local.replica_name }
-  }
+  }))
 
   replica_synchronous = local.replica_on && var.synchronous ? (var.replica_cluster.instances > 1 ? local.synchronous_settings : {}) : {}
 
-  replica_affinity = local.replica_on ? merge(
+  replica_affinity = jsondecode(local.replica_on ? jsonencode(merge(
     {
       enablePodAntiAffinity = true
       podAntiAffinityType   = "required"
       topologyKey           = "kubernetes.io/hostname"
     },
-    length(var.replica_cluster.nodes) > 0 ? {
+    jsondecode(length(var.replica_cluster.nodes) > 0 ? jsonencode({
       nodeAffinity = {
         requiredDuringSchedulingIgnoredDuringExecution = {
           nodeSelectorTerms = [{
@@ -123,11 +125,11 @@ locals {
           }]
         }
       }
-    } : {},
-    length(var.replica_cluster.tolerations) > 0 ? {
+    }) : "{}"),
+    jsondecode(length(var.replica_cluster.tolerations) > 0 ? jsonencode({
       tolerations = [for t in var.replica_cluster.tolerations : { for k, v in t : k => v if v != null }]
-    } : {},
-  ) : {}
+    }) : "{}"),
+  )) : "{}")
 
   # Clusters the PodMonitor and alerts cover.
   monitored_clusters = concat(
