@@ -65,7 +65,7 @@ resource "terraform_data" "kubeconfig_checks" {
 # Layer 2: Platform add-ons (Traefik, cert-manager, monitoring, namespaces).
 # -----------------------------------------------------------------------------
 module "addons" {
-  source = "git::https://github.com/rromenskyi/terraform-k8s-addons.git?ref=v2.12.0"
+  source = "git::https://github.com/rromenskyi/terraform-k8s-addons.git?ref=v2.13.0"
 
   kubeconfig_path      = local.kubeconfig_path
   cluster_name         = var.cluster_name
@@ -170,6 +170,11 @@ module "addons" {
   # instead of the in-cluster Service. Needs the `prometheus` route +
   # component. Empty config => {} => chart default (unchanged).
   monitoring_prometheus_memory_request = local.prometheus_memory_request
+
+  # `monitoring.head_series_budget`: PrometheusHeadSeriesOverBudget fires
+  # above it (0 = no alert). On k3s the module also stores the control
+  # plane's metrics once instead of twice and guards that.
+  monitoring_head_series_budget = try(local.platform.monitoring.head_series_budget, 0)
 
   monitoring_prometheus_extra_values = merge(
     length(local.prometheus_spec) > 0 ? { prometheusSpec = local.prometheus_spec } : {},

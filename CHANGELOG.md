@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `monitoring.metrics_usage_report` (off by default): a weekly CronJob that lists the Prometheus metric families with at least `min_series` series that no loaded rule and no Grafana dashboard references, in its log and in one e-mail through the metric alerts' SMTP relay and address. The candidates for dropping at the scrape.
+- `monitoring.head_series_budget` (0 = off): `PrometheusHeadSeriesOverBudget` when a Prometheus head block holds more series for 1 h.
+
+### Changed
+- terraform-k8s-addons v2.12.0 → v2.13.0: on k3s the kubelet job no longer stores the control plane's metrics a second time (the kubelet and apiserver endpoints of a k3s server serve the same registry; ~70,000 series per server), with a `KubeletMetricsIncludeControlPlane` guard alert.
+
+### Added
 - `services.cnpg.replica_cluster` / `primary_cluster`: a second CloudNativePG
   cluster following the main one (distributed topology), e.g. on another
   site's nodes; `primary_cluster` picks the one that takes writes and the

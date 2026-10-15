@@ -836,3 +836,14 @@ services:
 #       nodes: [node-a, node-b]
 #     grafana:
 #       nodes: [node-b]
+#   # PrometheusHeadSeriesOverBudget above this many series per Prometheus
+#   # (Prometheus memory grows with it). 0 / absent = no alert.
+#   head_series_budget: 300000
+#   # Weekly e-mail + Job log of metric families with >= min_series series
+#   # that no rule or Grafana dashboard uses (metrics_usage_report.tf). Sent
+#   # with metric_alert_email's address and relay.
+#   metrics_usage_report:
+#     enabled: true
+#     schedule: "0 15 * * 1"   # UTC
+#     min_series: 1000
+#     top: 20
