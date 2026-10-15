@@ -105,6 +105,10 @@ locals {
     pg_basebackup = { source = local.replica_name }
   }))
 
+  # The platform's labels name the main cluster; the second one's objects
+  # carry their own name.
+  replica_tags = merge(local.tags, { name = local.replica_name })
+
   replica_synchronous = local.replica_on && var.synchronous ? (var.replica_cluster.instances > 1 ? local.synchronous_settings : {}) : {}
 
   replica_affinity = jsondecode(local.replica_on ? jsonencode(merge(
@@ -130,6 +134,10 @@ locals {
       tolerations = [for t in var.replica_cluster.tolerations : { for k, v in t : k => v if v != null }]
     }) : "{}"),
   )) : "{}")
+
+  # The aggregated alert expressions drop the series' labels, so without
+  # these the two clusters' alerts would share one identity in Alertmanager.
+  alert_labels = { for c in local.monitored_clusters : c.name => { namespace = var.namespace, cnpg_cluster = c.name } }
 
   # Clusters the PodMonitor and alerts cover.
   monitored_clusters = concat(
@@ -412,7 +420,7 @@ resource "kubectl_manifest" "replica_cluster" {
     metadata = {
       name      = local.replica_name
       namespace = var.namespace
-      labels    = local.tags
+      labels    = local.replica_tags
     }
     spec = merge({
       instances = var.replica_cluster.instances
@@ -484,7 +492,7 @@ resource "kubectl_manifest" "replica_scheduled_backup" {
     metadata = {
       name      = "${local.replica_name}-daily"
       namespace = var.namespace
-      labels    = local.tags
+      labels    = local.replica_tags
     }
     spec = {
       schedule             = var.backup_schedule
@@ -551,7 +559,7 @@ resource "kubectl_manifest" "prometheus_rule" {
             # left to count.
             expr   = "(count(cnpg_collector_up{namespace=\"${var.namespace}\",pod=~\"${c.name}-[0-9]+\"} == 1) or vector(0)) < ${c.instances}"
             for    = "5m"
-            labels = { severity = "critical" }
+            labels = merge(local.alert_labels[c.name], { severity = "critical" })
             annotations = {
               summary     = "Postgres cluster ${var.namespace}/${c.name} runs fewer than ${c.instances} instances"
               description = "An instance is down or not ready; the cluster has less redundancy than configured, or no primary at all."
@@ -561,7 +569,7 @@ resource "kubectl_manifest" "prometheus_rule" {
             alert  = "CNPGReplicationLag"
             expr   = "max(cnpg_pg_replication_lag{namespace=\"${var.namespace}\",pod=~\"${c.name}-[0-9]+\"}) > 300"
             for    = "5m"
-            labels = { severity = "warning" }
+            labels = merge(local.alert_labels[c.name], { severity = "warning" })
             annotations = {
               summary     = "Postgres cluster ${var.namespace}/${c.name}: a replica is more than 5 minutes behind"
               description = "A failover now would lose the replica's missing transactions."
@@ -571,7 +579,7 @@ resource "kubectl_manifest" "prometheus_rule" {
             alert  = "CNPGWALArchivingFailing"
             expr   = "max(cnpg_pg_stat_archiver_last_failed_time{namespace=\"${var.namespace}\",pod=~\"${c.name}-[0-9]+\"} - cnpg_pg_stat_archiver_last_archived_time{namespace=\"${var.namespace}\",pod=~\"${c.name}-[0-9]+\"}) > 1"
             for    = "10m"
-            labels = { severity = "critical" }
+            labels = merge(local.alert_labels[c.name], { severity = "critical" })
             annotations = {
               summary     = "Postgres cluster ${var.namespace}/${c.name} fails to archive WAL"
               description = "The last archive attempt failed after the last success: point-in-time recovery stops at the last archived segment, and WAL piles up on the primary's disk."
@@ -585,7 +593,7 @@ resource "kubectl_manifest" "prometheus_rule" {
             alert  = "CNPGReplicaClusterNotStreaming"
             expr   = "min(cnpg_pg_replication_is_wal_receiver_up{namespace=\"${var.namespace}\",pod=~\"${c.name}-[0-9]+\"}) < 1"
             for    = "15m"
-            labels = { severity = "warning" }
+            labels = merge(local.alert_labels[c.name], { severity = "warning" })
             annotations = {
               summary     = "Postgres cluster ${var.namespace}/${c.name} does not stream from the primary cluster ${local.primary_cluster}"
               description = "It falls back to the WAL archive, if any. A failover to it now would lose more than the last few seconds."

@@ -132,6 +132,7 @@ variable "replica_cluster" {
     - `tolerations`: for nodes with taints (e.g. edge nodes), Kubernetes toleration objects.
     - `storage_size`: null = `storage_size`.
     It starts as a `pg_basebackup` copy of the main cluster and then streams from it (TLS client certificate of the operator's `streaming_replica` user), with the main cluster's WAL archive as fallback when backups are on. It uses the same superuser Secret, image, parameters and backup store (archived under its own name). Asynchronous: a failover to it loses what it had not received yet.
+    Keep backups on with it: the source keeps no replication slot for it, so without the WAL archive an outage longer than the source's WAL retention means re-cloning it.
   EOT
   type = object({
     name      = string
@@ -165,6 +166,7 @@ variable "primary_cluster" {
   EOT
   type        = string
   default     = ""
+  nullable    = false
 }
 
 # ── Backups (Barman Cloud plugin → S3-compatible storage) ─────────────────

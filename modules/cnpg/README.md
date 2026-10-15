@@ -72,7 +72,10 @@ CloudNativePG
 
 ### Failover (the primary cluster's site is lost)
 
-1. Set `primary_cluster` to the other cluster and apply.
+1. Set `primary_cluster` to the other cluster and apply. If the former
+   primary's site is still partly up (e.g. a bad link rather than an
+   outage), stop the writers there first. The same apply demotes it only
+   once the operator reaches its instances.
    - The other cluster promotes at once and `service_name` selects its
      primary.
    - The former primary's Cluster now says it is a replica. If its
@@ -91,13 +94,18 @@ CloudNativePG
      ```
 
 2. **Rebuild the former primary** once its site is back. It has diverged
-   and cannot follow; recreate it as a copy:
-   - **Main cluster:** its `bootstrap` switches to `pg_basebackup` from the
-     other cluster as soon as it is not the primary. So
-     `terraform apply -replace='module.<cnpg>.kubectl_manifest.cluster["enabled"]'`
-     recreates it, PVCs included, as a copy.
-   - **Second cluster:** replace `kubectl_manifest.replica_cluster["enabled"]`
-     the same way.
+   and cannot follow, so recreate it as a copy. The main cluster's
+   `bootstrap` switches to `pg_basebackup` from the other cluster as soon
+   as it is not the primary, and the second cluster's always is one. Its
+   PVCs belong to the Cluster object and go with it, but only after it is
+   deleted. A `-replace` would create the new Cluster while the old PVCs,
+   with the same names and the diverged data, still exist. So:
+
+   ```sh
+   kubectl -n <namespace> delete cluster <former primary> --wait
+   kubectl -n <namespace> wait --for=delete pvc -l cnpg.io/cluster=<former primary> --timeout=10m
+   terraform apply   # recreates it from the current primary
+   ```
 3. **Moving back** is the same failover in the other direction. Stop the
    writes first if nothing may be lost, and rebuild the other side after.
    A switchover without rebuilding (CloudNativePG demotion and promotion

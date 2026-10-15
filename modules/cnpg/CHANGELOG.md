@@ -18,6 +18,10 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   failover; the README has the runbook. Per-cluster alerts, plus
   `CNPGReplicaClusterNotStreaming`. Outputs `replica_cluster_name` and
   `primary_cluster`.
+
+### Changed
+- The cluster's alerts carry `namespace` and `cnpg_cluster` labels, so two
+  clusters' alerts stay distinct in Alertmanager.
 - `service_name`: an extra Service under a caller-chosen name that selects
   the current primary; `host` points at it when set.
 - `superuser_secret_name` (default `<name>-superuser`); `namespace` output.
