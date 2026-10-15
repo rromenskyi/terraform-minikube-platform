@@ -37,6 +37,12 @@ locals {
         nodes        = [] # hostnames the instances may use; empty = any node
         synchronous  = true
         storage_size = "20Gi"
+        # A second cluster copying this one, e.g. on another site's nodes:
+        # { name, instances, nodes, tolerations, storage_size }; null = none.
+        replica_cluster = null
+        # Which cluster takes writes (`name` or `replica_cluster.name`);
+        # empty = `name`. Changing it is a failover (modules/cnpg README).
+        primary_cluster = ""
         # Under the `services.backup` bucket; empty bucket = no backups.
         backup_prefix    = "cnpg"
         backup_retention = "30d"

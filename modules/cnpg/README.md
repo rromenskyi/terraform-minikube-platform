@@ -39,6 +39,78 @@ to S3-compatible storage through the
   - when a replica lags more than 5 minutes;
   - with backups on, when WAL archiving fails.
 
+- **Second cluster** (`replica_cluster`, optional): see below.
+
+## Second cluster at another site
+
+`replica_cluster` adds a second Cluster in the same namespace, typically
+pinned to nodes at another site (`nodes`, `tolerations`). The two form a
+CloudNativePG
+[distributed topology](https://cloudnative-pg.io/documentation/current/replica_cluster/#distributed-topology):
+
+- **Who writes.** Both Clusters name the same `primary_cluster` (default: the
+  main cluster). The other one is read-only. `service_name` and the `host`
+  output follow `primary_cluster`.
+- **How it follows.**
+  - It starts as a `pg_basebackup` copy.
+  - Its designated primary then streams from the primary cluster's `-rw`
+    Service over TLS, with the operator's `streaming_replica` certificate.
+  - With backups on, the primary cluster's WAL archive is the fallback.
+  - Replication is asynchronous: a failover loses what had not arrived
+    (seconds while streaming, up to `archive_timeout`, 5 min, from the
+    archive).
+- **Same identity.** It uses the same superuser Secret, image, parameters
+  and backup store. It archives WAL and takes base backups under its own
+  name (`s3://<bucket>/<backup_prefix>/<replica name>/`), so it is
+  restorable the moment it is promoted.
+- **Alerts.** The two clusters get the same alerts. The one that is not the
+  primary also gets `CNPGReplicaClusterNotStreaming` when an instance
+  lost its WAL receiver for 15 minutes.
+- **Requirements.** The operator and the Kubernetes API must survive the
+  loss of the main site: an etcd quorum without it, and an operator pod
+  that can reschedule there.
+
+### Failover (the primary cluster's site is lost)
+
+1. Set `primary_cluster` to the other cluster and apply. If the former
+   primary's site is still partly up (e.g. a bad link rather than an
+   outage), stop the writers there first. The same apply demotes it only
+   once the operator reaches its instances.
+   - The other cluster promotes at once and `service_name` selects its
+     primary.
+   - The former primary's Cluster now says it is a replica. If its
+     instances come back, they demote instead of taking writes.
+   - **When Terraform cannot plan** (e.g. a provider talks to a service that
+     died with the site), make the same change by hand. Then set
+     `primary_cluster` to match, so the next apply is a no-op:
+
+     ```sh
+     for c in <main> <replica>; do
+       kubectl -n <namespace> patch cluster $c --type merge \
+         -p '{"spec":{"replica":{"primary":"<new primary>"}}}'
+     done
+     kubectl -n <namespace> patch service <service_name> --type merge \
+       -p '{"spec":{"selector":{"cnpg.io/cluster":"<new primary>"}}}'
+     ```
+
+2. **Rebuild the former primary** once its site is back. It has diverged
+   and cannot follow, so recreate it as a copy. The main cluster's
+   `bootstrap` switches to `pg_basebackup` from the other cluster as soon
+   as it is not the primary, and the second cluster's always is one. Its
+   PVCs belong to the Cluster object and go with it, but only after it is
+   deleted. A `-replace` would create the new Cluster while the old PVCs,
+   with the same names and the diverged data, still exist. So:
+
+   ```sh
+   kubectl -n <namespace> delete cluster <former primary> --wait
+   kubectl -n <namespace> wait --for=delete pvc -l cnpg.io/cluster=<former primary> --timeout=10m
+   terraform apply   # recreates it from the current primary
+   ```
+3. **Moving back** is the same failover in the other direction. Stop the
+   writes first if nothing may be lost, and rebuild the other side after.
+   A switchover without rebuilding (CloudNativePG demotion and promotion
+   tokens) is not wired in.
+
 ## Usage
 
 ```hcl

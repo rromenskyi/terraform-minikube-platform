@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `services.cnpg.replica_cluster` / `primary_cluster`: a second CloudNativePG
+  cluster following the main one (distributed topology), e.g. on another
+  site's nodes; `primary_cluster` picks the one that takes writes and the
+  `postgres` Service follows it. Off by default (see modules/cnpg README,
+  "Second cluster at another site").
+
 ### Changed
 - **BREAKING: the cluster is now its own stack, `cluster/`** (`./tf cluster <args>`).
   The root stack (the platform) reads the cluster's kubeconfig from

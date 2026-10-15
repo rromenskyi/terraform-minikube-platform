@@ -8,6 +8,20 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 ## [Unreleased]
 
 ### Added
+- `replica_cluster` / `primary_cluster`: a second Cluster in the same
+  namespace (e.g. on another site's nodes, with `nodes` and `tolerations`)
+  that follows the main one as a CloudNativePG distributed topology. It is
+  bootstrapped with `pg_basebackup`, streams over TLS with the main
+  cluster's WAL archive as fallback, and archives and backs up under its own
+  name. `primary_cluster` names the cluster that takes writes; the
+  `service_name` Service, `host` and `ro_host` follow it. Changing it is a
+  failover; the README has the runbook. Per-cluster alerts, plus
+  `CNPGReplicaClusterNotStreaming`. Outputs `replica_cluster_name` and
+  `primary_cluster`.
+
+### Changed
+- The cluster's alerts carry `namespace` and `cnpg_cluster` labels, so two
+  clusters' alerts stay distinct in Alertmanager.
 - `service_name`: an extra Service under a caller-chosen name that selects
   the current primary; `host` points at it when set.
 - `superuser_secret_name` (default `<name>-superuser`); `namespace` output.

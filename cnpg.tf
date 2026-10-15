@@ -26,6 +26,11 @@ module "cnpg" {
   synchronous  = local.cnpg.synchronous
   storage_size = local.cnpg.storage_size
 
+  # A second cluster (e.g. at another site) following this one, and which of
+  # the two takes writes; changing `primary_cluster` is a failover.
+  replica_cluster = local.cnpg.replica_cluster
+  primary_cluster = local.cnpg.primary_cluster
+
   # The platform's superuser password (postgres.tf), whichever engine
   # serves clients; the Service and Secret names only while it serves them.
   superuser_password    = one([for p in random_password.postgres_superuser : p.result])
