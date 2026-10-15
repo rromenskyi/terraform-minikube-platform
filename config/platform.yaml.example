@@ -823,6 +823,10 @@ services:
 #           labels: { plug: router, load: network }
 #   # Grafana dashboard for ESPHome smart plugs (esphome_power_dashboard.tf).
 #   esphome_power_dashboard: true
+#   # Grafana dashboard for an OpenWrt router in external_targets
+#   # (openwrt_dashboard.tf), e.g. an entry `router` with target
+#   # 10.0.0.1:9100 (prometheus-node-exporter-lua).
+#   openwrt_dashboard: router
 #   # Where the monitoring stack runs (main.tf). Per component: nodes (by
 #   # hostname), tolerations, replicas (Prometheus, Alertmanager; >1 = one
 #   # per node). Takes precedence over node_selector for that component.

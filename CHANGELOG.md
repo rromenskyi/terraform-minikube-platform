@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `monitoring.openwrt_dashboard: <external_targets entry>`: Grafana dashboard "Router (OpenWrt)" for a router scraped with prometheus-node-exporter-lua (active uplink, traffic, drops and errors per interface, CPU by mode and softirq per core, conntrack, memory, temperature, hardware NAT table from an optional `router_*` collector).
+
+### Added
 - `monitoring.metrics_usage_report` (off by default): a weekly CronJob that lists the Prometheus metric families with at least `min_series` series that no loaded rule and no Grafana dashboard references, in its log and in one e-mail through the metric alerts' SMTP relay and address. The candidates for dropping at the scrape.
 - `monitoring.head_series_budget` (0 = off): `PrometheusHeadSeriesOverBudget` when a Prometheus head block holds more series for 1 h.
 
