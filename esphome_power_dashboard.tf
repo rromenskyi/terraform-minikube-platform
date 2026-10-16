@@ -90,11 +90,39 @@ resource "kubernetes_config_map_v1" "esphome_power_dashboard" {
           }]
         },
         {
-          type        = "state-timeline"
-          title       = "Relay (1 = on) and reachability"
-          gridPos     = { x = 0, y = 20, w = 24, h = 7 }
-          datasource  = local._esphome_ds
-          fieldConfig = { defaults = { min = 0, max = 1 } }
+          type       = "state-timeline"
+          title      = "Relay (1 = on) and reachability"
+          gridPos    = { x = 0, y = 20, w = 24, h = 7 }
+          datasource = local._esphome_ds
+          # Without an explicit color mode the state timeline uses its
+          # continuous green-to-red default, which paints 1 (on / up) red.
+          fieldConfig = {
+            defaults = {
+              min   = 0
+              max   = 1
+              color = { mode = "fixed", fixedColor = "text" }
+              mappings = [{
+                type = "value"
+                options = {
+                  "0" = { text = "off", color = "red", index = 0 }
+                  "1" = { text = "on", color = "green", index = 1 }
+                }
+              }]
+            }
+            overrides = [{
+              matcher = { id = "byFrameRefID", options = "B" }
+              properties = [{
+                id = "mappings"
+                value = [{
+                  type = "value"
+                  options = {
+                    "0" = { text = "down", color = "red", index = 0 }
+                    "1" = { text = "up", color = "green", index = 1 }
+                  }
+                }]
+              }]
+            }]
+          }
           targets = [
             {
               refId        = "A"
