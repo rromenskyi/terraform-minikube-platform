@@ -9,6 +9,8 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 - MySQL setup container gets resource requests/limits.
+- With OIDC on, `CLIENT_SSO_VIA_LOCAL_BROWSER = True`: desktop clients log in
+  through the system browser (passkeys work there, not in their web view).
 
 ### Security
 - MySQL setup Job reads the password from a Secret instead of the script.
