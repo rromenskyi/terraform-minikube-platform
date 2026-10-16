@@ -107,6 +107,21 @@ config_files:
     <If "%{REQUEST_URI} == '/' && %{QUERY_STRING} =~ /(^|&)author=/">
       Require all denied
     </If>
+  # Prefork worker cap. The image ships Debian's MaxRequestWorkers 150; one
+  # busy WordPress worker is ~50-70 MiB, so a burst of requests forks far
+  # more workers than the memory limit above holds and the cgroup OOM-kills
+  # them. With the cap, extra connections wait in the listen queue instead.
+  # 8 busy workers fit in 512Mi; MaxConnectionsPerChild recycles workers so
+  # PHP memory growth does not accumulate. Loaded after mods-enabled, so
+  # these values override mpm_prefork.conf.
+  /etc/apache2/conf-enabled/mpm-prefork-limits.conf: |
+    <IfModule mpm_prefork_module>
+      StartServers            2
+      MinSpareServers         2
+      MaxSpareServers         4
+      MaxRequestWorkers       8
+      MaxConnectionsPerChild  1000
+    </IfModule>
 
 # Login brute-force comes as bursts of many attempts per source address.
 # The limit is counted per Traefik pod, so the effective cap is the value
