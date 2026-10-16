@@ -17,9 +17,9 @@ variable "namespace" {
 }
 
 variable "image_tag" {
-  description = "Tag of the upstream `seafileltd/seafile-mc` image. Pin to a known-good CE release (currently 13.0.x line); bump deliberately when upstream cuts a minor or major. The `-mc` variant ships memcached, but Seafile 13 defaults to Redis for cache (configured via env)."
+  description = "Tag of the upstream `seafileltd/seafile-mc` image. Pin to a known-good CE release (currently 14.0.x line); bump deliberately when upstream cuts a minor or major. The `-mc` variant ships memcached, but Seafile 13+ defaults to Redis for cache (configured via env)."
   type        = string
-  default     = "13.0.21"
+  default     = "14.0.9"
 }
 
 variable "external_hostname" {

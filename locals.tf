@@ -221,7 +221,7 @@ locals {
       seafile = {
         enabled           = false
         namespace         = "seafile"
-        image_tag         = "13.0.21"
+        image_tag         = "14.0.9"
         external_hostname = ""
         admin_email       = ""
         storage_class     = "longhorn"
