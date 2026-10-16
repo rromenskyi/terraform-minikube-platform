@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- WordPress component: image `wordpress:6.9-php8.3-apache` → `wordpress:7.1-php8.3-apache` and `WP_AUTO_UPDATE_CORE` false. Only `wp-content` is persistent, so WordPress's own core updates lived in the container layer and a pod restart reverted the core to the image's version while the database stayed on the newer schema (found 2026-10-15: all three sites' databases at 7.1, one running the 6.9 core). Core now changes only with the image tag.
+
 ### Fixed
 - `./tf backup-config` runs `terraform init` first. Run from cron, it failed with "Module source has changed" after a pull that moved a module tag (2026-10-15: the nightly operator-config snapshot was skipped and backup-verify alerted).
 

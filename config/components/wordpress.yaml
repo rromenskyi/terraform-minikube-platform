@@ -1,4 +1,9 @@
-image: wordpress:6.9-php8.3-apache
+# WordPress core comes from the image; only wp-content is persistent. Core
+# updates therefore happen here (a tag bump), never inside the container:
+# an in-container core update lives in the container layer, is reverted by
+# the next pod restart, and leaves the database on the newer schema
+# (WP_AUTO_UPDATE_CORE below). The `7.1` tag follows 7.1.x patch releases.
+image: wordpress:7.1-php8.3-apache
 port: 80
 replicas: 1
 
@@ -43,6 +48,9 @@ env_static:
         || (isset($_SERVER['HTTP_CF_VISITOR']) && strpos($_SERVER['HTTP_CF_VISITOR'], 'https') !== false)) {
         $_SERVER['HTTPS'] = 'on';
     }
+
+    // Core is updated by bumping the image tag (see `image` above).
+    define('WP_AUTO_UPDATE_CORE', false);
 
     define('WP_CACHE', true);
     define('WP_REDIS_CLIENT',   'predis');
