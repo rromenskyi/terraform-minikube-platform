@@ -89,6 +89,10 @@ locals {
         "email": (False, "contact_email"),
         "name":  (False, "name"),
     }
+    # Desktop clients (Seafile, SeaDrive) run the SSO login in the system
+    # browser instead of their embedded web view, which cannot do passkeys
+    # (WebAuthn) and keeps no Zitadel session.
+    CLIENT_SSO_VIA_LOCAL_BROWSER = True
     %{endif}
   EOT
 }
