@@ -7,6 +7,14 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- Default image `seafileltd/seafile-mc:14.0.9` (was 13.0.21). The 13 → 14
+  Docker upgrade steps need nothing from this module: cache is already Redis,
+  and it sets none of the settings 14.0 removed (`DISABLE_ADFS_USER_PWD_LOGIN`,
+  `ENABLE_CHANGE_PASSWORD`, `ENABLE_SSO_USER_CHANGE_PASSWORD`). WebDAV,
+  metadata/thumbnail servers and Seafile AI are not deployed. Seahub migrates
+  its database on the first 14.0 start.
+
 ### Added
 - MySQL setup container gets resource requests/limits.
 - With OIDC on, `CLIENT_SSO_VIA_LOCAL_BROWSER = True`: desktop clients log in
