@@ -229,8 +229,12 @@ resource "kubectl_manifest" "pod_monitor" {
       labels    = merge(local.labels, var.prometheus_selector_labels)
     }
     spec = {
-      selector            = { matchLabels = local.labels }
-      podMetricsEndpoints = [{ port = "metrics" }]
+      selector = { matchLabels = local.labels }
+      # Device names (PCI addresses) repeat across identical machines.
+      podMetricsEndpoints = [{
+        port        = "metrics"
+        relabelings = [{ sourceLabels = ["__meta_kubernetes_pod_node_name"], targetLabel = "node" }]
+      }]
     }
   })
 }
@@ -269,14 +273,23 @@ resource "kubectl_manifest" "rules" {
             expr        = "dri_vram_used_bytes > dri_vram_allocated_bytes + (dri_vram_total_bytes - dri_vram_published_bytes) and dri_vram_allocated_bytes > 0"
             for         = "10m"
             labels      = { severity = "warning" }
-            annotations = { summary = "{{ $labels.device }}: workloads use more VRAM than they claimed" }
+            annotations = { summary = "{{ $labels.node }} {{ $labels.device }}: workloads use more VRAM than they claimed" }
           },
           {
             alert       = "DRIVRAMNearlyFull"
             expr        = "dri_vram_used_bytes / dri_vram_total_bytes > 0.95"
             for         = "10m"
             labels      = { severity = "warning" }
-            annotations = { summary = "{{ $labels.device }}: VRAM over 95 % used" }
+            annotations = { summary = "{{ $labels.node }} {{ $labels.device }}: VRAM over 95 % used" }
+          },
+          {
+            # Each Vulkan process keeps a few hundred MiB in GTT normally; with
+            # VRAM full, buffers move there and the GPU slows down several times.
+            alert       = "DRIVRAMEvictedToRAM"
+            expr        = "dri_gtt_used_bytes > 1073741824 and dri_vram_used_bytes / dri_vram_total_bytes > 0.9"
+            for         = "5m"
+            labels      = { severity = "warning" }
+            annotations = { summary = "{{ $labels.node }} {{ $labels.device }}: VRAM is full and buffers spill into system RAM" }
           },
         ]
       }]
@@ -333,4 +346,18 @@ resource "kubectl_manifest" "slice_policy_binding" {
       validationActions = ["Deny"]
     }
   })
+}
+
+# Dashboard from the driver repo (deploy/examples/grafana-dashboard.json),
+# loaded by the Grafana sidecar of kube-prometheus-stack.
+resource "kubernetes_config_map_v1" "dashboard" {
+  for_each = local.set
+  metadata {
+    name      = "dra-driver-dri-dashboard"
+    namespace = var.namespace
+    labels    = merge(local.labels, { grafana_dashboard = "1" })
+  }
+  data = {
+    "dra-driver-dri.json" = file("${path.module}/dashboard.json")
+  }
 }
