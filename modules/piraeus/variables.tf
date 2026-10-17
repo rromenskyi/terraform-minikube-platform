@@ -42,7 +42,8 @@ variable "storage_pools" {
   description = <<-EOT
     LINSTOR storage pools, each on the nodes matching `node_selector`:
       - name: the storage pool name used by StorageClasses
-      - zfs_thin_pool: existing ZFS pool (zpool) to carve thin zvols from
+      - zfs_thin_pool: existing ZFS pool or dataset (e.g. "tank/k8s") to
+        carve thin zvols from
   EOT
   type = list(object({
     name          = string
@@ -57,6 +58,9 @@ variable "storage_classes" {
     StorageClasses (provisioner linstor.csi.linbit.com):
       - name, storage_pool, placement_count (copies of each volume)
       - fs_type (ext4 or xfs), reclaim_policy (Delete or Retain), default (bool)
+      - resource_group: LINSTOR resource group the volumes are spawned from
+        (created on first use). Empty: LINSTOR names it sc-<hash>. See the
+        README for raising the copies of existing volumes.
   EOT
   type = list(object({
     name            = string
@@ -65,6 +69,7 @@ variable "storage_classes" {
     fs_type         = optional(string, "ext4")
     reclaim_policy  = optional(string, "Retain")
     default         = optional(bool, false)
+    resource_group  = optional(string, "")
   }))
   default = []
 }

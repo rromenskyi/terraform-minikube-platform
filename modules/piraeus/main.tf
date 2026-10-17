@@ -127,9 +127,12 @@ resource "kubernetes_storage_class_v1" "this" {
   reclaim_policy         = each.value.reclaim_policy
   volume_binding_mode    = "WaitForFirstConsumer"
   allow_volume_expansion = true
-  parameters = {
-    "linstor.csi.linbit.com/storagePool"    = each.value.storage_pool
-    "linstor.csi.linbit.com/placementCount" = tostring(each.value.placement_count)
-    "csi.storage.k8s.io/fstype"             = each.value.fs_type
-  }
+  parameters = merge(
+    {
+      "linstor.csi.linbit.com/storagePool"    = each.value.storage_pool
+      "linstor.csi.linbit.com/placementCount" = tostring(each.value.placement_count)
+      "csi.storage.k8s.io/fstype"             = each.value.fs_type
+    },
+    each.value.resource_group != "" ? { "linstor.csi.linbit.com/resourceGroup" = each.value.resource_group } : {},
+  )
 }
