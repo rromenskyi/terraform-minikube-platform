@@ -1015,14 +1015,16 @@ resource "kubernetes_deployment_v1" "this" {
           }
         }
 
-        # Old hostPath directories, read by the seed init containers.
+        # The old volumes (kept while seeding), read by the seed init
+        # containers through their claims: Pod Security `baseline` forbids
+        # hostPath volumes in a pod spec, not hostPath PVs.
         dynamic "volume" {
           for_each = local.seed ? local.volumes : {}
           content {
             name = "old-${volume.key}"
-            host_path {
-              path = "${var.volume_base_path}/${var.namespace}/${var.name}/${volume.key}"
-              type = "Directory"
+            persistent_volume_claim {
+              claim_name = kubernetes_persistent_volume_claim_v1.this[volume.key].metadata[0].name
+              read_only  = true
             }
           }
         }

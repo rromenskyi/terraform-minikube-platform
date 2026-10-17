@@ -10,9 +10,11 @@ Shared convention for modules that move their data from a hostPath directory
   `.seed-tmp`, renamed to `data/` when complete, so an interrupted copy is
   redone, never taken for a finished one. A `data/` that already holds data
   is never overwritten.
-- While seeding, the callers keep their old PV/PVC objects: Kubernetes keeps a
+- While seeding, the callers keep their old PV/PVC objects and the seed
+  container reads the old data through the old claim (Pod Security
+  `baseline` forbids hostPath volumes in a pod spec; Kubernetes keeps a
   claim that a pod still uses, and Terraform would delete it before switching
-  the workload over. Clearing the seed setting drops them once unused.
+  the workload over). Clearing the seed setting drops them once unused.
 
 Used by `component`, `mysql`, `stalwart`, `roundcube`, `seafile` through their
 `storage_class` and `storage_seed_*` variables.
