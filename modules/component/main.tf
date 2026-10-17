@@ -157,7 +157,8 @@ locals {
 # ── Persistent Volumes ────────────────────────────────────────────────────────
 
 resource "kubernetes_persistent_volume_v1" "this" {
-  for_each = local.csi_storage ? {} : local.volumes
+  # Kept while seeding (modules/volume-seed).
+  for_each = local.csi_storage && !local.seed ? {} : local.volumes
 
   metadata {
     name = "${var.namespace}-${var.name}-${each.key}"
@@ -213,7 +214,7 @@ resource "kubernetes_persistent_volume_v1" "this" {
 # ── Persistent Volume Claims ──────────────────────────────────────────────────
 
 resource "kubernetes_persistent_volume_claim_v1" "this" {
-  for_each = local.csi_storage ? {} : local.volumes
+  for_each = local.csi_storage && !local.seed ? {} : local.volumes
 
   metadata {
     name      = "${var.name}-${each.key}"
@@ -608,8 +609,8 @@ resource "kubernetes_deployment_v1" "this" {
 
             # Tenant namespaces carry a LimitRange: explicit values needed.
             resources {
-              requests = { cpu = "10m", memory = "16Mi" }
-              limits   = { cpu = "500m", memory = "64Mi" }
+              requests = module.volume_seed.resources.requests
+              limits   = module.volume_seed.resources.limits
             }
           }
         }

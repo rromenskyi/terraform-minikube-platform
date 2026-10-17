@@ -784,7 +784,8 @@ resource "kubernetes_secret_v1" "stalwart_seed" {
 # ── hostPath storage for /opt/stalwart-mail (data + etc) ──────────────────────
 
 resource "kubernetes_persistent_volume_v1" "stalwart" {
-  for_each = local.csi_storage ? toset([]) : local.instances
+  # Kept while seeding (modules/volume-seed).
+  for_each = local.csi_storage && !local.seed ? toset([]) : local.instances
 
   metadata {
     name   = "platform-stalwart-data"
@@ -809,7 +810,7 @@ resource "kubernetes_persistent_volume_v1" "stalwart" {
 }
 
 resource "kubernetes_persistent_volume_claim_v1" "stalwart" {
-  for_each = local.csi_storage ? toset([]) : local.instances
+  for_each = local.csi_storage && !local.seed ? toset([]) : local.instances
 
   metadata {
     name      = "stalwart-data"

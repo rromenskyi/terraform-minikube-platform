@@ -236,7 +236,8 @@ resource "kubernetes_config_map_v1" "roundcube_config" {
 
 # ── Persistent volume for the SQLite preferences DB ───────────────────────────
 resource "kubernetes_persistent_volume_v1" "roundcube" {
-  for_each = local.csi_storage ? toset([]) : local.instance_set
+  # Kept while seeding (modules/volume-seed).
+  for_each = local.csi_storage && !local.seed ? toset([]) : local.instance_set
 
   metadata {
     name = "roundcube-db"
@@ -271,7 +272,7 @@ resource "kubernetes_persistent_volume_v1" "roundcube" {
 }
 
 resource "kubernetes_persistent_volume_claim_v1" "roundcube" {
-  for_each = local.csi_storage ? toset([]) : local.instance_set
+  for_each = local.csi_storage && !local.seed ? toset([]) : local.instance_set
 
   metadata {
     name      = "roundcube-db"
@@ -411,8 +412,8 @@ resource "kubernetes_deployment_v1" "roundcube" {
             }
 
             resources {
-              requests = { cpu = "10m", memory = "16Mi" }
-              limits   = { cpu = "500m", memory = "64Mi" }
+              requests = module.volume_seed.resources.requests
+              limits   = module.volume_seed.resources.limits
             }
           }
         }

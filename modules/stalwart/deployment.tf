@@ -73,8 +73,8 @@ resource "kubernetes_deployment_v1" "stalwart" {
             }
 
             resources {
-              requests = { cpu = "10m", memory = "16Mi" }
-              limits   = { cpu = "500m", memory = "64Mi" }
+              requests = module.volume_seed.resources.requests
+              limits   = module.volume_seed.resources.limits
             }
           }
         }
