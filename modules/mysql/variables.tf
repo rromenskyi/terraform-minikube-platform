@@ -22,6 +22,18 @@ variable "volume_base_path" {
   default     = "/data/vol"
 }
 
+variable "storage_class" {
+  description = "StorageClass for the data directory. Empty: a hostPath PV under `volume_base_path` (the original layout). Set: a dynamic PVC `data-mysql`, layout per modules/volume-seed (the datadir is the volume's `data/`, so `lost+found` never reaches mysqld)."
+  type        = string
+  default     = ""
+}
+
+variable "storage_seed_node" {
+  description = "With `storage_class` set: the node holding the old hostPath datadir. On the first start an init container copies it into the new volume (only into an empty one, once; MySQL is stopped, so the copy is consistent), and the pod is pinned to this node meanwhile. Clear it once the data has moved."
+  type        = string
+  default     = ""
+}
+
 variable "node_selector" {
   description = "Node-selector labels the MySQL pod must match. Empty = scheduler picks. Set to pin the pod on the node that owns the hostPath data dir (e.g. `{ workload-tier = stateful }`)."
   type        = map(string)

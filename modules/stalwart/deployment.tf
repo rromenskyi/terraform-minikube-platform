@@ -43,7 +43,41 @@ resource "kubernetes_deployment_v1" "stalwart" {
         # `var.volume_base_path` only lives on the original
         # bootstrap node; an unpinned pod can land elsewhere and
         # come up against an empty data dir.
-        node_selector = length(var.node_selector) > 0 ? var.node_selector : null
+        # While seeding, also pinned to the node with the old hostPath data.
+        node_selector = local.seed || length(var.node_selector) > 0 ? merge(
+          var.node_selector,
+          local.seed ? { "kubernetes.io/hostname" = var.storage_seed_node } : {},
+        ) : null
+
+        # First start on a new volume: copy the old hostPath data in, so
+        # Stalwart never starts on an empty volume (modules/volume-seed).
+        dynamic "init_container" {
+          for_each = local.seed ? [1] : []
+          content {
+            name    = "seed-data"
+            image   = "busybox:stable-musl"
+            command = ["sh", "-c", module.volume_seed.script]
+
+            volume_mount {
+              name       = "data"
+              mount_path = "/new"
+            }
+            volume_mount {
+              name       = "old-data"
+              mount_path = "/old"
+              read_only  = true
+            }
+
+            security_context {
+              run_as_user = 0
+            }
+
+            resources {
+              requests = { cpu = "10m", memory = "16Mi" }
+              limits   = { cpu = "500m", memory = "64Mi" }
+            }
+          }
+        }
 
         # Explicit "default" — the kubernetes TF provider doesn't
         # reliably clear a previously-set string field by omission,
@@ -160,6 +194,7 @@ resource "kubernetes_deployment_v1" "stalwart" {
           volume_mount {
             name       = "data"
             mount_path = "/opt/stalwart-mail"
+            sub_path   = local.data_sub_path
           }
           volume_mount {
             name       = "shared"
@@ -557,6 +592,7 @@ resource "kubernetes_deployment_v1" "stalwart" {
           volume_mount {
             name       = "data"
             mount_path = "/opt/stalwart-mail"
+            sub_path   = local.data_sub_path
           }
           volume_mount {
             name       = "shared"
@@ -592,7 +628,18 @@ resource "kubernetes_deployment_v1" "stalwart" {
         volume {
           name = "data"
           persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim_v1.stalwart["enabled"].metadata[0].name
+            claim_name = local.csi_storage ? kubernetes_persistent_volume_claim_v1.stalwart_data["enabled"].metadata[0].name : kubernetes_persistent_volume_claim_v1.stalwart["enabled"].metadata[0].name
+          }
+        }
+
+        dynamic "volume" {
+          for_each = local.seed ? [1] : []
+          content {
+            name = "old-data"
+            host_path {
+              path = "${var.volume_base_path}/${var.namespace}/stalwart"
+              type = "Directory"
+            }
           }
         }
 

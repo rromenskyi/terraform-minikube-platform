@@ -8,6 +8,10 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- `storage_class` / `storage_seed_node`: `storage` volumes on a StorageClass
+  (dynamic PVC `data-<component>-<slug>`, app data in its `data/`, Deployment
+  strategy Recreate), with a one-time copy of the old hostPath directories
+  on the first start (modules/volume-seed).
 - `storage_node`: pins the pod to the node holding its hostPath volumes
   and gives new PVs a matching nodeAffinity (existing PVs keep theirs;
   `ignore_changes` avoids replacing a bound PV). Without it a pod that

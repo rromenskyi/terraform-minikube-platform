@@ -58,6 +58,11 @@ terraform {
 
 
 locals {
+  # Storage: hostPath (default) or a dynamic volume (modules/volume-seed).
+  csi_storage   = var.storage_class != ""
+  seed          = local.csi_storage && var.storage_seed_node != ""
+  data_sub_path = local.csi_storage ? module.volume_seed.sub_path : null
+
   instances = var.enabled ? toset(["enabled"]) : toset([])
 
   # Shorthand for the propagated null-label tag set.
@@ -779,7 +784,7 @@ resource "kubernetes_secret_v1" "stalwart_seed" {
 # ── hostPath storage for /opt/stalwart-mail (data + etc) ──────────────────────
 
 resource "kubernetes_persistent_volume_v1" "stalwart" {
-  for_each = local.instances
+  for_each = local.csi_storage ? toset([]) : local.instances
 
   metadata {
     name   = "platform-stalwart-data"
@@ -804,7 +809,7 @@ resource "kubernetes_persistent_volume_v1" "stalwart" {
 }
 
 resource "kubernetes_persistent_volume_claim_v1" "stalwart" {
-  for_each = local.instances
+  for_each = local.csi_storage ? toset([]) : local.instances
 
   metadata {
     name      = "stalwart-data"
@@ -823,4 +828,33 @@ resource "kubernetes_persistent_volume_claim_v1" "stalwart" {
       }
     }
   }
+}
+
+# With a StorageClass: a dynamic volume, layout per modules/volume-seed.
+resource "kubernetes_persistent_volume_claim_v1" "stalwart_data" {
+  for_each = local.csi_storage ? local.instances : toset([])
+
+  metadata {
+    name      = "data-stalwart"
+    namespace = var.namespace
+    labels    = local.tags
+  }
+
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = var.storage_class
+
+    resources {
+      requests = {
+        storage = "10Gi"
+      }
+    }
+  }
+
+  # WaitForFirstConsumer: binds when the pod is scheduled.
+  wait_until_bound = false
+}
+
+module "volume_seed" {
+  source = "../volume-seed"
 }

@@ -141,7 +141,9 @@ terraform-minikube-platform/
 
 hostPath under `$HOST_VOLUME_PATH` (default `/data/vol`) is the default for every PV the engine emits. Survives `./tf bootstrap-*` (the wrapper does NOT touch host volume data, only Terraform state). Node-pinned — fine for a single-node cluster, fine for multi-node when the workload also has `node_selector` pinning it to the node holding the data.
 
-For cross-node block replication, opt into Longhorn (`services.longhorn.enabled: true` + `tag_pools` to define replicated pools). The engine emits a `longhorn-<pool>` StorageClass per pool for platform services and Argo CD-managed charts. Component `storage:` entries are always hostPath; they have no StorageClass override. Longhorn replicates blocks across the pool's tagged nodes, so node-loss events re-attach the logical PV to a surviving node and the consumer pod resumes.
+For cross-node block replication, opt into Longhorn (`services.longhorn.enabled: true` + `tag_pools` to define replicated pools). The engine emits a `longhorn-<pool>` StorageClass per pool for platform services and Argo CD-managed charts. Longhorn replicates blocks across the pool's tagged nodes, so node-loss events re-attach the logical PV to a surviving node and the consumer pod resumes.
+
+Component `storage:` volumes, MySQL, Stalwart and Roundcube can live on a StorageClass instead (e.g. Piraeus `linstor-*`): `storage_class` (per component, `services.mysql`, the mail domain's `mail:` block; Seafile: `storage_layout: data`). Such a volume keeps the app's data in its `data/` directory (layout in `modules/volume-seed`). Moving existing hostPath data over: set `storage_seed_node` (Seafile: `storage_seed_class`) to where the old data is; on the first start an init container copies it in, only into an empty volume and only once, so the app never starts empty. Clear it afterwards. The old hostPath directory stays on disk. Backups of such volumes: `backup.pv_paths` entries with `pvc`/`namespace`/`pod_selector`.
 
 ### External dependencies
 
@@ -490,6 +492,8 @@ env_random:
 storage:
   - mount: /var/www/html/wp-content
     size: 10Gi
+# storage_class: linstor-tank    # volumes on a StorageClass instead of hostPath
+# storage_seed_node: node-1      # with storage_class: copy the old hostPath data in once
 
 # Pod securityContext + auto chown init container for the hostPath mounts
 security:

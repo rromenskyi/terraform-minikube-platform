@@ -273,6 +273,31 @@ variable "storage_node" {
   nullable    = false
 }
 
+variable "storage_class" {
+  description = <<-EOT
+    StorageClass for the `storage` volumes. Empty: hostPath PVs under
+    `volume_base_path` (the original layout; see `storage_node`). Set: one
+    dynamic PVC per volume, `data-<component>-<slug>`, layout per
+    modules/volume-seed (the app sees the volume's `data/` directory), and
+    the Deployment uses the Recreate strategy (ReadWriteOnce volumes).
+  EOT
+  type        = string
+  default     = ""
+  nullable    = false
+}
+
+variable "storage_seed_node" {
+  description = <<-EOT
+    With `storage_class` set: the node holding the old hostPath volumes. On
+    the first start, one init container per volume copies the old directory
+    into the new volume (only into an empty one, once), and the pod is pinned
+    to this node meanwhile. Clear it once the data has moved.
+  EOT
+  type        = string
+  default     = ""
+  nullable    = false
+}
+
 variable "node_selector" {
   description = <<-EOT
     Node-selector labels the pod must match. Empty map means the

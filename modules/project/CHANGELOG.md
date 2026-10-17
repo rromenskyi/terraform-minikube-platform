@@ -8,6 +8,8 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Components pass `storage_class` / `storage_seed_node` through to
+  modules/component.
 - `pod_security_level` (default `baseline`): Pod Security warn + audit labels on
   the project namespace (reported, not enforced).
 

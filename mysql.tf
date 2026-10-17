@@ -13,6 +13,9 @@ module "mysql" {
   namespace        = kubernetes_namespace_v1.platform.metadata[0].name
   volume_base_path = var.host_volume_path
 
+  storage_class     = local.platform.services.mysql.storage_class
+  storage_seed_node = local.platform.services.mysql.storage_seed_node
+
   node_selector = local.platform.services.mysql.node_selector
   tolerations   = local.platform.services.mysql.tolerations
   resources     = local.platform.services.mysql.resources

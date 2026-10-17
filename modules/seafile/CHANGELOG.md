@@ -7,6 +7,11 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- `storage_layout = "data"` (PVC `data-seafile`, /shared = its `data/`) and
+  `storage_seed_class`: one-time copy of the `root`-layout `seafile-data` PVC
+  on the first start (modules/volume-seed).
+
 ### Changed
 - Default image `seafileltd/seafile-mc:14.0.9` (was 13.0.21). The 13 → 14
   Docker upgrade steps need nothing from this module: cache is already Redis,

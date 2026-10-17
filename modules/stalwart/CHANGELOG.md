@@ -7,6 +7,11 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- `storage_class` / `storage_seed_node`: data volume on a StorageClass (PVC
+  `data-stalwart`), with a one-time copy of the old hostPath directory on the
+  first start (modules/volume-seed).
+
 ### Fixed
 - Bootstrap no longer wipes `data/` and `etc/` when the 0.16 sentinel is
   missing. A non-empty volume without the sentinel (pre-0.16 state, or a

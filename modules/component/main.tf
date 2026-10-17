@@ -37,6 +37,11 @@ locals {
     replace(trimprefix(v.mount, "/"), "/", "-") => v
   }
 
+  # Volumes on a StorageClass (modules/volume-seed layout) instead of hostPath.
+  csi_storage   = var.storage_class != "" && length(local.volumes) > 0
+  seed          = local.csi_storage && var.storage_seed_node != ""
+  data_sub_path = local.csi_storage ? module.volume_seed.sub_path : null
+
   # Flatten every (sidecar, writable_path) pair into a single map keyed by
   # a stable volume/mount name. One emptyDir per pair so two sidecars (or
   # two paths within one sidecar) cannot clobber each other's scratch
@@ -132,9 +137,11 @@ locals {
     )
   }
   # `storage_node` pins the pod to the node holding its hostPath volumes.
+  # While seeding, it is pinned to the node with the old hostPath data.
   pod_node_selector = merge(
     var.node_selector,
-    length(local.volumes) > 0 && var.storage_node != "" ? { "kubernetes.io/hostname" = var.storage_node } : {},
+    length(local.volumes) > 0 && !local.csi_storage && var.storage_node != "" ? { "kubernetes.io/hostname" = var.storage_node } : {},
+    local.seed ? { "kubernetes.io/hostname" = var.storage_seed_node } : {},
   )
 
   sidecar_tags = {
@@ -150,7 +157,7 @@ locals {
 # ── Persistent Volumes ────────────────────────────────────────────────────────
 
 resource "kubernetes_persistent_volume_v1" "this" {
-  for_each = local.volumes
+  for_each = local.csi_storage ? {} : local.volumes
 
   metadata {
     name = "${var.namespace}-${var.name}-${each.key}"
@@ -206,7 +213,7 @@ resource "kubernetes_persistent_volume_v1" "this" {
 # ── Persistent Volume Claims ──────────────────────────────────────────────────
 
 resource "kubernetes_persistent_volume_claim_v1" "this" {
-  for_each = local.volumes
+  for_each = local.csi_storage ? {} : local.volumes
 
   metadata {
     name      = "${var.name}-${each.key}"
@@ -224,6 +231,35 @@ resource "kubernetes_persistent_volume_claim_v1" "this" {
       }
     }
   }
+}
+
+# With a StorageClass: one dynamic volume each, layout per modules/volume-seed.
+resource "kubernetes_persistent_volume_claim_v1" "data" {
+  for_each = local.csi_storage ? local.volumes : {}
+
+  metadata {
+    name      = "data-${var.name}-${each.key}"
+    namespace = var.namespace
+    labels    = local.labels
+  }
+
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = var.storage_class
+
+    resources {
+      requests = {
+        storage = each.value.size
+      }
+    }
+  }
+
+  # WaitForFirstConsumer: binds when the pod is scheduled.
+  wait_until_bound = false
+}
+
+module "volume_seed" {
+  source = "../volume-seed"
 }
 
 # ── Config Files (ConfigMap) ──────────────────────────────────────────────────
@@ -311,6 +347,15 @@ resource "kubernetes_deployment_v1" "this" {
 
   spec {
     replicas = var.replicas
+
+    # ReadWriteOnce volumes on a StorageClass attach to one node at a time:
+    # a surge pod elsewhere could never start.
+    dynamic "strategy" {
+      for_each = local.csi_storage ? [1] : []
+      content {
+        type = "Recreate"
+      }
+    }
 
     selector {
       match_labels = { app = var.name }
@@ -537,6 +582,38 @@ resource "kubernetes_deployment_v1" "this" {
           }
         }
 
+        # First start on new volumes: copy each old hostPath directory in, so
+        # the app never starts on an empty volume (modules/volume-seed).
+        # Before chown-volumes, which then fixes the copied files' owner.
+        dynamic "init_container" {
+          for_each = local.seed ? local.volumes : {}
+          content {
+            name    = "seed-${init_container.key}"
+            image   = "busybox:stable-musl"
+            command = ["sh", "-c", module.volume_seed.script]
+
+            volume_mount {
+              name       = init_container.key
+              mount_path = "/new"
+            }
+            volume_mount {
+              name       = "old-${init_container.key}"
+              mount_path = "/old"
+              read_only  = true
+            }
+
+            security_context {
+              run_as_user = 0
+            }
+
+            # Tenant namespaces carry a LimitRange: explicit values needed.
+            resources {
+              requests = { cpu = "10m", memory = "16Mi" }
+              limits   = { cpu = "500m", memory = "64Mi" }
+            }
+          }
+        }
+
         # hostPath volumes ignore the pod-level `fsGroup` — the kubelet
         # refuses to recursively chown something on the host filesystem
         # it didn't create. Without this init container, a non-root main
@@ -579,6 +656,7 @@ resource "kubernetes_deployment_v1" "this" {
               content {
                 name       = volume_mount.key
                 mount_path = volume_mount.value.mount
+                sub_path   = local.data_sub_path
               }
             }
           }
@@ -755,6 +833,7 @@ resource "kubernetes_deployment_v1" "this" {
             content {
               name       = volume_mount.key
               mount_path = volume_mount.value.mount
+              sub_path   = local.data_sub_path
             }
           }
 
@@ -930,7 +1009,19 @@ resource "kubernetes_deployment_v1" "this" {
           content {
             name = volume.key
             persistent_volume_claim {
-              claim_name = kubernetes_persistent_volume_claim_v1.this[volume.key].metadata[0].name
+              claim_name = local.csi_storage ? kubernetes_persistent_volume_claim_v1.data[volume.key].metadata[0].name : kubernetes_persistent_volume_claim_v1.this[volume.key].metadata[0].name
+            }
+          }
+        }
+
+        # Old hostPath directories, read by the seed init containers.
+        dynamic "volume" {
+          for_each = local.seed ? local.volumes : {}
+          content {
+            name = "old-${volume.key}"
+            host_path {
+              path = "${var.volume_base_path}/${var.namespace}/${var.name}/${volume.key}"
+              type = "Directory"
             }
           }
         }

@@ -94,13 +94,39 @@ locals {
   redis_set    = var.enabled && var.redis_enabled ? toset(["enabled"]) : toset([])
   vault_set    = var.enabled && var.vault_enabled ? toset(["enabled"]) : toset([])
   pv_set       = var.enabled && var.pv_enabled && length(var.pv_paths) > 0 ? toset(["enabled"]) : toset([])
-  # One CronJob per node: hostPath data exists only on the node that
-  # holds it. Entries without `node` share the `default` job, placed by
-  # `pv_node_selector`.
-  pv_groups = length(local.pv_set) == 0 ? {} : {
-    for node in distinct([for p in var.pv_paths : p.node]) :
-    (node == "" ? "default" : node) => [for p in var.pv_paths : p if p.node == node]
-  }
+  # hostPath entries: one CronJob per node, in this module's namespace
+  # (hostPath data exists only on the node that holds it; entries without
+  # `node` share the `default` job, placed by `pv_node_selector`).
+  # PVC entries: one CronJob each, in the PVC's namespace (a pod can mount
+  # only its own namespace's claims), on the node of the pod using it (a
+  # ReadWriteOnce volume is attached to one node).
+  pv_host_entries  = [for p in var.pv_paths : p if p.pvc == ""]
+  pv_claim_entries = [for p in var.pv_paths : p if p.pvc != ""]
+  pv_groups = length(local.pv_set) == 0 ? {} : merge(
+    {
+      for node in distinct([for p in local.pv_host_entries : p.node]) :
+      (node == "" ? "default" : node) => {
+        name         = node == "" ? "backup-pv" : "backup-pv-${node}"
+        namespace    = ""
+        node         = node
+        pod_selector = {}
+        restic_host  = node == "" ? "platform-pv" : "platform-pv-${node}"
+        entries      = [for p in local.pv_host_entries : merge(p, { mount = p.path }) if p.node == node]
+      }
+    },
+    {
+      for p in local.pv_claim_entries :
+      "${p.namespace}/${p.name}" => {
+        name         = "backup-pv-${p.name}"
+        namespace    = p.namespace
+        node         = ""
+        pod_selector = p.pod_selector
+        restic_host  = "platform-pv-${p.namespace}-${p.name}"
+        entries      = [merge(p, { mount = "/pv/${p.name}" })]
+      }
+    },
+  )
+  pv_claim_namespaces = toset([for p in local.pv_claim_entries : p.namespace])
 
   # Common shell preamble all CronJob containers share. `set -e`
   # so a failing restic backup propagates to the Pod status; jobs that
@@ -195,6 +221,22 @@ resource "kubernetes_secret_v1" "backup_creds" {
     AWS_ACCESS_KEY_ID     = var.b2_access_key_id
     AWS_SECRET_ACCESS_KEY = var.b2_secret_access_key
   }
+
+  type = "Opaque"
+}
+
+# The same credentials in each namespace with a PVC entry in `pv_paths`: its
+# CronJob runs there (a pod mounts only its own namespace's claims).
+resource "kubernetes_secret_v1" "backup_creds_pv_claims" {
+  for_each = length(local.pv_set) > 0 ? local.pv_claim_namespaces : toset([])
+
+  metadata {
+    name      = "backup-creds"
+    namespace = each.key
+    labels    = local.tags
+  }
+
+  data = kubernetes_secret_v1.backup_creds["enabled"].data
 
   type = "Opaque"
 }
@@ -743,8 +785,8 @@ resource "kubernetes_cron_job_v1" "pv" {
   for_each = local.pv_groups
 
   metadata {
-    name      = each.key == "default" ? "backup-pv" : "backup-pv-${each.key}"
-    namespace = kubernetes_namespace_v1.backup["enabled"].metadata[0].name
+    name      = each.value.name
+    namespace = each.value.namespace == "" ? kubernetes_namespace_v1.backup["enabled"].metadata[0].name : each.value.namespace
   }
 
   spec {
@@ -768,7 +810,26 @@ resource "kubernetes_cron_job_v1" "pv" {
           }
           spec {
             restart_policy = "OnFailure"
-            node_selector  = each.key == "default" ? (length(var.pv_node_selector) > 0 ? var.pv_node_selector : null) : { "kubernetes.io/hostname" = each.key }
+            node_selector = (
+              length(each.value.pod_selector) > 0 ? null :
+              each.value.node == "" ? (length(var.pv_node_selector) > 0 ? var.pv_node_selector : null) :
+              { "kubernetes.io/hostname" = each.value.node }
+            )
+
+            # PVC entries: on the node where the app pod has the volume.
+            dynamic "affinity" {
+              for_each = length(each.value.pod_selector) > 0 ? [each.value.pod_selector] : []
+              content {
+                pod_affinity {
+                  required_during_scheduling_ignored_during_execution {
+                    topology_key = "kubernetes.io/hostname"
+                    label_selector {
+                      match_labels = affinity.value
+                    }
+                  }
+                }
+              }
+            }
 
             dynamic "toleration" {
               for_each = var.pv_tolerations
@@ -787,7 +848,7 @@ resource "kubernetes_cron_job_v1" "pv" {
 
               env_from {
                 secret_ref {
-                  name = kubernetes_secret_v1.backup_creds["enabled"].metadata[0].name
+                  name = each.value.namespace == "" ? kubernetes_secret_v1.backup_creds["enabled"].metadata[0].name : kubernetes_secret_v1.backup_creds_pv_claims[each.value.namespace].metadata[0].name
                 }
               }
 
@@ -796,18 +857,18 @@ resource "kubernetes_cron_job_v1" "pv" {
               # available — alpine's /bin/sh is busybox).
               env {
                 name  = "PV_PAIRS"
-                value = join(",", [for p in each.value : "${p.name}:${p.path}"])
+                value = join(",", [for p in each.value.entries : "${p.name}:${p.mount}"])
               }
 
               env {
                 name  = "RESTIC_HOST"
-                value = each.key == "default" ? "platform-pv" : "platform-pv-${each.key}"
+                value = each.value.restic_host
               }
 
               # `<name>:<file>|<file>` per entry with SQLite databases.
               env {
                 name  = "PV_SQLITE"
-                value = join(",", [for p in each.value : "${p.name}:${join("|", p.sqlite)}" if length(p.sqlite) > 0])
+                value = join(",", [for p in each.value.entries : "${p.name}:${join("|", p.sqlite)}" if length(p.sqlite) > 0])
               }
 
               security_context {
@@ -820,7 +881,14 @@ resource "kubernetes_cron_job_v1" "pv" {
                   # DAC_OVERRIDE + CHOWN only when a SQLite database is read:
                   # its -shm index belongs to the app's UID and must be
                   # writable, and files SQLite creates go back to that UID.
-                  add = length([for p in each.value : p if length(p.sqlite) > 0]) > 0 ? ["DAC_READ_SEARCH", "DAC_OVERRIDE", "CHOWN"] : ["DAC_READ_SEARCH"]
+                  # PVC entries run in app namespaces, where Pod Security
+                  # `baseline` forbids DAC_READ_SEARCH: DAC_OVERRIDE (allowed
+                  # there) covers reading as well.
+                  add = (
+                    length(each.value.pod_selector) > 0
+                    ? (length([for p in each.value.entries : p if length(p.sqlite) > 0]) > 0 ? ["DAC_OVERRIDE", "CHOWN"] : ["DAC_OVERRIDE"])
+                    : (length([for p in each.value.entries : p if length(p.sqlite) > 0]) > 0 ? ["DAC_READ_SEARCH", "DAC_OVERRIDE", "CHOWN"] : ["DAC_READ_SEARCH"])
+                  )
                 }
               }
 
@@ -909,10 +977,11 @@ resource "kubernetes_cron_job_v1" "pv" {
               ]
 
               dynamic "volume_mount" {
-                for_each = each.value
+                for_each = each.value.entries
                 content {
                   name       = "pv-${replace(volume_mount.value.name, "/", "-")}"
-                  mount_path = volume_mount.value.path
+                  mount_path = volume_mount.value.mount
+                  sub_path   = volume_mount.value.pvc != "" ? volume_mount.value.sub_path : null
                   read_only  = length(volume_mount.value.sqlite) == 0
                 }
               }
@@ -924,12 +993,21 @@ resource "kubernetes_cron_job_v1" "pv" {
             }
 
             dynamic "volume" {
-              for_each = each.value
+              for_each = each.value.entries
               content {
                 name = "pv-${replace(volume.value.name, "/", "-")}"
-                host_path {
-                  path = volume.value.path
-                  type = "Directory"
+                dynamic "host_path" {
+                  for_each = volume.value.pvc == "" ? [volume.value.path] : []
+                  content {
+                    path = host_path.value
+                    type = "Directory"
+                  }
+                }
+                dynamic "persistent_volume_claim" {
+                  for_each = volume.value.pvc != "" ? [volume.value.pvc] : []
+                  content {
+                    claim_name = persistent_volume_claim.value
+                  }
                 }
               }
             }
