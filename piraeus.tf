@@ -12,4 +12,5 @@ module "piraeus" {
   drbd_loader_mode            = local.platform.services.piraeus.drbd_loader_mode
   storage_pools               = local.platform.services.piraeus.storage_pools
   storage_classes             = local.platform.services.piraeus.storage_classes
+  monitoring                  = local.platform.services.piraeus.monitoring
 }

@@ -10,8 +10,9 @@
 #
 # The operator places AlertmanagerConfig routes first, with `continue: true`,
 # so alerts they handle reach this route too. It therefore excludes
-# `alert_source` metric/log, or those would arrive twice. `info` alerts and
-# the always-firing `Watchdog` stay on `null`.
+# `alert_source` metric/log, or those would arrive twice. `info` alerts, the
+# always-firing `Watchdog` and the alerts named in
+# `monitoring.muted_builtin_alerts` stay on `null`.
 #
 # The push URL is mounted from a Secret and read with `url_file`, so the
 # topic never appears in the chart values, the Helm release or a plan.
@@ -32,6 +33,11 @@ locals {
   _deadman_on   = local._deadman_url != ""
   _deadman_name = "platform-deadman"
 
+  # Built-in alerts that never reach anyone (`monitoring.muted_builtin_alerts`,
+  # alert names): for chart rules that do not fit this cluster, e.g.
+  # NodeBondingDegraded on bonds with cable-less standby ports.
+  _muted_builtin = try(local.platform.monitoring.muted_builtin_alerts, [])
+
   # The root config is replaced as a whole (routes and receivers are lists),
   # so it is rendered when either feature is on.
   _am_config_on = local._builtin_alerts_on || local._deadman_on
@@ -50,6 +56,10 @@ locals {
             { receiver = local._deadman_on ? "deadman" : "null", matchers = ["alertname = \"Watchdog\""] },
             local._deadman_on ? { group_wait = "0s", group_interval = "1m", repeat_interval = "1m" } : {},
           ),
+          local._builtin_alerts_on && length(local._muted_builtin) > 0 ? {
+            receiver = "null"
+            matchers = ["alertname =~ \"${join("|", local._muted_builtin)}\""]
+          } : null,
           local._builtin_alerts_on ? {
             receiver        = "platform-builtin"
             matchers        = ["alert_source !~ \"metric|log\"", "severity =~ \"warning|critical\""]

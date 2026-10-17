@@ -27,6 +27,7 @@ services:
         placement_count: 1        # copies; 2 once a second storage node exists
         resource_group: k8s       # named LINSTOR resource group (else sc-<hash>)
         # fs_type: ext4, reclaim_policy: Retain, default: false
+    # monitoring: true            # PodMonitors + LINSTOR/DRBD alerts
 ```
 
 ## Requirements on the nodes
