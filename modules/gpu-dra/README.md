@@ -9,7 +9,11 @@ privileges, no `hostPath` in the workload.
 
 What it creates (when `enabled`): namespace, ServiceAccount, ClusterRole and
 binding, the plugin DaemonSet on nodes matching `node_selector`, a DeviceClass
-named `driver_name`, a PodMonitor and a PrometheusRule.
+named `driver_name`, a PodMonitor (adds a `node` label), a PrometheusRule, a
+ValidatingAdmissionPolicy that limits the plugin to its own node's
+ResourceSlices, and a Grafana dashboard ConfigMap (`grafana_dashboard=1`):
+claimed, used and offered VRAM, VRAM evicted to RAM (GTT), temperature and
+clocks per node and GPU.
 
 ## Configuration (`platform.yaml`)
 
@@ -48,8 +52,9 @@ is not enforced by the kernel: size models and contexts to the
 
 ## Alerts
 
-`DRIPrepareErrors`, `DRIVRAMOverUse` (used > claimed for 10 min),
-`DRIVRAMNearlyFull` (> 95 %), and `DRIPluginMissing`. The last one fires
+`DRIPrepareErrors`, `DRIVRAMOverUse` (used > claimed + reserve for 10 min),
+`DRIVRAMNearlyFull` (> 95 %), `DRIVRAMEvictedToRAM` (GTT > 1 GiB while VRAM
+is over 90 % used, for 5 min), and `DRIPluginMissing`. The last one fires
 only when **no** plugin pod is up anywhere: a per-node check would need node
 labels in kube-state-metrics (`kube_node_labels`), which are not exported by
 default.

@@ -47,17 +47,6 @@ resource "kubernetes_cluster_role_v1" "this" {
   }
   rule {
     api_groups = ["resource.k8s.io"]
-    resources  = ["resourceclaims/status"]
-    verbs      = ["update"]
-  }
-  rule {
-    api_groups     = ["resource.k8s.io"]
-    resources      = ["resourceclaims/driver"]
-    verbs          = ["associated-node:update", "associated-node:patch"]
-    resource_names = [var.driver_name]
-  }
-  rule {
-    api_groups = ["resource.k8s.io"]
     resources  = ["resourceslices"]
     verbs      = ["get", "list", "watch", "create", "update", "patch", "delete"]
   }
@@ -240,8 +229,12 @@ resource "kubectl_manifest" "pod_monitor" {
       labels    = merge(local.labels, var.prometheus_selector_labels)
     }
     spec = {
-      selector            = { matchLabels = local.labels }
-      podMetricsEndpoints = [{ port = "metrics" }]
+      selector = { matchLabels = local.labels }
+      # Device names (PCI addresses) repeat across identical machines.
+      podMetricsEndpoints = [{
+        port        = "metrics"
+        relabelings = [{ sourceLabels = ["__meta_kubernetes_pod_node_name"], targetLabel = "node" }]
+      }]
     }
   })
 }
@@ -277,20 +270,94 @@ resource "kubectl_manifest" "rules" {
           },
           {
             alert       = "DRIVRAMOverUse"
-            expr        = "dri_vram_used_bytes > dri_vram_allocated_bytes and dri_vram_allocated_bytes > 0"
+            expr        = "dri_vram_used_bytes > dri_vram_allocated_bytes + (dri_vram_total_bytes - dri_vram_published_bytes) and dri_vram_allocated_bytes > 0"
             for         = "10m"
             labels      = { severity = "warning" }
-            annotations = { summary = "{{ $labels.device }}: workloads use more VRAM than they claimed" }
+            annotations = { summary = "{{ $labels.node }} {{ $labels.device }}: workloads use more VRAM than they claimed" }
           },
           {
             alert       = "DRIVRAMNearlyFull"
             expr        = "dri_vram_used_bytes / dri_vram_total_bytes > 0.95"
             for         = "10m"
             labels      = { severity = "warning" }
-            annotations = { summary = "{{ $labels.device }}: VRAM over 95 % used" }
+            annotations = { summary = "{{ $labels.node }} {{ $labels.device }}: VRAM over 95 % used" }
+          },
+          {
+            # Each Vulkan process keeps a few hundred MiB in GTT normally; with
+            # VRAM full, buffers move there and the GPU slows down several times.
+            alert       = "DRIVRAMEvictedToRAM"
+            expr        = "dri_gtt_used_bytes > 1073741824 and dri_vram_used_bytes / dri_vram_total_bytes > 0.9"
+            for         = "5m"
+            labels      = { severity = "warning" }
+            annotations = { summary = "{{ $labels.node }} {{ $labels.device }}: VRAM is full and buffers spill into system RAM" }
           },
         ]
       }]
     }
   })
+}
+
+# The plugin's ServiceAccount may write only the ResourceSlices of the node
+# its pod runs on (node name from the pod-bound ServiceAccount token).
+resource "kubectl_manifest" "slice_policy" {
+  for_each = local.set
+  yaml_body = yamlencode({
+    apiVersion = "admissionregistration.k8s.io/v1"
+    kind       = "ValidatingAdmissionPolicy"
+    metadata   = { name = "dra-driver-dri-resourceslices" }
+    spec = {
+      failurePolicy = "Fail"
+      matchConstraints = {
+        resourceRules = [{
+          apiGroups   = ["resource.k8s.io"]
+          apiVersions = ["v1"]
+          operations  = ["CREATE", "UPDATE", "DELETE"]
+          resources   = ["resourceslices"]
+        }]
+      }
+      matchConditions = [{
+        name       = "isPlugin"
+        expression = "request.userInfo.username == \"system:serviceaccount:${var.namespace}:dra-driver-dri\""
+      }]
+      variables = [
+        { name = "userNodeName", expression = "request.userInfo.extra[?'authentication.kubernetes.io/node-name'][0].orValue('')" },
+        { name = "objectNodeName", expression = "(request.operation == \"DELETE\" ? oldObject : object).spec.?nodeName.orValue(\"\")" },
+      ]
+      validations = [
+        { expression = "variables.userNodeName != \"\"", message = "no node in the ServiceAccount token; the plugin must run in a pod on a node" },
+        {
+          expression        = "variables.userNodeName == variables.objectNodeName"
+          messageExpression = "\"the plugin on node '\" + variables.userNodeName + \"' may not modify ResourceSlices of node '\" + variables.objectNodeName + \"'\""
+        },
+      ]
+    }
+  })
+}
+
+resource "kubectl_manifest" "slice_policy_binding" {
+  for_each   = local.set
+  depends_on = [kubectl_manifest.slice_policy]
+  yaml_body = yamlencode({
+    apiVersion = "admissionregistration.k8s.io/v1"
+    kind       = "ValidatingAdmissionPolicyBinding"
+    metadata   = { name = "dra-driver-dri-resourceslices" }
+    spec = {
+      policyName        = "dra-driver-dri-resourceslices"
+      validationActions = ["Deny"]
+    }
+  })
+}
+
+# Dashboard from the driver repo (deploy/examples/grafana-dashboard.json),
+# loaded by the Grafana sidecar of kube-prometheus-stack.
+resource "kubernetes_config_map_v1" "dashboard" {
+  for_each = local.set
+  metadata {
+    name      = "dra-driver-dri-dashboard"
+    namespace = var.namespace
+    labels    = merge(local.labels, { grafana_dashboard = "1" })
+  }
+  data = {
+    "dra-driver-dri.json" = file("${path.module}/dashboard.json")
+  }
 }
