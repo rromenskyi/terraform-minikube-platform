@@ -227,6 +227,18 @@ locals {
         vram_reserve    = "256Mi"
         rescan_interval = "30s"
       }
+      # Piraeus Datastore: LINSTOR/DRBD block storage with CSI.
+      piraeus = {
+        enabled                     = false
+        namespace                   = "piraeus-datastore"
+        operator_chart_version      = "2.12.0"
+        node_selector               = {}
+        control_plane_node_selector = {}
+        host_network                = true
+        drbd_loader_mode            = "deps_only"
+        storage_pools               = []
+        storage_classes             = []
+      }
       seafile = {
         enabled           = false
         namespace         = "seafile"
@@ -591,6 +603,7 @@ locals {
       cluster_oidc         = merge(local._platform_defaults.services.cluster_oidc, try(local._platform_services.cluster_oidc, {}))
       gcp_wif              = merge(local._platform_defaults.services.gcp_wif, try(local._platform_services.gcp_wif, {}))
       gpu_dra              = merge(local._platform_defaults.services.gpu_dra, try(local._platform_services.gpu_dra, {}))
+      piraeus              = merge(local._platform_defaults.services.piraeus, try(local._platform_services.piraeus, {}))
       seafile              = merge(local._platform_defaults.services.seafile, try(local._platform_services.seafile, {}))
       security_scan        = merge(local._platform_defaults.services.security_scan, try(local._platform_services.security_scan, {}))
       disk_health          = merge(local._platform_defaults.services.disk_health, try(local._platform_services.disk_health, {}))
