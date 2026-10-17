@@ -92,7 +92,8 @@ resource "kubernetes_secret_v1" "mysql_root" {
 # ── Persistent storage ────────────────────────────────────────────────────────
 
 resource "kubernetes_persistent_volume_v1" "mysql" {
-  for_each = local.csi_storage ? toset([]) : local.instances
+  # Kept while seeding (modules/volume-seed).
+  for_each = local.csi_storage && !local.seed ? toset([]) : local.instances
 
   metadata {
     name   = "platform-mysql-data"
@@ -117,7 +118,7 @@ resource "kubernetes_persistent_volume_v1" "mysql" {
 }
 
 resource "kubernetes_persistent_volume_claim_v1" "mysql" {
-  for_each = local.csi_storage ? toset([]) : local.instances
+  for_each = local.csi_storage && !local.seed ? toset([]) : local.instances
 
   metadata {
     name      = "mysql-data"
@@ -224,8 +225,8 @@ resource "kubernetes_stateful_set_v1" "mysql" {
             }
 
             resources {
-              requests = { cpu = "10m", memory = "16Mi" }
-              limits   = { cpu = "500m", memory = "64Mi" }
+              requests = module.volume_seed.resources.requests
+              limits   = module.volume_seed.resources.limits
             }
           }
         }
