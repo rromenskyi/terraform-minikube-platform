@@ -240,6 +240,7 @@ locals {
         drbd_loader_mode            = "deps_only"
         storage_pools               = []
         storage_classes             = []
+        monitoring                  = false
       }
       seafile = {
         enabled            = false

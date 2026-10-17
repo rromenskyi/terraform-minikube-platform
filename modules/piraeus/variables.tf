@@ -73,3 +73,15 @@ variable "storage_classes" {
   }))
   default = []
 }
+
+variable "monitoring" {
+  description = "PodMonitors for the LINSTOR controller (`/metrics` on its API port) and the Satellites' drbd-reactor, plus alerts on both (needs the Prometheus Operator CRDs)."
+  type        = bool
+  default     = false
+}
+
+variable "prometheus_selector_labels" {
+  description = "Labels the cluster's Prometheus selects PodMonitors and PrometheusRules by."
+  type        = map(string)
+  default     = { release = "kube-prometheus-stack" }
+}
