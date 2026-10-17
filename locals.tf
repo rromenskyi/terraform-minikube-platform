@@ -218,6 +218,15 @@ locals {
       gcp_wif = {
         pool_provider_audience = ""
       }
+      gpu_dra = {
+        enabled         = false
+        namespace       = "gpu-dra"
+        image           = "ghcr.io/ipsupport-llc/dra-driver-dri:0.1.0"
+        driver_name     = ""
+        node_selector   = { gpu = "dri" }
+        vram_reserve    = "256Mi"
+        rescan_interval = "30s"
+      }
       seafile = {
         enabled           = false
         namespace         = "seafile"
@@ -581,6 +590,7 @@ locals {
       ci_access            = merge(local._platform_defaults.services.ci_access, try(local._platform_services.ci_access, {}))
       cluster_oidc         = merge(local._platform_defaults.services.cluster_oidc, try(local._platform_services.cluster_oidc, {}))
       gcp_wif              = merge(local._platform_defaults.services.gcp_wif, try(local._platform_services.gcp_wif, {}))
+      gpu_dra              = merge(local._platform_defaults.services.gpu_dra, try(local._platform_services.gpu_dra, {}))
       seafile              = merge(local._platform_defaults.services.seafile, try(local._platform_services.seafile, {}))
       security_scan        = merge(local._platform_defaults.services.security_scan, try(local._platform_services.security_scan, {}))
       disk_health          = merge(local._platform_defaults.services.disk_health, try(local._platform_services.disk_health, {}))
