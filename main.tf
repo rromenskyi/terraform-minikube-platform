@@ -65,7 +65,7 @@ resource "terraform_data" "kubeconfig_checks" {
 # Layer 2: Platform add-ons (Traefik, cert-manager, monitoring, namespaces).
 # -----------------------------------------------------------------------------
 module "addons" {
-  source = "git::https://github.com/rromenskyi/terraform-k8s-addons.git?ref=v2.13.0"
+  source = "git::https://github.com/rromenskyi/terraform-k8s-addons.git?ref=v2.14.0"
 
   kubeconfig_path      = local.kubeconfig_path
   cluster_name         = var.cluster_name
@@ -175,6 +175,8 @@ module "addons" {
   # above it (0 = no alert). On k3s the module also stores the control
   # plane's metrics once instead of twice and guards that.
   monitoring_head_series_budget = try(local.platform.monitoring.head_series_budget, 0)
+  # Apiserver histograms no rule or dashboard reads (`monitoring.apiserver_drop_metrics`).
+  monitoring_apiserver_drop_metrics = try(local.platform.monitoring.apiserver_drop_metrics, [])
 
   monitoring_prometheus_extra_values = merge(
     length(local.prometheus_spec) > 0 ? { prometheusSpec = local.prometheus_spec } : {},
