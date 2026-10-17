@@ -20,6 +20,11 @@ locals {
   # looks uniform across the platform stack.
   instances = var.enabled ? toset(["enabled"]) : toset([])
 
+  # Storage: hostPath (default) or a dynamic volume (modules/volume-seed).
+  csi_storage   = var.storage_class != ""
+  seed          = local.csi_storage && var.storage_seed_node != ""
+  data_sub_path = local.csi_storage ? module.volume_seed.sub_path : null
+
   # Shorthand for the propagated null-label tag set used by every
   # k8s resource the module emits via `merge(local.tags, { … })`.
   # Existing-wins on key collision so the StatefulSet/Service
@@ -87,7 +92,7 @@ resource "kubernetes_secret_v1" "mysql_root" {
 # ── Persistent storage ────────────────────────────────────────────────────────
 
 resource "kubernetes_persistent_volume_v1" "mysql" {
-  for_each = local.instances
+  for_each = local.csi_storage ? toset([]) : local.instances
 
   metadata {
     name   = "platform-mysql-data"
@@ -112,7 +117,7 @@ resource "kubernetes_persistent_volume_v1" "mysql" {
 }
 
 resource "kubernetes_persistent_volume_claim_v1" "mysql" {
-  for_each = local.instances
+  for_each = local.csi_storage ? toset([]) : local.instances
 
   metadata {
     name      = "mysql-data"
@@ -131,6 +136,35 @@ resource "kubernetes_persistent_volume_claim_v1" "mysql" {
       }
     }
   }
+}
+
+# With a StorageClass: a dynamic volume, layout per modules/volume-seed.
+resource "kubernetes_persistent_volume_claim_v1" "mysql_data" {
+  for_each = local.csi_storage ? local.instances : toset([])
+
+  metadata {
+    name      = "data-mysql"
+    namespace = var.namespace
+    labels    = local.tags
+  }
+
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = var.storage_class
+
+    resources {
+      requests = {
+        storage = "10Gi"
+      }
+    }
+  }
+
+  # WaitForFirstConsumer: binds when the pod is scheduled.
+  wait_until_bound = false
+}
+
+module "volume_seed" {
+  source = "../volume-seed"
 }
 
 # ── StatefulSet ───────────────────────────────────────────────────────────────
@@ -160,7 +194,41 @@ resource "kubernetes_stateful_set_v1" "mysql" {
       spec {
         # Pod placement primitives — empty defaults preserve prior
         # scheduler behaviour.
-        node_selector = length(var.node_selector) > 0 ? var.node_selector : null
+        # While seeding, also pinned to the node with the old hostPath data.
+        node_selector = local.seed || length(var.node_selector) > 0 ? merge(
+          var.node_selector,
+          local.seed ? { "kubernetes.io/hostname" = var.storage_seed_node } : {},
+        ) : null
+
+        # First start on a new volume: copy the old datadir in, so MySQL
+        # never initialises an empty one (modules/volume-seed).
+        dynamic "init_container" {
+          for_each = local.seed ? [1] : []
+          content {
+            name    = "seed-data"
+            image   = "busybox:stable-musl"
+            command = ["sh", "-c", module.volume_seed.script]
+
+            volume_mount {
+              name       = "data"
+              mount_path = "/new"
+            }
+            volume_mount {
+              name       = "old-data"
+              mount_path = "/old"
+              read_only  = true
+            }
+
+            security_context {
+              run_as_user = 0
+            }
+
+            resources {
+              requests = { cpu = "10m", memory = "16Mi" }
+              limits   = { cpu = "500m", memory = "64Mi" }
+            }
+          }
+        }
 
         dynamic "toleration" {
           for_each = var.tolerations
@@ -201,6 +269,7 @@ resource "kubernetes_stateful_set_v1" "mysql" {
           volume_mount {
             name       = "data"
             mount_path = "/var/lib/mysql"
+            sub_path   = local.data_sub_path
           }
 
           volume_mount {
@@ -250,7 +319,18 @@ resource "kubernetes_stateful_set_v1" "mysql" {
         volume {
           name = "data"
           persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim_v1.mysql["enabled"].metadata[0].name
+            claim_name = local.csi_storage ? kubernetes_persistent_volume_claim_v1.mysql_data["enabled"].metadata[0].name : kubernetes_persistent_volume_claim_v1.mysql["enabled"].metadata[0].name
+          }
+        }
+
+        dynamic "volume" {
+          for_each = local.seed ? [1] : []
+          content {
+            name = "old-data"
+            host_path {
+              path = "${var.volume_base_path}/${var.namespace}/mysql"
+              type = "Directory"
+            }
           }
         }
       }

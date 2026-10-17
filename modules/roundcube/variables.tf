@@ -23,6 +23,18 @@ variable "volume_base_path" {
   type        = string
 }
 
+variable "storage_class" {
+  description = "StorageClass for the SQLite volume. Empty: a hostPath PV under `volume_base_path` (the original layout). Set: a dynamic PVC `data-roundcube`; the database lives in its `data/` directory."
+  type        = string
+  default     = ""
+}
+
+variable "storage_seed_node" {
+  description = "With `storage_class` set: the node holding the old hostPath directory. On the first start an init container copies it into the new volume (only into an empty one; marker `.seeded`), and the pod is pinned to this node meanwhile. Clear it once the data has moved."
+  type        = string
+  default     = ""
+}
+
 variable "image" {
   description = "Roundcube container image. The Apache flavour is used because the upstream image bakes a working PHP+Apache config; the alpine-fpm flavour needs an extra fpm/nginx pair."
   type        = string

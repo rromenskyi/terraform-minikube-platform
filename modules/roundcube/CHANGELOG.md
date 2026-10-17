@@ -7,6 +7,11 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- `storage_class` / `storage_seed_node`: SQLite volume on a StorageClass (PVC
+  `data-roundcube`), with a one-time copy of the old hostPath directory on
+  the first start (modules/volume-seed).
+
 ### Changed
 - File layout split into `main.tf` / `variables.tf` / `outputs.tf` per AGENT.md
   module conventions. Pure file reorganisation — no resource, input, output, or

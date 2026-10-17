@@ -247,6 +247,18 @@ variable "cpu_limit" {
   default     = "500m"
 }
 
+variable "storage_class" {
+  description = "StorageClass for the data volume (/opt/stalwart-mail). Empty: a hostPath PV under `volume_base_path` (the original layout). Set: a dynamic PVC `data-stalwart`, layout per modules/volume-seed."
+  type        = string
+  default     = ""
+}
+
+variable "storage_seed_node" {
+  description = "With `storage_class` set: the node holding the old hostPath directory. On the first start an init container copies it into the new volume (only into an empty one, once), and the pod is pinned to this node meanwhile. Clear it once the data has moved."
+  type        = string
+  default     = ""
+}
+
 variable "node_selector" {
   description = "Node-selector applied to BOTH the main Stalwart Deployment and the smtp-relay sidecar Deployment. Two reasons both pods need pinning when this is set: (1) the main pod owns a hostPath PV under `volume_base_path/<namespace>/stalwart/data` and that data only lives on the original node — if the pod relocates, the new node has an empty dir; (2) the smtp-relay sidecar runs in hostNetwork mode and binds `smtp_relay_listen_ip` literally, so when that address exists on only one node the pod must land there or socat fails at start with 'Cannot assign requested address'. Empty = scheduler picks any node, fine for single-node clusters."
   type        = map(string)

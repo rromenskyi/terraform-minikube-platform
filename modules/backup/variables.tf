@@ -143,14 +143,26 @@ variable "pv_enabled" {
 }
 
 variable "pv_paths" {
-  description = "List of host-path entries to back up. Each entry is `{ name, path, sqlite }` where `name` is a stable identifier used as the archive name (e.g. `stalwart-data`), `path` is the absolute host directory, and `sqlite` (optional) lists SQLite databases inside it, relative to `path`. A live `tar` of a SQLite file (above all one in WAL mode) is not a consistent copy; listed databases are captured as a consistent snapshot (`VACUUM INTO`, checked with `PRAGMA quick_check`) and stored in the archive at their own path instead of the live db/-wal/-shm files. Entries with `sqlite` are mounted read-write, because reading a WAL database writes its -shm index. `node` (optional) is the node holding the directory; each node gets its own CronJob (`backup-pv-<node>`), entries without it run in `backup-pv` placed by `pv_node_selector`."
+  description = "List of host-path entries to back up. Each entry is `{ name, path, sqlite }` where `name` is a stable identifier used as the archive name (e.g. `stalwart-data`), `path` is the absolute host directory, and `sqlite` (optional) lists SQLite databases inside it, relative to `path`. A live `tar` of a SQLite file (above all one in WAL mode) is not a consistent copy; listed databases are captured as a consistent snapshot (`VACUUM INTO`, checked with `PRAGMA quick_check`) and stored in the archive at their own path instead of the live db/-wal/-shm files. Entries with `sqlite` are mounted read-write, because reading a WAL database writes its -shm index. `node` (optional) is the node holding the directory; each node gets its own CronJob (`backup-pv-<node>`), entries without it run in `backup-pv` placed by `pv_node_selector`. A volume on a StorageClass is given as `pvc` (claim name) with `namespace` and `pod_selector` (labels of the pod using it) instead of `path`: it gets its own CronJob `backup-pv-<name>` in that namespace, on the node of that pod, archiving the claim's `sub_path` (default `data`, the modules/volume-seed layout); `sqlite` paths are relative to it."
   type = list(object({
-    name   = string
-    path   = string
-    sqlite = optional(list(string), [])
-    node   = optional(string, "")
+    name         = string
+    path         = optional(string, "")
+    sqlite       = optional(list(string), [])
+    node         = optional(string, "")
+    namespace    = optional(string, "")
+    pvc          = optional(string, "")
+    pod_selector = optional(map(string), {})
+    sub_path     = optional(string, "data")
   }))
   default = []
+
+  validation {
+    condition = alltrue([
+      for p in var.pv_paths :
+      p.pvc == "" ? p.path != "" : (p.namespace != "" && length(p.pod_selector) > 0)
+    ])
+    error_message = "Each pv_paths entry needs `path` (hostPath), or `pvc` with `namespace` and `pod_selector`."
+  }
 }
 
 variable "pv_node_selector" {

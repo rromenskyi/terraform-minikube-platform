@@ -7,6 +7,11 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- `storage_class` / `storage_seed_node`: datadir on a StorageClass (PVC
+  `data-mysql`, datadir = its `data/`), with a one-time copy of the old
+  hostPath datadir on the first start (modules/volume-seed).
+
 ### Fixed
 - Root password is re-asserted on every start (`--init-file` from the
   `mysql-root-init` Secret); the image sets it only on an empty data dir.

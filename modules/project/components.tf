@@ -117,8 +117,11 @@ module "component" {
   # mirrors.
   node_selector = try(each.value.node_selector, {})
   storage_node  = try(each.value.storage_node, "")
-  tolerations   = try(each.value.tolerations, [])
-  affinity      = try(each.value.affinity, {})
+  # Volumes on a StorageClass instead of hostPath (see modules/component).
+  storage_class     = try(each.value.storage_class, "")
+  storage_seed_node = try(each.value.storage_seed_node, "")
+  tolerations       = try(each.value.tolerations, [])
+  affinity          = try(each.value.affinity, {})
 }
 
 # ── BasicAuth (per-component) ─────────────────────────────────────────────────

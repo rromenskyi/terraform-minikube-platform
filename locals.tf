@@ -12,10 +12,12 @@ locals {
       # "Pod placement" for the shape; consumed by every service's
       # *.tf wiring file via `local.platform.services.X.<key>`.
       mysql = {
-        enabled       = false
-        node_selector = {}
-        tolerations   = []
-        resources     = null # null = module default
+        enabled           = false
+        node_selector     = {}
+        tolerations       = []
+        resources         = null # null = module default
+        storage_class     = ""   # "" = hostPath under host_volume_path
+        storage_seed_node = ""   # node with the old hostPath datadir (one-time copy)
       }
       postgres = {
         enabled       = false
@@ -240,20 +242,22 @@ locals {
         storage_classes             = []
       }
       seafile = {
-        enabled           = false
-        namespace         = "seafile"
-        image_tag         = "14.0.9"
-        external_hostname = ""
-        admin_email       = ""
-        storage_class     = "longhorn"
-        storage_size      = "100Gi"
-        timezone          = "Etc/UTC"
-        cpu_request       = "200m"
-        cpu_limit         = "2"
-        memory_request    = "512Mi"
-        memory_limit      = "2Gi"
-        node_selector     = {}
-        tolerations       = []
+        enabled            = false
+        namespace          = "seafile"
+        image_tag          = "14.0.9"
+        external_hostname  = ""
+        admin_email        = ""
+        storage_class      = "longhorn"
+        storage_layout     = "root" # "data": layout per modules/volume-seed
+        storage_seed_class = ""     # class of the old seafile-data PVC to copy from
+        storage_size       = "100Gi"
+        timezone           = "Etc/UTC"
+        cpu_request        = "200m"
+        cpu_limit          = "2"
+        memory_request     = "512Mi"
+        memory_limit       = "2Gi"
+        node_selector      = {}
+        tolerations        = []
       }
       security_scan = {
         enabled                      = false

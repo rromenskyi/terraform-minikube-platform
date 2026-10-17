@@ -73,6 +73,22 @@ variable "storage_class" {
   default     = "longhorn"
 }
 
+variable "storage_layout" {
+  description = "`root` (default): PVC `seafile-data`, mounted whole at /shared. `data`: PVC `data-seafile`, /shared is its `data/` directory (layout per modules/volume-seed). Switching an existing install to `data` needs `storage_seed_class`, or the old volume is dropped from Terraform without its data being copied."
+  type        = string
+  default     = "root"
+  validation {
+    condition     = contains(["root", "data"], var.storage_layout)
+    error_message = "storage_layout is `root` or `data`."
+  }
+}
+
+variable "storage_seed_class" {
+  description = "With `storage_layout = \"data\"`: StorageClass of the existing `seafile-data` PVC (e.g. `longhorn`). The module keeps that PVC and, on the first start, an init container copies it into the new volume (only into an empty one, once). Clear it once the data has moved: Terraform then deletes the old PVC (a `Retain` class keeps its volume)."
+  type        = string
+  default     = ""
+}
+
 variable "storage_size" {
   description = "Capacity request on the `/shared` PVC. Sized as ~1.2× expected raw file storage (block dedup + version history overhead). Start small and resize through Longhorn UI / kubectl edit pvc; Stalwart-style upfront over-provisioning isn't useful here."
   type        = string

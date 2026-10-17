@@ -88,8 +88,10 @@ module "seafile" {
   redis_port     = 6379
   redis_password = local.platform.services.redis.enabled ? module.redis.default_password : ""
 
-  storage_class = local.platform.services.seafile.storage_class
-  storage_size  = local.platform.services.seafile.storage_size
+  storage_class      = local.platform.services.seafile.storage_class
+  storage_size       = local.platform.services.seafile.storage_size
+  storage_layout     = local.platform.services.seafile.storage_layout
+  storage_seed_class = local.platform.services.seafile.storage_seed_class
 
   oidc_issuer_url    = local.platform.services.zitadel.enabled ? "https://${local.platform.services.zitadel.external_domain}" : ""
   oidc_client_id     = try(module.seafile_oidc["enabled"].client_id, "")

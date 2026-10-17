@@ -50,6 +50,11 @@ locals {
   enabled = var.enabled
   set     = local.enabled ? toset(["enabled"]) : toset([])
 
+  # Storage layout (modules/volume-seed) and the one-time copy from the
+  # `root`-layout volume.
+  data_layout = var.storage_layout == "data"
+  seed        = local.data_layout && var.storage_seed_class != ""
+
   tags = module.label.tags
 
   # Seahub settings — OAuth/OIDC, public service URL, CSRF trusted
@@ -212,10 +217,33 @@ resource "kubernetes_secret_v1" "seahub_extra" {
 # ── Persistent volume for /shared ───────────────────────────────────────────
 
 resource "kubernetes_persistent_volume_claim_v1" "data" {
-  for_each = local.set
+  for_each = !local.data_layout || local.seed ? local.set : toset([])
 
   metadata {
     name      = "seafile-data"
+    namespace = kubernetes_namespace_v1.this["enabled"].metadata[0].name
+    labels    = local.tags
+  }
+
+  spec {
+    access_modes = ["ReadWriteOnce"]
+    # While seeding, this is the old volume on its old class.
+    storage_class_name = local.data_layout ? var.storage_seed_class : var.storage_class
+
+    resources {
+      requests = {
+        storage = var.storage_size
+      }
+    }
+  }
+}
+
+# `storage_layout = "data"`: the volume per modules/volume-seed.
+resource "kubernetes_persistent_volume_claim_v1" "data_volume" {
+  for_each = local.data_layout ? local.set : toset([])
+
+  metadata {
+    name      = "data-seafile"
     namespace = kubernetes_namespace_v1.this["enabled"].metadata[0].name
     labels    = local.tags
   }
@@ -230,6 +258,13 @@ resource "kubernetes_persistent_volume_claim_v1" "data" {
       }
     }
   }
+
+  # WaitForFirstConsumer classes bind when the pod is scheduled.
+  wait_until_bound = false
+}
+
+module "volume_seed" {
+  source = "../volume-seed"
 }
 
 # ── MySQL setup Job — create databases + user, idempotent ───────────────────
@@ -342,6 +377,7 @@ resource "kubernetes_deployment_v1" "this" {
   depends_on = [
     kubernetes_job_v1.mysql_setup,
     kubernetes_persistent_volume_claim_v1.data,
+    kubernetes_persistent_volume_claim_v1.data_volume,
   ]
 
   metadata {
@@ -382,6 +418,37 @@ resource "kubernetes_deployment_v1" "this" {
       }
       spec {
         node_selector = var.node_selector
+
+        # First start on the new volume: copy the old one in, so Seafile
+        # never bootstraps an empty install (modules/volume-seed).
+        dynamic "init_container" {
+          for_each = local.seed ? [1] : []
+          content {
+            name    = "seed-data"
+            image   = "busybox:stable-musl"
+            command = ["sh", "-c", module.volume_seed.script]
+
+            volume_mount {
+              name       = "data"
+              mount_path = "/new"
+            }
+            volume_mount {
+              name       = "old-data"
+              mount_path = "/old"
+              read_only  = true
+            }
+
+            security_context {
+              run_as_user = 0
+            }
+
+            resources {
+              requests = { cpu = "10m", memory = "16Mi" }
+              limits   = { cpu = "500m", memory = "64Mi" }
+            }
+          }
+        }
+
         dynamic "toleration" {
           for_each = var.tolerations
           content {
@@ -426,6 +493,7 @@ resource "kubernetes_deployment_v1" "this" {
           volume_mount {
             name       = "data"
             mount_path = "/shared"
+            sub_path   = local.data_layout ? module.volume_seed.sub_path : null
           }
 
           volume_mount {
@@ -485,7 +553,18 @@ resource "kubernetes_deployment_v1" "this" {
         volume {
           name = "data"
           persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim_v1.data["enabled"].metadata[0].name
+            claim_name = local.data_layout ? kubernetes_persistent_volume_claim_v1.data_volume["enabled"].metadata[0].name : kubernetes_persistent_volume_claim_v1.data["enabled"].metadata[0].name
+          }
+        }
+
+        dynamic "volume" {
+          for_each = local.seed ? [1] : []
+          content {
+            name = "old-data"
+            persistent_volume_claim {
+              claim_name = kubernetes_persistent_volume_claim_v1.data["enabled"].metadata[0].name
+              read_only  = true
+            }
           }
         }
 

@@ -165,6 +165,9 @@ module "stalwart" {
   namespace        = local.mail == null ? "" : kubernetes_namespace_v1.mail["enabled"].metadata[0].name
   volume_base_path = var.host_volume_path
 
+  storage_class     = try(local.mail.storage_class, "")
+  storage_seed_node = try(local.mail.storage_seed_node, "")
+
   # Primary domain + matching Cloudflare zone come from the domain
   # yaml that opts in via `mail.primary: true`. Hostname defaults to
   # `mail.<domain>` but can be overridden in yaml.
@@ -281,6 +284,11 @@ module "roundcube" {
   namespace        = local.mail == null ? "" : kubernetes_namespace_v1.mail["enabled"].metadata[0].name
   hostname         = try(local.mail.hostname, "")
   volume_base_path = var.host_volume_path
+
+  # `mail.storage_class` / `mail.storage_seed_node` move the mail stack's
+  # data (Stalwart + Roundcube) to a StorageClass; see the module variables.
+  storage_class     = try(local.mail.storage_class, "")
+  storage_seed_node = try(local.mail.storage_seed_node, "")
 
   zitadel_org_id                 = local.platform.services.zitadel.enabled ? data.zitadel_orgs.platform_org["enabled"].ids[0] : ""
   zitadel_issuer_url             = local.platform.services.zitadel.enabled ? "https://${local.platform.services.zitadel.external_domain}" : ""

@@ -42,6 +42,11 @@ locals {
   client_secret   = local.oidc_enabled ? zitadel_application_oidc.roundcube["enabled"].client_secret : ""
   config_inc_hash = sha256(local.config_inc_php)
 
+  # Storage: hostPath (default) or a dynamic volume (modules/volume-seed).
+  csi_storage   = var.storage_class != ""
+  seed          = local.csi_storage && var.storage_seed_node != ""
+  data_sub_path = local.csi_storage ? module.volume_seed.sub_path : null
+
   # Shorthand for the propagated null-label tag set.
   tags = module.label.tags
 
@@ -131,6 +136,10 @@ locals {
 
 # Module-tier label, chained off `var.context` (root passes
 # `module.platform_label.context` from `_label.tf`).
+module "volume_seed" {
+  source = "../volume-seed"
+}
+
 module "label" {
   source = "git::https://github.com/rromenskyi/terraform-null-label.git?ref=v0.1.0"
 
@@ -227,7 +236,7 @@ resource "kubernetes_config_map_v1" "roundcube_config" {
 
 # ── Persistent volume for the SQLite preferences DB ───────────────────────────
 resource "kubernetes_persistent_volume_v1" "roundcube" {
-  for_each = local.instance_set
+  for_each = local.csi_storage ? toset([]) : local.instance_set
 
   metadata {
     name = "roundcube-db"
@@ -262,7 +271,7 @@ resource "kubernetes_persistent_volume_v1" "roundcube" {
 }
 
 resource "kubernetes_persistent_volume_claim_v1" "roundcube" {
-  for_each = local.instance_set
+  for_each = local.csi_storage ? toset([]) : local.instance_set
 
   metadata {
     name      = "roundcube-db"
@@ -279,6 +288,29 @@ resource "kubernetes_persistent_volume_claim_v1" "roundcube" {
       requests = { storage = "1Gi" }
     }
   }
+}
+
+# With a StorageClass: a dynamic volume, layout per modules/volume-seed.
+resource "kubernetes_persistent_volume_claim_v1" "roundcube_data" {
+  for_each = local.csi_storage ? local.instance_set : toset([])
+
+  metadata {
+    name      = "data-roundcube"
+    namespace = var.namespace
+    labels    = merge(local.tags, { app = "roundcube" })
+  }
+
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = var.storage_class
+
+    resources {
+      requests = { storage = "1Gi" }
+    }
+  }
+
+  # WaitForFirstConsumer: binds when the pod is scheduled.
+  wait_until_bound = false
 }
 
 # ── Service ───────────────────────────────────────────────────────────────────
@@ -352,6 +384,39 @@ resource "kubernetes_deployment_v1" "roundcube" {
       }
 
       spec {
+        # Pinned to the node with the old hostPath data while seeding.
+        node_selector = local.seed ? { "kubernetes.io/hostname" = var.storage_seed_node } : null
+
+        # First start on a new volume: copy the old hostPath data in, so the
+        # app never starts on an empty volume.
+        dynamic "init_container" {
+          for_each = local.seed ? [1] : []
+          content {
+            name    = "seed-data"
+            image   = "busybox:stable-musl"
+            command = ["sh", "-c", module.volume_seed.script]
+
+            volume_mount {
+              name       = "db"
+              mount_path = "/new"
+            }
+            volume_mount {
+              name       = "old-data"
+              mount_path = "/old"
+              read_only  = true
+            }
+
+            security_context {
+              run_as_user = 0
+            }
+
+            resources {
+              requests = { cpu = "10m", memory = "16Mi" }
+              limits   = { cpu = "500m", memory = "64Mi" }
+            }
+          }
+        }
+
         # hostPath volumes mount with the host directory's existing
         # ownership (root:root in our case). Roundcube's apache process
         # runs as www-data (uid 33) and the SQLite file lives in
@@ -367,6 +432,7 @@ resource "kubernetes_deployment_v1" "roundcube" {
           volume_mount {
             name       = "db"
             mount_path = "/var/roundcube/db"
+            sub_path   = local.data_sub_path
           }
 
           security_context {
@@ -400,6 +466,7 @@ resource "kubernetes_deployment_v1" "roundcube" {
           volume_mount {
             name       = "db"
             mount_path = "/var/roundcube/db"
+            sub_path   = local.data_sub_path
           }
 
           env {
@@ -470,7 +537,18 @@ resource "kubernetes_deployment_v1" "roundcube" {
         volume {
           name = "db"
           persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim_v1.roundcube["enabled"].metadata[0].name
+            claim_name = local.csi_storage ? kubernetes_persistent_volume_claim_v1.roundcube_data["enabled"].metadata[0].name : kubernetes_persistent_volume_claim_v1.roundcube["enabled"].metadata[0].name
+          }
+        }
+
+        dynamic "volume" {
+          for_each = local.seed ? [1] : []
+          content {
+            name = "old-data"
+            host_path {
+              path = "${var.volume_base_path}/${var.namespace}/roundcube"
+              type = "Directory"
+            }
           }
         }
       }

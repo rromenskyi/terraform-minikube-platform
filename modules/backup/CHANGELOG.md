@@ -7,6 +7,12 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- `pv_paths` entries for volumes on a StorageClass: `pvc` + `namespace` +
+  `pod_selector` (+ `sub_path`, default `data`). Each gets its own CronJob in
+  that namespace, on the node of the pod using the volume, with a copy of the
+  credentials Secret there; Pod Security `baseline` compatible.
+
 ### Fixed
 - `backup-verify` honours the snapshot's UTC offset: snapshots pushed from a
   host in another zone (e.g. `operator-config`, `-06:00`) were aged by the
