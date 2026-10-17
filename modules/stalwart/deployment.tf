@@ -634,11 +634,13 @@ resource "kubernetes_deployment_v1" "stalwart" {
 
         dynamic "volume" {
           for_each = local.seed ? [1] : []
+          # The old volume (kept while seeding), through its claim: Pod
+          # Security `baseline` forbids hostPath volumes in a pod spec.
           content {
             name = "old-data"
-            host_path {
-              path = "${var.volume_base_path}/${var.namespace}/stalwart"
-              type = "Directory"
+            persistent_volume_claim {
+              claim_name = kubernetes_persistent_volume_claim_v1.stalwart["enabled"].metadata[0].name
+              read_only  = true
             }
           }
         }
