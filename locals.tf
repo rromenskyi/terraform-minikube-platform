@@ -221,7 +221,7 @@ locals {
       gpu_dra = {
         enabled         = false
         namespace       = "gpu-dra"
-        image           = "ghcr.io/ipsupport-llc/dra-driver-dri:0.1.0"
+        image           = "ghcr.io/ipsupport-llc/dra-driver-dri:0.1.1"
         driver_name     = ""
         node_selector   = { gpu = "dri" }
         vram_reserve    = "256Mi"
