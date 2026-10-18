@@ -8,6 +8,9 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- `env_from_secrets`: existing Secrets mounted whole as env (`envFrom`).
+- `image_pull_secrets`: the pod's `imagePullSecrets`, for components under
+  their own ServiceAccount, which does not inherit the default one's.
 - `storage_class` / `storage_seed_node`: `storage` volumes on a StorageClass
   (dynamic PVC `data-<component>-<slug>`, app data in its `data/`, Deployment
   strategy Recreate), with a one-time copy of the old hostPath directories
