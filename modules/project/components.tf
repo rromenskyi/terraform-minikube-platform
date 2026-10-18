@@ -110,6 +110,9 @@ module "component" {
 
   cluster_role_rules = try(each.value.cluster_role_rules, [])
 
+  env_from_secrets   = try(each.value.env_from_secrets, [])
+  image_pull_secrets = try(each.value.image_pull_secrets, [])
+
   # Pod placement: passed through verbatim from per-component yaml.
   # Empty defaults preserve prior scheduling behaviour. See README
   # "Pod placement" for the supported keys (`node_selector:`,

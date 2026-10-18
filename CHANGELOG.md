@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `services.cloudflare_tunnel.fallback_service` (default `http_status:404`): the tunnel's catch-all rule for hostnames no other rule matches. Set it to Traefik (e.g. `http://traefik.ingress-controller.svc.cluster.local:80`) to route a wildcard DNS record for a whole domain through Traefik's own routes.
 - `services.buildkitd.extra_client_namespaces` (default `[]`): namespaces allowed to reach buildkitd on top of the GitHub runner scale sets' namespaces.
+- Component `env_from_secrets: [<name>]`: mounts existing Secrets in the namespace (e.g. a Vault-synced `secrets:` entry) as env vars.
+- Component `image_pull_secrets: [<name>]`: sets the pod's `imagePullSecrets`. A component with its own ServiceAccount (`cluster_role_rules`, GCP WIF) does not inherit the default ServiceAccount's pull secrets, so a private image needs this.
 
 ### Changed
 - WordPress component: image `wordpress:6.9-php8.3-apache` → `wordpress:7.1-php8.3-apache` and `WP_AUTO_UPDATE_CORE` false. Only `wp-content` is persistent, so WordPress's own core updates lived in the container layer and a pod restart reverted the core to the image's version while the database stayed on the newer schema (found 2026-10-15: all three sites' databases at 7.1, one running the 6.9 core). Core now changes only with the image tag.
