@@ -381,6 +381,13 @@ resource "kubernetes_deployment_v1" "this" {
         # opting into neither.
         service_account_name = length(local.sa_instances) > 0 ? kubernetes_service_account_v1.this["enabled"].metadata[0].name : null
 
+        dynamic "image_pull_secrets" {
+          for_each = var.image_pull_secrets
+          content {
+            name = image_pull_secrets.value
+          }
+        }
+
         # Pod placement: node_selector, tolerations, affinity. All
         # default to empty so this block is a no-op for existing
         # components. Wired identically into the StatefulSet path
@@ -724,6 +731,16 @@ resource "kubernetes_deployment_v1" "this" {
           # Ollama endpoint (OLLAMA_HOST)
           dynamic "env_from" {
             for_each = var.ollama_secret_name != null ? [var.ollama_secret_name] : []
+            content {
+              secret_ref {
+                name = env_from.value
+              }
+            }
+          }
+
+          # Operator-declared Secrets (e.g. Vault-synced) mounted whole.
+          dynamic "env_from" {
+            for_each = var.env_from_secrets
             content {
               secret_ref {
                 name = env_from.value

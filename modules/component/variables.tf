@@ -144,6 +144,18 @@ variable "static_env" {
   default     = {}
 }
 
+variable "env_from_secrets" {
+  description = "Names of existing Secrets in the component's namespace whose keys are all mounted as env vars (`envFrom`). Typical source: a project `secrets:` entry with `vault: true`, which VSO syncs into a Secret of the same name."
+  type        = list(string)
+  default     = []
+}
+
+variable "image_pull_secrets" {
+  description = "Names of `kubernetes.io/dockerconfigjson` Secrets set as the pod's `imagePullSecrets`. Needed when the component runs under its own ServiceAccount (`cluster_role_rules`, GCP WIF), which does not inherit the namespace default SA's pull secrets."
+  type        = list(string)
+  default     = []
+}
+
 variable "random_env_secret_name" {
   description = "Name of the Secret holding terraform-generated random values for every env name listed in the component's `env_random:` array. Null when the component has no such entries."
   type        = string

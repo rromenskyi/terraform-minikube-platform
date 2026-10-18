@@ -401,6 +401,20 @@ locals {
         readiness_failure_threshold     = 5
         node_selector                   = {}
         tolerations                     = []
+        # Namespaces allowed to reach the daemon on top of the GitHub
+        # runner scale sets' namespaces (e.g. an in-cluster build
+        # controller that is not an ARC runner).
+        extra_client_namespaces = []
+      }
+
+      # Cloudflare tunnel ingress (cloudflare.tf). `fallback_service` is
+      # the catch-all rule for hostnames no other rule matches; the
+      # default answers 404 at the edge. Point it at Traefik (e.g.
+      # `http://traefik.ingress-controller.svc.cluster.local:80`) when a
+      # wildcard DNS record sends a whole domain into the tunnel and
+      # Traefik's own routes decide.
+      cloudflare_tunnel = {
+        fallback_service = "http_status:404"
       }
 
       # AirLLM — LLM gateway deployed from its public Helm chart (airllm.tf).
@@ -602,6 +616,7 @@ locals {
       platform_dash        = merge(local._platform_defaults.services.platform_dash, try(local._platform_services.platform_dash, {}))
       addons               = merge(local._platform_defaults.services.addons, try(local._platform_services.addons, {}))
       buildkitd            = merge(local._platform_defaults.services.buildkitd, try(local._platform_services.buildkitd, {}))
+      cloudflare_tunnel    = merge(local._platform_defaults.services.cloudflare_tunnel, try(local._platform_services.cloudflare_tunnel, {}))
       coredns              = merge(local._platform_defaults.services.coredns, try(local._platform_services.coredns, {}))
       node_local_dns       = merge(local._platform_defaults.services.node_local_dns, try(local._platform_services.node_local_dns, {}))
       ci_access            = merge(local._platform_defaults.services.ci_access, try(local._platform_services.ci_access, {}))
