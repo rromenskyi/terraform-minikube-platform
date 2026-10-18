@@ -37,9 +37,15 @@ locals {
   # node_exporter expression; the result gains a `node` label.
   with_node_name = "label_replace(%s, \"internal_ip\", \"$1\", \"instance\", \"(.*):[0-9]+\") * on (internal_ip) group_left (node) max by (internal_ip, node) (kube_node_info)"
 
-  # Drives that report wear. Virtual disks export a few zero-valued
-  # series and nothing else; `and on (...) <this>` keeps them out.
+  # Drives that report wear (SSD/NVMe only). Used by the wear panel and as
+  # the write-endurance base; HDDs have no wear counter.
   wearing_drives = "max by (node, device) (smartctl_device_percentage_used)"
+
+  # Every physical drive the exporter sees. The DaemonSet runs only on
+  # bare-metal nodes (affinity), so each `smartctl_device` info series is a
+  # real drive — SSD, NVMe or HDD. Anchors the table and the all-drive
+  # panels so spinning disks (which report no wear) are not dropped.
+  all_drives = "max by (node, device) (smartctl_device)"
 
   # Block devices only; no device-mapper, loop or optical layers that
   # would count the same writes twice.
@@ -122,16 +128,20 @@ resource "kubernetes_config_map_v1" "dashboard" {
           targets = [
             for t in [
               { id = "Model", expr = "max by (node, device, model_name) (smartctl_device)" },
+              { id = "Health", expr = "max by (node, device) (smartctl_device_smart_status)" },
               { id = "Wear", expr = "max by (node, device) (smartctl_device_percentage_used)" },
               { id = "DaysLeft", expr = "max by (node, device) ((100 - smartctl_device_percentage_used) * smartctl_device_bytes_written / (smartctl_device_percentage_used > 0) / (rate(smartctl_device_bytes_written[3d]) * 86400 > 0))" },
               { id = "Written", expr = "max by (node, device) (smartctl_device_bytes_written) / 1e12" },
               { id = "Spare", expr = "max by (node, device) (smartctl_device_available_spare)" },
               { id = "MediaErrors", expr = "max by (node, device) (smartctl_device_media_errors)" },
+              # HDD failure signals (attribute raw counts); absent on NVMe/SSD.
+              { id = "Realloc", expr = "max by (node, device) (smartctl_device_attribute{attribute_name=\"Reallocated_Sector_Ct\", attribute_value_type=\"raw\"})" },
+              { id = "Pending", expr = "max by (node, device) (smartctl_device_attribute{attribute_name=\"Current_Pending_Sector\", attribute_value_type=\"raw\"})" },
               { id = "Temp", expr = "max by (node, device) (smartctl_device_temperature{temperature_type=\"current\"})" },
               { id = "PowerOn", expr = "max by (node, device) (smartctl_device_power_on_seconds) / 86400" },
               ] : {
               refId   = t.id
-              expr    = "${t.expr} and on (node, device) ${local.wearing_drives}"
+              expr    = "${t.expr} and on (node, device) ${local.all_drives}"
               instant = true
               format  = "table"
             }
@@ -146,11 +156,14 @@ resource "kubernetes_config_map_v1" "dashboard" {
                   node                 = "Node"
                   device               = "Device"
                   model_name           = "Model"
+                  "Value #Health"      = "SMART"
                   "Value #Wear"        = "Wear %"
                   "Value #DaysLeft"    = "Days left at 3d write rate"
                   "Value #Written"     = "Written TB"
                   "Value #Spare"       = "Spare %"
                   "Value #MediaErrors" = "Media errors"
+                  "Value #Realloc"     = "Realloc sectors"
+                  "Value #Pending"     = "Pending sectors"
                   "Value #Temp"        = "Temp °C"
                   "Value #PowerOn"     = "Power-on days"
                 }
@@ -159,7 +172,7 @@ resource "kubernetes_config_map_v1" "dashboard" {
           ]
           fieldConfig = {
             defaults = { decimals = 0 }
-            overrides = [
+            overrides = concat([
               {
                 matcher    = { id = "byName", options = "Written TB" }
                 properties = [{ id = "decimals", value = 1 }]
@@ -186,7 +199,29 @@ resource "kubernetes_config_map_v1" "dashboard" {
                   ] } },
                 ]
               },
-            ]
+              {
+                matcher = { id = "byName", options = "SMART" }
+                properties = [
+                  { id = "custom.cellOptions", value = { type = "color-background" } },
+                  { id = "mappings", value = [{ type = "value", options = {
+                    "0" = { text = "FAIL", color = "red" },
+                    "1" = { text = "OK", color = "green" },
+                  } }] },
+                ]
+              },
+              ], [
+              # Any reallocated/pending sector or media error is worth a red cell.
+              for col in ["Realloc sectors", "Pending sectors", "Media errors"] : {
+                matcher = { id = "byName", options = col }
+                properties = [
+                  { id = "custom.cellOptions", value = { type = "color-background" } },
+                  { id = "thresholds", value = { mode = "absolute", steps = [
+                    { color = "green", value = null },
+                    { color = "red", value = 1 },
+                  ] } },
+                ]
+              }
+            ])
           }
         },
         {
@@ -255,7 +290,7 @@ resource "kubernetes_config_map_v1" "dashboard" {
           datasource = local.datasource
           targets = [{
             refId        = "A"
-            expr         = "max by (node, device) (smartctl_device_temperature{temperature_type=\"current\"}) and on (node, device) ${local.wearing_drives}"
+            expr         = "max by (node, device) (smartctl_device_temperature{temperature_type=\"current\"}) and on (node, device) ${local.all_drives}"
             legendFormat = "{{node}} {{device}}"
           }]
           fieldConfig = { defaults = { unit = "celsius" } }
