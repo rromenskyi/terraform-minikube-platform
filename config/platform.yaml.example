@@ -769,6 +769,16 @@ services:
     # stays warm across rollouts.
     # node_selector:
     #   workload-tier: general
+    # Namespaces allowed to reach the daemon on top of the GitHub
+    # runner scale sets' namespaces (NetworkPolicy allowlist).
+    # extra_client_namespaces: []
+
+  # Cloudflare tunnel catch-all: where hostnames that match no other
+  # tunnel rule go. Default answers 404 at the edge; point it at
+  # Traefik when a wildcard DNS record sends a whole domain into the
+  # tunnel and Traefik's own routes should decide.
+  # cloudflare_tunnel:
+  #   fallback_service: http://traefik.ingress-controller.svc.cluster.local:80   # default http_status:404
 
 # Pod placement (Phase B, optional per service)
 #

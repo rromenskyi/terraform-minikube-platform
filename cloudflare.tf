@@ -211,7 +211,7 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "main" {
       # Catch-all (required by Cloudflare — must be the last entry,
       # match-anything by omitting `hostname`).
       [{
-        service = "http_status:404"
+        service = local.platform.services.cloudflare_tunnel.fallback_service
       }]
     )
   }
