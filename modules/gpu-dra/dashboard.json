@@ -523,6 +523,67 @@
           "legendFormat": "{{node}} {{device}}"
         }
       ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Per-pod VRAM: claimed vs used",
+      "description": "Each pod's claimed vs actual VRAM (DRM fdinfo). A pod whose used line climbs above its claimed line is over its claim.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 21,
+        "w": 24,
+        "h": 9
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "dri_claim_vram_bytes{device=~\"$device\"}",
+          "legendFormat": "{{namespace}}/{{pod}} claimed"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "dri_claim_vram_used_bytes{device=~\"$device\"}",
+          "legendFormat": "{{namespace}}/{{pod}} used"
+        }
+      ]
     }
   ]
 }
