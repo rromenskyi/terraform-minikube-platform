@@ -12,7 +12,8 @@ the project itself follows [Semantic Versioning](https://semver.org/).
   `SYS_PTRACE` so the driver reads every GPU process's DRM fdinfo and exports
   `dri_claim_vram_used_bytes` / `dri_claim_vram_bytes` (labels device,
   namespace, pod). Alert `DRIClaimVRAMOverClaim` names a pod that uses more
-  than it claimed (DRA accounts, the kernel does not cap). Needs a
+  than it claimed (DRA accounts, the kernel does not cap). Dashboard panel
+  "Per-pod VRAM: claimed vs used". Needs a
   dra-driver-dri image with per-pod attribution.
 
 ### Changed
