@@ -181,6 +181,23 @@ locals {
 
   # Labels the cluster's Prometheus selects PodMonitors and PrometheusRules by.
   monitoring_labels = merge(local.tags, var.prometheus_selector_labels)
+
+  # Role name -> password (sensitive values, used only in the Secret below;
+  # kept out of `for_each`, which cannot take a sensitive-derived collection).
+  role_password_by_name = { for r in var.managed_roles : r.name => r.password }
+
+  # Declarative roles for the primary's `spec.managed.roles`. The password of
+  # each comes from the per-role Secret below. Superuser/replication/bypassrls
+  # stay at their safe CNPG defaults (off) — not exposed through the input.
+  managed_roles_spec = [for r in var.managed_roles : {
+    name            = r.name
+    ensure          = "present"
+    login           = r.login
+    createdb        = r.createdb
+    createrole      = r.createrole
+    connectionLimit = r.connection_limit
+    passwordSecret  = { name = "${var.name}-role-${r.name}" }
+  }]
 }
 
 module "label" {
@@ -258,6 +275,23 @@ resource "kubernetes_secret_v1" "superuser" {
     # The key the official `postgres` image and the platform's database
     # setup Jobs read, so they can switch to this Secret unchanged.
     POSTGRES_PASSWORD = var.superuser_password
+  }
+}
+
+# One Secret per managed role, in the CNPG `passwordSecret` shape
+# (`username` + `password`). The operator reconciles the role to this password.
+resource "kubernetes_secret_v1" "managed_role" {
+  for_each = toset([for r in var.managed_roles : r.name])
+
+  metadata {
+    name      = "${var.name}-role-${each.key}"
+    namespace = var.namespace
+    labels    = local.tags
+  }
+  type = "Opaque"
+  data = {
+    username = each.key
+    password = local.role_password_by_name[each.key]
   }
 }
 
@@ -389,7 +423,8 @@ resource "kubectl_manifest" "cluster" {
         podAntiAffinityType   = "required"
         topologyKey           = "kubernetes.io/hostname"
       }, local.node_affinity)
-    }, local.backup_plugin, local.main_topology)
+      }, local.backup_plugin, local.main_topology,
+    length(var.managed_roles) > 0 ? { managed = { roles = local.managed_roles_spec } } : {})
   })
 
   lifecycle {

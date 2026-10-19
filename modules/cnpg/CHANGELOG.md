@@ -8,6 +8,12 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 ## [Unreleased]
 
 ### Added
+- `managed_roles`: declarative roles on the primary (CNPG
+  `spec.managed.roles`), each with its password in a module-written Secret
+  (`<name>-role-<role>`). For a provisioner role (`createdb`/`createrole`,
+  no superuser) an application can create its own databases without a
+  superuser. CNPG reconciles only the listed roles; roles those create at
+  runtime are left alone.
 - `replica_cluster` / `primary_cluster`: a second Cluster in the same
   namespace (e.g. on another site's nodes, with `nodes` and `tolerations`)
   that follows the main one as a CloudNativePG distributed topology. It is
