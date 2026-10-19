@@ -7,6 +7,10 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- `extra_env` (map, default `{}`): extra container env such as
+  `DASH_PLUGINS_JSON` or `DASH_GRAFANA_URL`. Not for secrets.
+
 ### Changed
 - File layout split into `main.tf` / `variables.tf` / `outputs.tf` per AGENT.md
   module conventions. Pure file reorganisation — no resource, input, output, or

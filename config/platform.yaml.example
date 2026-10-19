@@ -609,6 +609,9 @@ services:
     #   limits:   { cpu: 500m, memory: 512Mi }
     # node_selector:
     #   workload-tier: general
+    # env:                                      # extra container env; not for secrets
+    #   DASH_GRAFANA_URL: https://grafana.example.com
+    #   DASH_PLUGINS_JSON: '[{"id":"web","title":"Projects","icon":"box","element":"x-app","url":"http://x.ns.svc.cluster.local:8080","roles":[]}]'
 
   # Knobs for the bundled `terraform-k8s-addons` releases. Each field
   # is a thin pass-through to the addon chart — leave commented to

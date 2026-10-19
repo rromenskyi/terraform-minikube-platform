@@ -353,6 +353,8 @@ locals {
         }
         node_selector = {}
         tolerations   = []
+        # Extra container env (name → value); not for secrets.
+        env = {}
       }
       addons = {
         # Pod-placement + workload-kind override for the bundled

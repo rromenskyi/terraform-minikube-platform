@@ -230,6 +230,14 @@ resource "kubernetes_deployment_v1" "this" {
             value = "x-forwarded-host"
           }
 
+          dynamic "env" {
+            for_each = var.extra_env
+            content {
+              name  = env.key
+              value = env.value
+            }
+          }
+
           resources {
             requests = var.resources.requests
             limits   = var.resources.limits
