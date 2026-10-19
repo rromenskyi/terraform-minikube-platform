@@ -65,3 +65,9 @@ variable "tolerations" {
   }))
   default = []
 }
+
+variable "extra_env" {
+  description = "Additional environment variables for the dashboard container (name → value), e.g. `DASH_PLUGINS_JSON` or `DASH_GRAFANA_URL`. Not for secrets: values land in the Deployment spec in clear."
+  type        = map(string)
+  default     = {}
+}

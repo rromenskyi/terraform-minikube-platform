@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `services.platform_dash.env` (default `{}`): extra container env for the dashboard (e.g. `DASH_PLUGINS_JSON`, `DASH_GRAFANA_URL`); module input `extra_env`. Not for secrets.
+
+### Added
 - `services.cloudflare_tunnel.fallback_service` (default `http_status:404`): the tunnel's catch-all rule for hostnames no other rule matches. Set it to Traefik (e.g. `http://traefik.ingress-controller.svc.cluster.local:80`) to route a wildcard DNS record for a whole domain through Traefik's own routes.
 - `services.buildkitd.extra_client_namespaces` (default `[]`): namespaces allowed to reach buildkitd on top of the GitHub runner scale sets' namespaces.
 - Component `env_from_secrets: [<name>]`: mounts existing Secrets in the namespace (e.g. a Vault-synced `secrets:` entry) as env vars.

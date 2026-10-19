@@ -109,6 +109,7 @@ module "platform_dash" {
 
   node_selector = local.platform.services.platform_dash.node_selector
   tolerations   = local.platform.services.platform_dash.tolerations
+  extra_env     = local.platform.services.platform_dash.env
 }
 
 output "platform_dash_url" {
