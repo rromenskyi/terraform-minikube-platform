@@ -196,7 +196,7 @@ locals {
     createdb        = r.createdb
     createrole      = r.createrole
     connectionLimit = r.connection_limit
-    passwordSecret  = { name = "${var.name}-role-${r.name}" }
+    passwordSecret  = { name = "${var.name}-role-${replace(r.name, "_", "-")}" }
   }]
 }
 
@@ -284,7 +284,7 @@ resource "kubernetes_secret_v1" "managed_role" {
   for_each = toset([for r in var.managed_roles : r.name])
 
   metadata {
-    name      = "${var.name}-role-${each.key}"
+    name      = "${var.name}-role-${replace(each.key, "_", "-")}"
     namespace = var.namespace
     labels    = local.tags
   }
