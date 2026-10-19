@@ -10,6 +10,52 @@
 
 locals {
   cnpg = local.platform.services.cnpg
+
+  # The in-cluster host clients reach the primary at (the shared Service).
+  cnpg_client_host = "${local.platform.services.postgres.service_name}.${kubernetes_namespace_v1.platform.metadata[0].name}.svc.cluster.local"
+
+  # Managed roles with their generated passwords, for the module.
+  cnpg_managed_roles = [for r in local.cnpg.managed_roles : {
+    name             = r.name
+    password         = random_password.cnpg_role[r.name].result
+    login            = try(r.login, true)
+    createdb         = try(r.createdb, false)
+    createrole       = try(r.createrole, false)
+    connection_limit = try(r.connection_limit, -1)
+  }]
+
+  # Roles that deliver their connection URL to a namespace as a Secret, so the
+  # consuming app (e.g. a portal that creates its own databases) reads it as
+  # env. Points at the writable primary Service, never a read-only replica.
+  cnpg_role_url_secrets = {
+    for r in local.cnpg.managed_roles : r.name => {
+      namespace = r.url_secret.namespace
+      name      = r.url_secret.name
+      key       = r.url_secret.key
+      url       = "postgres://${r.name}:${random_password.cnpg_role[r.name].result}@${local.cnpg_client_host}:5432/${try(r.url_secret.database, "postgres")}"
+    } if try(r.url_secret, null) != null
+  }
+}
+
+# One password per managed role, used for the role and any delivered URL.
+resource "random_password" "cnpg_role" {
+  for_each = local.cnpg.enabled ? { for r in local.cnpg.managed_roles : r.name => r } : {}
+  length   = 32
+  special  = false
+}
+
+# Deliver a managed role's connection URL into the consuming namespace. The
+# namespace is created by module.project, so wait for it.
+resource "kubernetes_secret_v1" "cnpg_role_url" {
+  for_each   = local.cnpg.enabled ? local.cnpg_role_url_secrets : {}
+  depends_on = [module.project]
+
+  metadata {
+    name      = each.value.name
+    namespace = each.value.namespace
+  }
+  type = "Opaque"
+  data = { (each.value.key) = each.value.url }
 }
 
 module "cnpg" {
@@ -30,6 +76,9 @@ module "cnpg" {
   # the two takes writes; changing `primary_cluster` is a failover.
   replica_cluster = local.cnpg.replica_cluster
   primary_cluster = local.cnpg.primary_cluster
+
+  # Declarative roles on the primary (passwords generated above).
+  managed_roles = local.cnpg_managed_roles
 
   # The platform's superuser password (postgres.tf), whichever engine
   # serves clients; the Service and Secret names only while it serves them.

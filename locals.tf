@@ -55,6 +55,12 @@ locals {
         # `sync_mode`: rehearsal | cutover (freezes the source first) | thaw.
         sync_run  = ""
         sync_mode = "rehearsal"
+        # Declarative roles on the primary (CNPG `spec.managed.roles`), each
+        # optionally delivering its connection URL as a Secret to a namespace
+        # for the consumer that creates databases. Items:
+        # { name, createdb, createrole, login, connection_limit,
+        #   url_secret: { namespace, name, key, database } | null }.
+        managed_roles = []
       }
       redis = {
         enabled       = false

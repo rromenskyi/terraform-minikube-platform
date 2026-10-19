@@ -263,3 +263,29 @@ variable "sync" {
     error_message = "sync.run must be empty or a short DNS label (it is part of the Job name)."
   }
 }
+
+# ── Managed roles ──────────────────────────────────────────────────────────
+
+variable "managed_roles" {
+  description = <<-EOT
+    Roles CNPG keeps declaratively on the primary (`spec.managed.roles`), e.g. a
+    provisioner that an application uses to create its own databases. Each role's
+    password comes from a Secret this module writes (`<name>-role-<role>`). CNPG
+    reconciles only the roles listed here; roles created at runtime by these
+    roles are left alone. Superuser/replication/bypassrls are never granted
+    through this input. Attributes:
+    - `name`: the Postgres role name.
+    - `password`: its password (the caller generates and keeps it).
+    - `login` (default true), `createdb` (false), `createrole` (false).
+    - `connection_limit`: max concurrent connections; -1 = unlimited.
+  EOT
+  type = list(object({
+    name             = string
+    password         = string
+    login            = optional(bool, true)
+    createdb         = optional(bool, false)
+    createrole       = optional(bool, false)
+    connection_limit = optional(number, -1)
+  }))
+  default = []
+}
