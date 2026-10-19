@@ -45,10 +45,12 @@ resource "random_password" "cnpg_role" {
 }
 
 # Deliver a managed role's connection URL into the consuming namespace. The
-# namespace is created by module.project, so wait for it.
+# target namespace must already exist (the consuming app is deployed there).
+# Do NOT depend on module.project: a consumer whose Deployment waits on this
+# Secret via envFrom would otherwise deadlock the apply (the Deployment waits
+# for the Secret, the Secret would wait for the whole project).
 resource "kubernetes_secret_v1" "cnpg_role_url" {
-  for_each   = local.cnpg.enabled ? local.cnpg_role_url_secrets : {}
-  depends_on = [module.project]
+  for_each = local.cnpg.enabled ? local.cnpg_role_url_secrets : {}
 
   metadata {
     name      = each.value.name
