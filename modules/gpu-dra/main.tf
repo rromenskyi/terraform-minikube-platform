@@ -100,6 +100,9 @@ resource "kubernetes_daemon_set_v1" "this" {
         service_account_name = kubernetes_service_account_v1.this["enabled"].metadata[0].name
         priority_class_name  = "system-node-critical"
         node_selector        = var.node_selector
+        # See every GPU process to attribute VRAM to its pod: host PID namespace
+        # for the processes, SYS_PTRACE to read a non-root process's DRM fdinfo.
+        host_pid = true
         container {
           name  = "plugin"
           image = var.image
@@ -152,6 +155,8 @@ resource "kubernetes_daemon_set_v1" "this" {
             read_only_root_filesystem  = true
             capabilities {
               drop = ["ALL"]
+              # Read other pods' /proc/<pid>/fdinfo (DRM VRAM per process).
+              add = ["SYS_PTRACE"]
             }
           }
           volume_mount {
@@ -274,6 +279,16 @@ resource "kubectl_manifest" "rules" {
             for         = "10m"
             labels      = { severity = "warning" }
             annotations = { summary = "{{ $labels.node }} {{ $labels.device }}: workloads use more VRAM than they claimed" }
+          },
+          {
+            # Per-pod version of the above: names the pod that uses more than it
+            # claimed (DRA accounts, the kernel does not cap), e.g. one that
+            # sized its claim for weights only. 10 % over its claim.
+            alert       = "DRIClaimVRAMOverClaim"
+            expr        = "dri_claim_vram_used_bytes > dri_claim_vram_bytes * 1.1 and dri_claim_vram_bytes > 0"
+            for         = "5m"
+            labels      = { severity = "warning" }
+            annotations = { summary = "{{ $labels.namespace }}/{{ $labels.pod }} on {{ $labels.device }}: uses more VRAM than it claimed" }
           },
           {
             alert       = "DRIVRAMNearlyFull"
