@@ -8,6 +8,12 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- `argocd_helm_repos` input: registry paths of OCI Helm chart repositories join
+  the AppProject `sourceRepos`, so multi-source Applications can take the chart
+  from a registry and values from the bootstrap repo.
+- Optional per-env `limit_range:` (`default`, `default_request`): a LimitRange
+  that gives containers without resources default limits and requests, so the
+  ResourceQuota no longer rejects them.
 - Components pass `storage_class` / `storage_seed_node` through to
   modules/component.
 - `pod_security_level` (default `baseline`): Pod Security warn + audit labels on

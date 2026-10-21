@@ -161,6 +161,13 @@ locals {
         tolerations      = []
         tag_pools        = {}
       }
+      keda = {
+        enabled       = false
+        namespace     = "keda"
+        version_pin   = "2.21.0"
+        node_selector = {}
+        tolerations   = []
+      }
       metallb = {
         enabled                  = false
         controller_node_selector = {}
@@ -617,6 +624,7 @@ locals {
       logging              = merge(local._platform_defaults.services.logging, try(local._platform_services.logging, {}))
       dns01_cloudflare     = merge(local._platform_defaults.services.dns01_cloudflare, try(local._platform_services.dns01_cloudflare, {}))
       longhorn             = merge(local._platform_defaults.services.longhorn, try(local._platform_services.longhorn, {}))
+      keda                 = merge(local._platform_defaults.services.keda, try(local._platform_services.keda, {}))
       metallb              = merge(local._platform_defaults.services.metallb, try(local._platform_services.metallb, {}))
       minio                = merge(local._platform_defaults.services.minio, try(local._platform_services.minio, {}))
       github_runners       = merge(local._platform_defaults.services.github_runners, try(local._platform_services.github_runners, {}))
@@ -703,6 +711,13 @@ locals {
           # namespace). Empty map = no Argo CD bootstrap (project
           # has no Argo footprint unless `argocd_hostnames` is set).
           argocd_bootstraps = try(env_spec.argocd_bootstraps, {})
+          # Helm chart repositories in OCI registries that this env's
+          # Applications pull charts from (multi-source Applications:
+          # chart from the registry, values from the bootstrap repo).
+          # Each entry → AppProject sourceRepos + an Argo CD repository
+          # Secret with `enableOCI`. `pull_secret` names an
+          # `image_pull_secrets` entry whose Vault credential is reused.
+          argocd_helm_repos = try(env_spec.argocd_helm_repos, {})
           # Per-env shared-service provisioning flags. Same shape as
           # the per-component `postgres: true` / `redis: true` /
           # `ollama: true` knobs but applied at the project layer —
@@ -743,6 +758,11 @@ locals {
           # any click-ops in the Zitadel console.
           chart_oidc_apps = try(env_spec.chart_oidc_apps, {})
           limits          = try(env_spec.limits, cfg.limits, null)
+          # Optional LimitRange defaults for containers that set no
+          # resources of their own (`default:` limits, `default_request:`
+          # requests). The ResourceQuota above rejects such containers
+          # otherwise. Null = no LimitRange.
+          limit_range = try(env_spec.limit_range, cfg.limit_range, null)
           # Optional per-project component overrides. Top-level keys here
           # win over the matching keys in `config/components/<name>.yaml`
           # via shallow merge — provide a full replacement value for any

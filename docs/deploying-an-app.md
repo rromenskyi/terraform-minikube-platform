@@ -163,6 +163,41 @@ Upload `username` and `token` to
 `secret/data/tenants/<slug>/image-pull-secrets/ghcr-pull`. The platform
 renders a `dockerconfigjson` Secret named `ghcr-pull`.
 
+### Chart from an OCI registry
+
+When the Application takes its chart from an OCI registry (a multi-source
+Application: chart from the registry, values from the deploy repo):
+
+```yaml
+argocd_helm_repos:
+  charts:
+    url:         ghcr.io/<owner>/charts   # bare path, the Application's repoURL
+    pull_secret: ghcr-pull                # optional: reuse this image_pull_secrets entry
+```
+
+The registry path joins the AppProject's allowed sources, and Argo CD gets a
+Helm repository entry with OCI enabled. With `pull_secret`, Argo CD logs in
+with the same Vault credential the pods use for images; leave it out for a
+public chart. In the Application, use the same bare path:
+`repoURL: ghcr.io/<owner>/charts`, `chart: <name>`.
+
+### Quota and container defaults
+
+```yaml
+limits:            # ResourceQuota; requests.* and limits.* share these numbers
+  cpu:    "8"
+  memory: 16Gi
+limit_range:       # optional defaults for containers that set no resources
+  default:         { cpu: 500m, memory: 512Mi }
+  default_request: { cpu: 50m,  memory: 64Mi }
+```
+
+The quota covers both requests and limits, so every container, init
+containers included, must declare cpu and memory or it is rejected.
+`limit_range` fills them in for containers that declare nothing (for example
+a chart's init container); containers with their own resources are not
+changed.
+
 ### Backing services
 
 ```yaml

@@ -296,6 +296,7 @@ module "project" {
   argocd_namespace   = local.platform.services.argocd.enabled ? local.platform.services.argocd.namespace : ""
   argocd_hostnames   = try(each.value.argocd_hostnames, {})
   argocd_bootstraps  = try(each.value.argocd_bootstraps, {})
+  argocd_helm_repos  = try(each.value.argocd_helm_repos, {})
   shared_services    = try(each.value.shared_services, {})
   secrets            = try(each.value.secrets, {})
   git_deploy_keys    = try(each.value.git_deploy_keys, {})

@@ -43,11 +43,12 @@ resource "kubectl_manifest" "argocd_app_project" {
       })
     }
     spec = {
-      description = "Auto-managed AppProject for TF project ${local.namespace}. Pins Application destinations to this namespace and source repos to every operator deploy repo declared under `argocd_bootstraps:`."
+      description = "Auto-managed AppProject for TF project ${local.namespace}. Pins Application destinations to this namespace and source repos to every operator deploy repo declared under `argocd_bootstraps:` plus every chart registry under `argocd_helm_repos:`."
 
-      sourceRepos = distinct(compact([
-        for _, b in var.argocd_bootstraps : try(b.repo_url, "")
-      ]))
+      sourceRepos = distinct(compact(concat(
+        [for _, b in var.argocd_bootstraps : try(b.repo_url, "")],
+        [for _, r in var.argocd_helm_repos : try(r.url, "")],
+      )))
 
       # Workloads only. The bootstrap's child Application objects go to
       # Argo CD's namespace through the separate `-bootstrap` project

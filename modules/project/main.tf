@@ -556,3 +556,29 @@ resource "kubernetes_resource_quota_v1" "limits" {
     }
   }
 }
+
+# ── Limit Range ───────────────────────────────────────────────────────────────
+#
+# The quota above sets limits.* and requests.*, so the API server rejects any
+# container (init containers included) that declares no cpu/memory of its
+# own. Charts outside the operator's control often leave a sidecar or init
+# container bare; the optional `limit_range:` env block fills those in.
+# Containers that do set resources are untouched.
+
+resource "kubernetes_limit_range_v1" "defaults" {
+  for_each = try(var.project_config.limit_range, null) != null ? toset(["enabled"]) : toset([])
+
+  metadata {
+    name      = "defaults"
+    namespace = kubernetes_namespace_v1.this.metadata[0].name
+    labels    = module.project_label.tags
+  }
+
+  spec {
+    limit {
+      type            = "Container"
+      default         = try(var.project_config.limit_range.default, null)
+      default_request = try(var.project_config.limit_range.default_request, null)
+    }
+  }
+}
