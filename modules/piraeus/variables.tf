@@ -21,7 +21,7 @@ variable "node_selector" {
 }
 
 variable "node_hostnames" {
-  description = "Further limits the Satellite and CSI node plugin nodes to these hostnames (`kubernetes.io/hostname`), on top of `node_selector`. Empty = every `node_selector` node. List only nodes that have DRBD 9 loaded: Kubernetes schedules pods with Piraeus volumes onto any node with the CSI node plugin, and on a node without DRBD 9 the volume cannot attach, so a node that joins later stays out until it is listed."
+  description = "Further limits the Satellite and CSI node plugin nodes to these hostnames (`kubernetes.io/hostname`), on top of `node_selector`. Empty = every `node_selector` node. List only nodes that have DRBD 9 loaded: Kubernetes schedules pods with Piraeus volumes onto any node with the CSI node plugin, and on a node without DRBD 9 the volume cannot attach, so a node that joins later stays out until it is listed. The operator applies it to the LINSTOR controller and the CSI controller as well."
   type        = list(string)
   default     = []
 }

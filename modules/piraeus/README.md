@@ -57,3 +57,7 @@ in `Init`. When nodes join by label (a zone label every node gets), list the
 DRBD-ready ones in `node_hostnames` so a new node stays out until it has
 DRBD. Removing a node from the list while pods there use Piraeus volumes
 takes their volumes away: move the pods first.
+The operator applies `node_hostnames` (as LinstorCluster `nodeAffinity`) to
+the LINSTOR controller and the CSI controller too, so they also run only on
+listed nodes; setting or changing it restarts them once (the DRBD data path
+is not affected).
