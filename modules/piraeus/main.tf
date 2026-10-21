@@ -24,6 +24,15 @@ locals {
   set = var.enabled ? toset(["enabled"]) : toset([])
   # Pod template fragment pinning a component to the control-plane nodes.
   cp_pin = length(var.control_plane_node_selector) > 0 ? { nodeSelector = var.control_plane_node_selector } : {}
+  # Node allow-list in addition to node_selector; the operator applies it
+  # to every Piraeus workload, controllers included.
+  satellite_affinity = length(var.node_hostnames) > 0 ? {
+    nodeAffinity = {
+      nodeSelectorTerms = [{
+        matchExpressions = [{ key = "kubernetes.io/hostname", operator = "In", values = var.node_hostnames }]
+      }]
+    }
+  } : {}
 }
 
 resource "kubernetes_namespace_v1" "this" {
@@ -56,11 +65,11 @@ resource "kubectl_manifest" "cluster" {
     apiVersion = "piraeus.io/v1"
     kind       = "LinstorCluster"
     metadata   = { name = "linstorcluster" }
-    spec = {
+    spec = merge({
       nodeSelector  = var.node_selector
       controller    = { podTemplate = { spec = local.cp_pin } }
       csiController = { podTemplate = { spec = local.cp_pin } }
-    }
+    }, local.satellite_affinity)
   })
 }
 

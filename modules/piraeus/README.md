@@ -14,6 +14,7 @@ services:
   piraeus:
     enabled: true
     node_selector: { topology.kubernetes.io/zone: home }        # Satellites + CSI node plugin
+    node_hostnames: [storage-1, worker-1]                      # optional: only these (DRBD 9 loaded)
     control_plane_node_selector: { topology.kubernetes.io/zone: home }
     # host_network: true          # DRBD over the nodes' own addresses/routes
     # drbd_loader_mode: deps_only # DRBD 9 comes from the host (DKMS)
@@ -46,5 +47,25 @@ bound volumes are unaffected), then bring the existing volumes up to it with
 LINSTOR adds the copies online. With a named `resource_group` the CSI driver
 keeps the group's settings in line with the StorageClass, so change both.
 
-Only pods on `node_selector` nodes can attach Piraeus volumes; nodes without
-a storage pool attach them diskless over DRBD.
+Only pods on `node_selector` (and `node_hostnames`, if set) nodes can attach
+Piraeus volumes; nodes without a storage pool attach them diskless over DRBD.
+
+Every node with a Satellite needs DRBD 9 loaded: on a node without it the
+attach fails (`ControllerPublishVolume ... 404 Not Found`) and the pod stays
+in `Init`. When nodes join by label (a zone label every node gets), list the
+DRBD-ready ones in `node_hostnames` so a new node gets no Satellite and no
+CSI node plugin until it has DRBD. This does not steer the scheduler by
+itself: with remote volume access the PVs carry no node affinity, so pods
+with Piraeus volumes need their own node affinity (e.g. on the
+`linbit.com/hostname` label the CSI node plugin puts on its nodes).
+
+`node_hostnames` is applied as LinstorCluster `nodeAffinity` to every
+Piraeus workload (Satellites, CSI node plugin, LINSTOR and CSI controllers,
+HA/affinity controllers, NFS server): include the nodes
+`control_plane_node_selector` may pick, or the controllers stay Pending.
+Setting or changing it rolls those workloads once; mounted volumes keep
+working, attach/detach and provisioning pause meanwhile.
+
+Removing a node from the list deletes its Satellite: first move the pods
+that use Piraeus volumes there and, if it holds replicas, evacuate them
+(`linstor node evacuate`); the LINSTOR node record may stay behind.

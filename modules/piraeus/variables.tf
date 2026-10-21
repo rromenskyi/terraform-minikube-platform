@@ -20,6 +20,18 @@ variable "node_selector" {
   type        = map(string)
 }
 
+variable "node_hostnames" {
+  description = "Allow-list of node names (`kubernetes.io/hostname`) for every Piraeus workload, on top of `node_selector`: Satellites, CSI node plugin, LINSTOR controller, CSI controller, HA/affinity controllers, NFS server. Empty = every `node_selector` node. List only nodes with DRBD 9 loaded (a Satellite on a node without it cannot attach volumes), and include every node `control_plane_node_selector` may pick, or the controllers stay Pending."
+  type        = list(string)
+  default     = []
+  nullable    = false
+
+  validation {
+    condition     = alltrue([for h in var.node_hostnames : length(trimspace(h)) > 0]) && length(distinct(var.node_hostnames)) == length(var.node_hostnames)
+    error_message = "node_hostnames: entries must be non-empty and unique node names."
+  }
+}
+
 variable "control_plane_node_selector" {
   description = "Labels of the nodes for the operator, the LINSTOR controller and the CSI controller. Empty = anywhere."
   type        = map(string)

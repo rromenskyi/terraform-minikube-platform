@@ -7,6 +7,7 @@ module "piraeus" {
   namespace                   = local.platform.services.piraeus.namespace
   operator_chart_version      = local.platform.services.piraeus.operator_chart_version
   node_selector               = local.platform.services.piraeus.node_selector
+  node_hostnames              = local.platform.services.piraeus.node_hostnames
   control_plane_node_selector = local.platform.services.piraeus.control_plane_node_selector
   host_network                = local.platform.services.piraeus.host_network
   drbd_loader_mode            = local.platform.services.piraeus.drbd_loader_mode

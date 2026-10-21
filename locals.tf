@@ -265,6 +265,7 @@ locals {
         namespace                   = "piraeus-datastore"
         operator_chart_version      = "2.12.0"
         node_selector               = {}
+        node_hostnames              = []
         control_plane_node_selector = {}
         host_network                = true
         drbd_loader_mode            = "deps_only"
