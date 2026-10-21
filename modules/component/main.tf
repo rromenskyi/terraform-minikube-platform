@@ -38,7 +38,23 @@ locals {
   }
 
   # Volumes on a StorageClass (modules/volume-seed layout) instead of hostPath.
-  csi_storage   = var.storage_class != "" && length(local.volumes) > 0
+  csi_storage = var.storage_class != "" && length(local.volumes) > 0
+
+  # var.affinity plus, with volumes on a StorageClass and volume_node_label
+  # set, `<label> Exists` ANDed into every required node selector term (the
+  # pod only goes where the volume can attach).
+  volume_node_requirement = local.csi_storage && var.volume_node_label != "" ? [{ key = var.volume_node_label, operator = "Exists" }] : []
+  required_node_terms     = try(var.affinity.node_affinity.required_during_scheduling_ignored_during_execution.node_selector_terms, [])
+  pod_affinity = merge(var.affinity, { for k, v in {
+    node_affinity = merge(try(var.affinity.node_affinity, {}), {
+      required_during_scheduling_ignored_during_execution = {
+        node_selector_terms = [
+          for t in(length(local.required_node_terms) > 0 ? local.required_node_terms : [{}]) :
+          merge(t, { match_expressions = concat(try(t.match_expressions, []), local.volume_node_requirement) })
+        ]
+      }
+    })
+  } : k => v if length(local.volume_node_requirement) > 0 })
   seed          = local.csi_storage && var.storage_seed_node != ""
   data_sub_path = local.csi_storage ? module.volume_seed.sub_path : null
 
@@ -406,7 +422,7 @@ resource "kubernetes_deployment_v1" "this" {
         }
 
         dynamic "affinity" {
-          for_each = length(keys(var.affinity)) > 0 ? [var.affinity] : []
+          for_each = length(keys(local.pod_affinity)) > 0 ? [local.pod_affinity] : []
           content {
             dynamic "node_affinity" {
               for_each = try(affinity.value.node_affinity, null) != null ? [affinity.value.node_affinity] : []

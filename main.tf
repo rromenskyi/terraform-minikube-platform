@@ -272,6 +272,9 @@ module "project" {
 
   project_config = each.value
 
+  # Components on a Piraeus class only go where its volumes can attach.
+  volume_node_labels = module.piraeus.volume_node_labels
+
   pod_security_enforce = each.value.pod_security_enforce
   components           = local.components
   default_limits       = local.default_limits

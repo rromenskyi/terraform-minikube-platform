@@ -123,6 +123,7 @@ module "component" {
   # Volumes on a StorageClass instead of hostPath (see modules/component).
   storage_class     = try(each.value.storage_class, "")
   storage_seed_node = try(each.value.storage_seed_node, "")
+  volume_node_label = lookup(var.volume_node_labels, try(each.value.storage_class, ""), "")
   tolerations       = try(each.value.tolerations, [])
   affinity          = try(each.value.affinity, {})
 }

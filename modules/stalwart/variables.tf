@@ -282,3 +282,9 @@ variable "allowed_networks" {
   type        = list(string)
   default     = []
 }
+
+variable "volume_node_label" {
+  description = "Node label the pod requires (operator `Exists`) when its data is on `storage_class`: the label a CSI driver puts on the nodes where its node plugin runs (LINSTOR: `linbit.com/hostname`), so the pod is never scheduled onto a node where the volume cannot attach. Empty = no constraint."
+  type        = string
+  default     = ""
+}

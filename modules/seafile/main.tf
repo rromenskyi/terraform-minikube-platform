@@ -419,6 +419,23 @@ resource "kubernetes_deployment_v1" "this" {
       spec {
         node_selector = var.node_selector
 
+        # Only on nodes where the volume can attach (volume_node_label).
+        dynamic "affinity" {
+          for_each = var.storage_class != "" && var.volume_node_label != "" ? [var.volume_node_label] : []
+          content {
+            node_affinity {
+              required_during_scheduling_ignored_during_execution {
+                node_selector_term {
+                  match_expressions {
+                    key      = affinity.value
+                    operator = "Exists"
+                  }
+                }
+              }
+            }
+          }
+        }
+
         # First start on the new volume: copy the old one in, so Seafile
         # never bootstraps an empty install (modules/volume-seed).
         dynamic "init_container" {
