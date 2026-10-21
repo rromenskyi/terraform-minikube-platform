@@ -1,2 +1,7 @@
 cpu: "2"
 memory: "8Gi"
+# Every node runs DaemonSet pods here (vector, node-exporter, and on
+# bare-metal nodes smartctl-exporter): about 3 per node on top of the
+# singletons. 30 left no room for a ninth node (its node-exporter was
+# rejected by the quota); 40 covers a few more nodes and rollouts.
+pods: 40
