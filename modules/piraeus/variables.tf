@@ -20,6 +20,12 @@ variable "node_selector" {
   type        = map(string)
 }
 
+variable "node_hostnames" {
+  description = "Further limits the Satellite and CSI node plugin nodes to these hostnames (`kubernetes.io/hostname`), on top of `node_selector`. Empty = every `node_selector` node. List only nodes that have DRBD 9 loaded: Kubernetes schedules pods with Piraeus volumes onto any node with the CSI node plugin, and on a node without DRBD 9 the volume cannot attach, so a node that joins later stays out until it is listed."
+  type        = list(string)
+  default     = []
+}
+
 variable "control_plane_node_selector" {
   description = "Labels of the nodes for the operator, the LINSTOR controller and the CSI controller. Empty = anywhere."
   type        = map(string)

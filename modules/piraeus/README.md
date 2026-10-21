@@ -14,6 +14,7 @@ services:
   piraeus:
     enabled: true
     node_selector: { topology.kubernetes.io/zone: home }        # Satellites + CSI node plugin
+    node_hostnames: [storage-1, worker-1]                      # optional: only these (DRBD 9 loaded)
     control_plane_node_selector: { topology.kubernetes.io/zone: home }
     # host_network: true          # DRBD over the nodes' own addresses/routes
     # drbd_loader_mode: deps_only # DRBD 9 comes from the host (DKMS)
@@ -48,3 +49,11 @@ keeps the group's settings in line with the StorageClass, so change both.
 
 Only pods on `node_selector` nodes can attach Piraeus volumes; nodes without
 a storage pool attach them diskless over DRBD.
+
+Every node with the CSI node plugin needs DRBD 9 loaded: the scheduler puts
+pods with Piraeus volumes on any of them, and on a node without DRBD 9 the
+attach fails (`ControllerPublishVolume ... 404 Not Found`) and the pod stays
+in `Init`. When nodes join by label (a zone label every node gets), list the
+DRBD-ready ones in `node_hostnames` so a new node stays out until it has
+DRBD. Removing a node from the list while pods there use Piraeus volumes
+takes their volumes away: move the pods first.
