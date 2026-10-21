@@ -128,10 +128,11 @@ locals {
   _argocd_helm_repo_entries = distinct(flatten([
     for _, project in local.projects : [
       for id, entry in try(project.argocd_helm_repos, {}) : {
-        id          = id
-        slug        = project.slug
-        url         = try(entry.url, "")
-        pull_secret = try(entry.pull_secret, "")
+        id   = id
+        slug = project.slug
+        # An explicit `null` in yaml counts as absent.
+        url         = try(entry.url == null ? "" : entry.url, "")
+        pull_secret = try(entry.pull_secret == null ? "" : entry.pull_secret, "")
       }
     ]
   ]))
@@ -176,10 +177,7 @@ resource "terraform_data" "argocd_repos_checks" {
     # path. A scheme here would leave the chart without its credential.
     precondition {
       condition = alltrue([
-        for _, project in local.projects : alltrue([
-          for _, entry in try(project.argocd_helm_repos, {}) :
-          try(entry.url, "") != "" && !strcontains(try(entry.url, ""), "://")
-        ])
+        for e in local._argocd_helm_repo_entries : e.url != "" && !strcontains(e.url, "://")
       ])
       error_message = "argocd_helm_repos entry needs `url` as a bare registry path without scheme (e.g. `ghcr.io/<org>/charts`, not `oci://…`)."
     }
@@ -188,7 +186,7 @@ resource "terraform_data" "argocd_repos_checks" {
       condition = alltrue([
         for _, project in local.projects : alltrue([
           for _, entry in try(project.argocd_helm_repos, {}) :
-          try(entry.pull_secret, "") == "" || contains(keys(try(project.image_pull_secrets, {})), try(entry.pull_secret, ""))
+          try(entry.pull_secret == null ? "" : entry.pull_secret, "") == "" || contains(keys(try(project.image_pull_secrets, {})), try(entry.pull_secret, ""))
         ])
       ])
       error_message = "argocd_helm_repos entry's `pull_secret` must name an `image_pull_secrets` entry of the same env (its Vault credential is reused)."
@@ -204,6 +202,22 @@ resource "terraform_data" "argocd_repos_checks" {
         length([for e in local._argocd_helm_repo_entries : e if e.url == url]) == 1
       ])
       error_message = "argocd_helm_repos: the same registry `url` appears in more than one entry (another tenant, another id, or a different pull_secret). Argo CD repository entries are global; declare each registry path once."
+    }
+
+    # One Secret per (tenant, id): envs of a tenant may repeat an id only
+    # with the same url and pull_secret.
+    precondition {
+      condition     = length(distinct([for e in local._argocd_helm_repo_entries : "${e.slug}-${e.id}"])) == length(local._argocd_helm_repo_entries)
+      error_message = "argocd_helm_repos: one id is declared with different `url` / `pull_secret` in different envs of the same project. Give each variant its own id."
+    }
+
+    # The id becomes part of the Secret name `repo-helm-<slug>-<id>`.
+    precondition {
+      condition = alltrue([
+        for e in local._argocd_helm_repo_entries :
+        can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", e.id)) && length("repo-helm-${e.slug}-${e.id}") <= 63
+      ])
+      error_message = "argocd_helm_repos: ids must be lowercase DNS labels (a-z, 0-9, '-') and `repo-helm-<slug>-<id>` must fit in 63 characters."
     }
   }
 }
