@@ -152,6 +152,12 @@ variable "argocd_bootstraps" {
   default     = {}
 }
 
+variable "argocd_helm_repos" {
+  description = "Map of Helm chart repositories in OCI registries, declared under `envs.<env>.argocd_helm_repos:` in the domain yaml. Each entry: `url` (registry path without scheme, e.g. `ghcr.io/<org>/charts`, the same string the Application's `repoURL` uses) and optional `pull_secret` (key of an `image_pull_secrets` entry in the same env; its Vault credential `username` + `token` authenticates Argo CD to the registry). Every `url` joins the AppProject `sourceRepos`, so multi-source Applications in this project may take their chart from the registry and their values from a bootstrap repo. The root stack emits the matching Argo CD repository Secret (`type: helm`, `enableOCI: true`). Empty map = no extra sources."
+  type        = any
+  default     = {}
+}
+
 variable "shared_services" {
   description = "Per-env `shared_services:` map from the domain yaml — flags telling the engine to provision per-namespace shared-service credentials (Postgres DB + role + Secret, Redis ACL user + Secret, Ollama Service URL Secret) WITHOUT requiring a `kind: deployment/app` component to opt in. Use for Argo CD-managed apps whose pods aren't TF-emitted but still need platform-shared backing services. Keys: `db` / `postgres` / `redis` / `ollama` (bool, default false). Provisioned credentials end up in standard Secret names the chart can consume via `envFrom` — `db-credentials`, `postgres-credentials`, `redis-credentials`, `ollama-endpoint`."
   type        = any

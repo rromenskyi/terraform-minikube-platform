@@ -507,6 +507,10 @@ resource "terraform_data" "config_checks" {
       error_message = "project '${local.namespace}' declares `argocd_bootstraps:` entries but `argocd_namespace` is empty. Enable `services.argocd.enabled = true` in `config/platform.yaml` and re-apply."
     }
     precondition {
+      condition     = length(var.argocd_helm_repos) == 0 || var.argocd_namespace != ""
+      error_message = "project '${local.namespace}' declares `argocd_helm_repos:` entries but `argocd_namespace` is empty. Enable `services.argocd.enabled = true` in `config/platform.yaml` and re-apply."
+    }
+    precondition {
       condition = alltrue([
         for _, h in var.argocd_hostnames :
         try(h.cf_tunnel, true) || try(h.node_ip, "") != ""
@@ -553,6 +557,34 @@ resource "kubernetes_resource_quota_v1" "limits" {
       "limits.memory"   = try(var.project_config.limits.memory, var.default_limits.memory, "4Gi")
       "requests.cpu"    = try(var.project_config.limits.cpu, var.default_limits.cpu, "2")
       "requests.memory" = try(var.project_config.limits.memory, var.default_limits.memory, "4Gi")
+    }
+  }
+}
+
+# ── Limit Range ───────────────────────────────────────────────────────────────
+#
+# The quota above sets limits.* and requests.*, so the API server rejects any
+# container (init containers included) that declares no cpu/memory of its
+# own. Charts outside the operator's control often leave a sidecar or init
+# container bare; the optional `limit_range:` env block fills those in.
+# Kubernetes applies the defaults per missing field: a container that sets
+# a cpu request but no cpu limit still gets the default limit, so a request
+# above that default needs its own limit.
+
+resource "kubernetes_limit_range_v1" "defaults" {
+  for_each = try(var.project_config.limit_range, null) != null ? toset(["enabled"]) : toset([])
+
+  metadata {
+    name      = "defaults"
+    namespace = kubernetes_namespace_v1.this.metadata[0].name
+    labels    = module.project_label.tags
+  }
+
+  spec {
+    limit {
+      type            = "Container"
+      default         = try(var.project_config.limit_range.default, null)
+      default_request = try(var.project_config.limit_range.default_request, null)
     }
   }
 }

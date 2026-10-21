@@ -38,6 +38,15 @@
 # Per-entry: an entry must set EITHER `repo_ssh_key_id` OR
 # `repo_app_pem_id` (with the two ID fields), never both — a plan-
 # time check below catches the conflict.
+#
+# Separately, `argocd_helm_repos:` entries (Helm charts in an OCI
+# registry, e.g. a chart a multi-source Application pulls while its
+# values come from the bootstrap repo) get a `type: helm` +
+# `enableOCI` repository Secret. With `pull_secret: <name>` the
+# credential is the tenant's existing registry pull credential at
+# `secret/data/tenants/<slug>/image-pull-secrets/<name>` (`username` +
+# `token`), so one registry token serves both image pulls and chart
+# pulls; without it the Secret carries no credential (public chart).
 
 variable "argocd_repo_ssh_keys" {
   description = "LEGACY operator-supplied map of `<id>` => SSH private key (PEM string). Each id present here picks the literal-emit path: engine writes the value straight into a `kubernetes_secret_v1` in the Argo CD namespace. Empty map (default) pushes EVERY referenced `repo_ssh_key_id` into Vault-mode — engine emits a `VaultStaticSecret` instead, and the matching tenant uploads the key into Vault under `secret/data/tenants/<slug>/argocd-deploy-keys/<id>` themselves. New work should not add to this map; left in place for the migration window."
@@ -109,8 +118,29 @@ locals {
   # VSO-proxy ServiceAccount creation in the Argo CD namespace.
   _argocd_has_any_vault_creds = (
     length(local.argocd_repo_creds_ssh_vault) > 0 ||
-    length(local.argocd_repo_creds_app_vault) > 0
+    length(local.argocd_repo_creds_app_vault) > 0 ||
+    length(local.argocd_helm_repos_vault) > 0
   )
+
+  # `argocd_helm_repos:` entries across every project. Envs of one
+  # tenant declaring the same entry collapse to one Secret; the same
+  # key with a different url fails the plan (duplicate map key).
+  _argocd_helm_repo_entries = distinct(flatten([
+    for _, project in local.projects : [
+      for id, entry in try(project.argocd_helm_repos, {}) : {
+        id   = id
+        slug = project.slug
+        # An explicit `null` in yaml counts as absent.
+        url         = try(entry.url == null ? "" : entry.url, "")
+        pull_secret = try(entry.pull_secret == null ? "" : entry.pull_secret, "")
+      }
+    ]
+  ]))
+  argocd_helm_repos = {
+    for e in local._argocd_helm_repo_entries : "${e.slug}-${e.id}" => e
+  }
+  argocd_helm_repos_vault  = { for k, v in local.argocd_helm_repos : k => v if v.pull_secret != "" }
+  argocd_helm_repos_public = { for k, v in local.argocd_helm_repos : k => v if v.pull_secret == "" }
 }
 
 resource "terraform_data" "argocd_repos_checks" {
@@ -140,6 +170,54 @@ resource "terraform_data" "argocd_repos_checks" {
         ])
       ])
       error_message = "argocd_bootstraps entry with repo_app_pem_id must also set repo_app_id and repo_app_installation_id."
+    }
+
+    # Argo CD matches the Application's `repoURL` against the repository
+    # Secret's `url` literally; for Helm-OCI both are the bare registry
+    # path. A scheme here would leave the chart without its credential.
+    precondition {
+      condition = alltrue([
+        for e in local._argocd_helm_repo_entries : e.url != "" && !strcontains(e.url, "://")
+      ])
+      error_message = "argocd_helm_repos entry needs `url` as a bare registry path without scheme (e.g. `ghcr.io/<org>/charts`, not `oci://…`)."
+    }
+
+    precondition {
+      condition = alltrue([
+        for _, project in local.projects : alltrue([
+          for _, entry in try(project.argocd_helm_repos, {}) :
+          try(entry.pull_secret == null ? "" : entry.pull_secret, "") == "" || contains(keys(try(project.image_pull_secrets, {})), try(entry.pull_secret, ""))
+        ])
+      ])
+      error_message = "argocd_helm_repos entry's `pull_secret` must name an `image_pull_secrets` entry of the same env (its Vault credential is reused)."
+    }
+
+    # Argo CD repository Secrets are global and matched by URL, so two
+    # entries with the same registry path (two tenants, or one tenant under
+    # two ids) would race for it and a pull could use the wrong credential.
+    # Envs of one tenant repeating the same entry collapse to one above.
+    precondition {
+      condition = alltrue([
+        for url in distinct([for e in local._argocd_helm_repo_entries : e.url]) :
+        length([for e in local._argocd_helm_repo_entries : e if e.url == url]) == 1
+      ])
+      error_message = "argocd_helm_repos: the same registry `url` appears in more than one entry (another tenant, another id, or a different pull_secret). Argo CD repository entries are global; declare each registry path once."
+    }
+
+    # One Secret per (tenant, id): envs of a tenant may repeat an id only
+    # with the same url and pull_secret.
+    precondition {
+      condition     = length(distinct([for e in local._argocd_helm_repo_entries : "${e.slug}-${e.id}"])) == length(local._argocd_helm_repo_entries)
+      error_message = "argocd_helm_repos: one id is declared with different `url` / `pull_secret` in different envs of the same project. Give each variant its own id."
+    }
+
+    # The id becomes part of the Secret name `repo-helm-<slug>-<id>`.
+    precondition {
+      condition = alltrue([
+        for e in local._argocd_helm_repo_entries :
+        can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", e.id)) && length("repo-helm-${e.slug}-${e.id}") <= 63
+      ])
+      error_message = "argocd_helm_repos: ids must be lowercase DNS labels (a-z, 0-9, '-') and `repo-helm-<slug>-<id>` must fit in 63 characters."
     }
   }
 }
@@ -282,4 +360,75 @@ resource "kubectl_manifest" "argocd_repo_app_vault" {
 moved {
   from = kubernetes_service_account_v1.argocd_vso_proxy[0]
   to   = kubernetes_service_account_v1.argocd_vso_proxy["enabled"]
+}
+
+# Helm chart registries (OCI). Vault mode: the credential is the
+# tenant's registry pull credential, rendered into Argo CD's Helm-OCI
+# repository Secret schema (`password` = the Vault `token` key).
+resource "kubectl_manifest" "argocd_helm_repo_vault" {
+  for_each = local.platform.services.argocd.enabled ? local.argocd_helm_repos_vault : {}
+
+  depends_on = [kubernetes_service_account_v1.argocd_vso_proxy]
+
+  yaml_body = yamlencode({
+    apiVersion = "secrets.hashicorp.com/v1beta1"
+    kind       = "VaultStaticSecret"
+    metadata = {
+      name      = "repo-helm-${each.key}"
+      namespace = local.platform.services.argocd.namespace
+      labels = {
+        "app.kubernetes.io/managed-by" = "terraform"
+      }
+    }
+    spec = {
+      vaultAuthRef = ""
+      mount        = "secret"
+      type         = "kv-v2"
+      path         = "tenants/${each.value.slug}/image-pull-secrets/${each.value.pull_secret}"
+      destination = {
+        name   = "repo-helm-${each.key}"
+        create = true
+        labels = {
+          "argocd.argoproj.io/secret-type" = "repository"
+        }
+        transformation = {
+          excludeRaw = true
+          excludes   = [".*"]
+          templates = {
+            type      = { text = "helm" }
+            name      = { text = each.key }
+            url       = { text = each.value.url }
+            enableOCI = { text = "true" }
+            username  = { text = "{{- get .Secrets \"username\" -}}" }
+            password  = { text = "{{- get .Secrets \"token\" -}}" }
+          }
+        }
+      }
+      refreshAfter = "30s"
+    }
+  })
+}
+
+# Public chart registry: no credential, but Argo CD still needs the
+# repository entry to treat the bare `repoURL` as OCI.
+resource "kubernetes_secret_v1" "argocd_helm_repo_public" {
+  for_each = local.platform.services.argocd.enabled ? local.argocd_helm_repos_public : {}
+
+  depends_on = [kubernetes_namespace_v1.argocd]
+
+  metadata {
+    name      = "repo-helm-${each.key}"
+    namespace = local.platform.services.argocd.namespace
+    labels = {
+      "argocd.argoproj.io/secret-type" = "repository"
+      "app.kubernetes.io/managed-by"   = "terraform"
+    }
+  }
+
+  data = {
+    type      = "helm"
+    name      = each.key
+    url       = each.value.url
+    enableOCI = "true"
+  }
 }
