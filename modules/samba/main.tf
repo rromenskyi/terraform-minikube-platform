@@ -140,7 +140,8 @@ resource "terraform_data" "checks" {
       error_message = "Every `valid_users` entry must be an account declared in var.users; unknown: ${join(", ", distinct(flatten([for s in var.shares : [for u in s.valid_users : u if !contains(keys(var.users), u)]])))}."
     }
     precondition {
-      condition     = var.seed == null || contains(var.node_hostnames, var.seed.node)
+      # A conditional, not `||`: both sides of `||` may be evaluated.
+      condition     = var.seed == null ? true : contains(var.node_hostnames, var.seed.node)
       error_message = "var.seed.node must be in var.node_hostnames — while seeding the pod is pinned to that node and cannot run on a node it is not allowed on."
     }
   }
@@ -491,6 +492,8 @@ resource "kubernetes_deployment_v1" "this" {
             tcp_socket {
               port = 445
             }
+            # The entrypoint creates the accounts and smb.conf first.
+            initial_delay_seconds = 15
           }
 
           volume_mount {

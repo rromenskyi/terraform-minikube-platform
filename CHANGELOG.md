@@ -9,8 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - `services.samba` (module `samba`, default off): LAN Samba file server on a StorageClass volume (2-copy LINSTOR for failover), fixed MetalLB L2 address with `externalTrafficPolicy: Local` and no NodePorts, passwords from Vault (VSO), optional rsync seed from an existing hostPath tree.
-
-### Added
 - Piraeus `storage_pools[].key` (optional): one storage pool name on several nodes (e.g. `k8s` on two storage nodes for 2 copies).
 
 ### Changed

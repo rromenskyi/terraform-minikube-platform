@@ -64,6 +64,12 @@ variable "users" {
     uid = number
   }))
   default = {}
+
+  # Usernames become environment variable names (ACCOUNT_<user>, UID_<user>).
+  validation {
+    condition     = alltrue([for u in keys(var.users) : can(regex("^[a-z_][a-z0-9_]*$", u))])
+    error_message = "users: usernames must match ^[a-z_][a-z0-9_]*$ (they become environment variable names)."
+  }
 }
 
 variable "vault_path" {
@@ -80,6 +86,13 @@ variable "shares" {
     valid_users = optional(list(string), [])
   }))
   default = []
+
+  # Share names become environment variable names and directory names in a
+  # shell script.
+  validation {
+    condition     = alltrue([for s in var.shares : can(regex("^[A-Za-z0-9_]+$", s.name))])
+    error_message = "shares: names must match ^[A-Za-z0-9_]+$."
+  }
 }
 
 variable "seed" {
