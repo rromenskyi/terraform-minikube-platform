@@ -21,9 +21,15 @@ variable "node_selector" {
 }
 
 variable "node_hostnames" {
-  description = "Further limits the Satellite and CSI node plugin nodes to these hostnames (`kubernetes.io/hostname`), on top of `node_selector`. Empty = every `node_selector` node. List only nodes that have DRBD 9 loaded: Kubernetes schedules pods with Piraeus volumes onto any node with the CSI node plugin, and on a node without DRBD 9 the volume cannot attach, so a node that joins later stays out until it is listed. The operator applies it to the LINSTOR controller and the CSI controller as well."
+  description = "Allow-list of node names (`kubernetes.io/hostname`) for every Piraeus workload, on top of `node_selector`: Satellites, CSI node plugin, LINSTOR controller, CSI controller, HA/affinity controllers, NFS server. Empty = every `node_selector` node. List only nodes with DRBD 9 loaded (a Satellite on a node without it cannot attach volumes), and include every node `control_plane_node_selector` may pick, or the controllers stay Pending."
   type        = list(string)
   default     = []
+  nullable    = false
+
+  validation {
+    condition     = alltrue([for h in var.node_hostnames : length(trimspace(h)) > 0]) && length(distinct(var.node_hostnames)) == length(var.node_hostnames)
+    error_message = "node_hostnames: entries must be non-empty and unique node names."
+  }
 }
 
 variable "control_plane_node_selector" {

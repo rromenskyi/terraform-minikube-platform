@@ -24,7 +24,8 @@ locals {
   set = var.enabled ? toset(["enabled"]) : toset([])
   # Pod template fragment pinning a component to the control-plane nodes.
   cp_pin = length(var.control_plane_node_selector) > 0 ? { nodeSelector = var.control_plane_node_selector } : {}
-  # Satellite nodes by name, in addition to node_selector.
+  # Node allow-list in addition to node_selector; the operator applies it
+  # to every Piraeus workload, controllers included.
   satellite_affinity = length(var.node_hostnames) > 0 ? {
     nodeAffinity = {
       nodeSelectorTerms = [{
