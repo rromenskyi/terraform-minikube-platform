@@ -3,7 +3,10 @@
 # an in-container core update lives in the container layer, is reverted by
 # the next pod restart, and leaves the database on the newer schema
 # (WP_AUTO_UPDATE_CORE below). The `7.1` tag follows 7.1.x patch releases.
-image: wordpress:7.1-php8.3-apache
+# Pinned by digest: the tag is rebuilt in place (PHP security fixes), and a
+# node that already has the tag would keep the old build.
+# 2026-10-21: PHP 8.3.36 (CVE-2026-109618 / CVE-2026-109619).
+image: wordpress:7.1-php8.3-apache@sha256:f3e6835fa7d4a5b786615c24b67ec70816e06ebd517d31276bef423e49dfd126
 port: 80
 replicas: 1
 

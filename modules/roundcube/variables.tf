@@ -38,7 +38,7 @@ variable "storage_seed_node" {
 variable "image" {
   description = "Roundcube container image. The Apache flavour is used because the upstream image bakes a working PHP+Apache config; the alpine-fpm flavour needs an extra fpm/nginx pair."
   type        = string
-  default     = "roundcube/roundcubemail:1.6.19-apache@sha256:5c7331ca2686f1622117f3fc5901c58b098d6a2e2a08b858257e592e6106e2fb"
+  default     = "roundcube/roundcubemail:1.6.20-apache@sha256:60601760a965be491bc5d3fc2da498153b85fed2d80fc903a4582ef71220e435"
 }
 
 variable "imap_host" {
