@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `config/limits/monitoring.yaml`: `pods: 40` (default was 30). Each node adds ~3 DaemonSet pods to `monitoring`; at 30 a new node's node-exporter was rejected by the quota.
+
 ### Added
 - `services.keda` (module `keda`, default off): KEDA 2.21.0 operator and metrics API server for tenant `ScaledObject`s.
 - Domain yaml `envs.<env>.argocd_helm_repos:` `{<id>: {url, pull_secret}}`: Helm charts in OCI registries for Argo CD. The registry path joins the tenant AppProject's `sourceRepos` and an Argo CD repository Secret (`type: helm`, `enableOCI: true`) is emitted; with `pull_secret` it is rendered from the tenant's `image-pull-secrets/<name>` Vault credential. Plan-time checks reject a URL with a scheme and a `pull_secret` that is not an `image_pull_secrets` entry of the same env.
