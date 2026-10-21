@@ -195,14 +195,15 @@ resource "terraform_data" "argocd_repos_checks" {
     }
 
     # Argo CD repository Secrets are global and matched by URL, so two
-    # tenants declaring the same registry path would race for one entry and
-    # one could pull with the other's credential.
+    # entries with the same registry path (two tenants, or one tenant under
+    # two ids) would race for it and a pull could use the wrong credential.
+    # Envs of one tenant repeating the same entry collapse to one above.
     precondition {
       condition = alltrue([
         for url in distinct([for e in local._argocd_helm_repo_entries : e.url]) :
-        length(distinct([for e in local._argocd_helm_repo_entries : e.slug if e.url == url])) == 1
+        length([for e in local._argocd_helm_repo_entries : e if e.url == url]) == 1
       ])
-      error_message = "argocd_helm_repos: the same registry `url` is declared by more than one tenant. Argo CD repository entries are global; keep one tenant per registry path."
+      error_message = "argocd_helm_repos: the same registry `url` appears in more than one entry (another tenant, another id, or a different pull_secret). Argo CD repository entries are global; declare each registry path once."
     }
   }
 }

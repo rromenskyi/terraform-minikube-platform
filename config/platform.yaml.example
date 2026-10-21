@@ -297,6 +297,15 @@ services:
   # restricts which nodes announce its VIPs; without it, every
   # speaker would ARP for the IP and the upstream switch picks
   # whichever speaker won the race (split-brain; flapping).
+  keda:
+    enabled: false
+    # Event-driven autoscaling: KEDA operator + metrics API server. Tenants
+    # ship ScaledObjects in their own charts; a scaled Deployment's
+    # spec.replicas belongs to KEDA (Argo CD: ignoreDifferences).
+    # namespace: keda
+    # version_pin: "2.21.0"
+    # node_selector: {}
+    # tolerations: []
   metallb:
     enabled: false
     # Controller node selector — controller is stateless, just
