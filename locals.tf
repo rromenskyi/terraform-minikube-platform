@@ -168,6 +168,23 @@ locals {
         node_selector = {}
         tolerations   = []
       }
+      samba = {
+        enabled          = false
+        namespace        = "nas"
+        image            = "ghcr.io/servercontainers/samba:a3.24.2-s4.23.8-r0"
+        storage_class    = ""
+        size             = "100Gi"
+        node_hostnames   = []
+        load_balancer_ip = ""
+        address_pool     = ""
+        allowed_networks = []
+        users            = {}
+        vault_path       = "platform/samba/accounts"
+        shares           = []
+        seed             = null
+        seed_image       = "instrumentisto/rsync-ssh:alpine3.23-r3"
+        failover_seconds = 30
+      }
       metallb = {
         enabled                  = false
         controller_node_selector = {}
@@ -625,6 +642,7 @@ locals {
       dns01_cloudflare     = merge(local._platform_defaults.services.dns01_cloudflare, try(local._platform_services.dns01_cloudflare, {}))
       longhorn             = merge(local._platform_defaults.services.longhorn, try(local._platform_services.longhorn, {}))
       keda                 = merge(local._platform_defaults.services.keda, try(local._platform_services.keda, {}))
+      samba                = merge(local._platform_defaults.services.samba, try(local._platform_services.samba, {}))
       metallb              = merge(local._platform_defaults.services.metallb, try(local._platform_services.metallb, {}))
       minio                = merge(local._platform_defaults.services.minio, try(local._platform_services.minio, {}))
       github_runners       = merge(local._platform_defaults.services.github_runners, try(local._platform_services.github_runners, {}))
