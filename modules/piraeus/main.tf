@@ -98,7 +98,7 @@ resource "kubectl_manifest" "drbd_loader" {
 }
 
 resource "kubectl_manifest" "storage_pool" {
-  for_each   = var.enabled ? { for p in var.storage_pools : p.name => p } : {}
+  for_each   = var.enabled ? { for p in var.storage_pools : coalesce(p.key, p.name) => p } : {}
   depends_on = [helm_release.operator]
   yaml_body = yamlencode({
     apiVersion = "piraeus.io/v1"
@@ -107,7 +107,7 @@ resource "kubectl_manifest" "storage_pool" {
     spec = {
       nodeSelector = each.value.node_selector
       storagePools = [{
-        name        = each.key
+        name        = each.value.name
         zfsThinPool = { zPool = each.value.zfs_thin_pool }
       }]
     }

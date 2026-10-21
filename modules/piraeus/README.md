@@ -21,6 +21,8 @@ services:
       - name: k8s
         node_selector: { kubernetes.io/hostname: storage-1 }
         zfs_thin_pool: tank/k8s   # existing zpool or dataset on those nodes
+      # Same pool on a second node: own `key`, same `name`.
+      # - { key: k8s-storage-2, name: k8s, node_selector: { kubernetes.io/hostname: storage-2 }, zfs_thin_pool: tank/k8s }
     storage_classes:
       - name: linstor-tank
         storage_pool: k8s

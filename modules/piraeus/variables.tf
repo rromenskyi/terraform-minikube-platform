@@ -44,11 +44,17 @@ variable "storage_pools" {
       - name: the storage pool name used by StorageClasses
       - zfs_thin_pool: existing ZFS pool or dataset (e.g. "tank/k8s") to
         carve thin zvols from
+      - key: optional, defaults to `name`. Needed to declare one pool name
+        on several nodes with different selectors (two entries `name: k8s`
+        with keys `k8s` and `k8s-node2`): `node_selector` matches labels
+        only. Keep an existing entry's key unchanged — a new key recreates
+        its LinstorSatelliteConfiguration.
   EOT
   type = list(object({
     name          = string
     node_selector = map(string)
     zfs_thin_pool = string
+    key           = optional(string)
   }))
   default = []
 }

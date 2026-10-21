@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Piraeus `storage_pools[].key` (optional): one storage pool name on several nodes (e.g. `k8s` on two storage nodes for 2 copies).
+
 ### Changed
 - `config/limits/monitoring.yaml`: `pods: 40` (default was 30). Each node adds ~3 DaemonSet pods to `monitoring`; at 30 a new node's node-exporter was rejected by the quota.
 
