@@ -42,10 +42,13 @@ resource "kubernetes_config_map_v1" "esphome_power_dashboard" {
           datasource  = local._esphome_ds
           fieldConfig = { defaults = { unit = "watt", decimals = 1 } }
           options     = { reduceOptions = { calcs = ["lastNotNull"] }, colorMode = "value", graphMode = "area" }
+          # Only plugs still reporting at the end of the range (`@ end()`):
+          # otherwise a renamed or removed plug stays on as a stale tile with
+          # its last value.
           targets = [{
             refId        = "A"
             datasource   = local._esphome_ds
-            expr         = "max by (plug, node) (esphome_sensor_value{id=\"power\"})"
+            expr         = "max by (plug) (esphome_sensor_value{id=\"power\"}) and on (plug) max by (plug) (esphome_sensor_value{id=\"power\"} @ end())"
             legendFormat = "{{plug}}"
           }]
         },

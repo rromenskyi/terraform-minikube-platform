@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- ESPHome power dashboard: the "Now" tiles show only plugs still reporting at the end of the time range; a renamed or removed plug no longer stays on as a stale tile.
+
 ### Security
 - WordPress component image pinned to `7.1-php8.3-apache@sha256:f3e6835f…` (PHP 8.3.36) and Roundcube to `1.6.20-apache@sha256:60601760…` (Roundcube 1.6.20, PHP 8.4.27): fixes PHP CVE-2026-109618 / CVE-2026-109619 (unauthenticated RCE, Apache mod_php).
 
