@@ -29,7 +29,7 @@
 # resources are entirely denied — the platform owns CRDs, ClusterRoles,
 # Namespaces.
 resource "kubectl_manifest" "argocd_app_project" {
-  for_each = (length(var.argocd_bootstraps) > 0 || length(var.argocd_hostnames) > 0) ? toset(["enabled"]) : toset([])
+  for_each = (length(var.argocd_bootstraps) > 0 || length(var.argocd_hostnames) > 0 || length(var.argocd_helm_repos) > 0) ? toset(["enabled"]) : toset([])
 
   yaml_body = yamlencode({
     apiVersion = "argoproj.io/v1alpha1"

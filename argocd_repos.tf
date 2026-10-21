@@ -193,6 +193,17 @@ resource "terraform_data" "argocd_repos_checks" {
       ])
       error_message = "argocd_helm_repos entry's `pull_secret` must name an `image_pull_secrets` entry of the same env (its Vault credential is reused)."
     }
+
+    # Argo CD repository Secrets are global and matched by URL, so two
+    # tenants declaring the same registry path would race for one entry and
+    # one could pull with the other's credential.
+    precondition {
+      condition = alltrue([
+        for url in distinct([for e in local._argocd_helm_repo_entries : e.url]) :
+        length(distinct([for e in local._argocd_helm_repo_entries : e.slug if e.url == url])) == 1
+      ])
+      error_message = "argocd_helm_repos: the same registry `url` is declared by more than one tenant. Argo CD repository entries are global; keep one tenant per registry path."
+    }
   }
 }
 
@@ -387,6 +398,8 @@ resource "kubectl_manifest" "argocd_helm_repo_vault" {
 # repository entry to treat the bare `repoURL` as OCI.
 resource "kubernetes_secret_v1" "argocd_helm_repo_public" {
   for_each = local.platform.services.argocd.enabled ? local.argocd_helm_repos_public : {}
+
+  depends_on = [kubernetes_namespace_v1.argocd]
 
   metadata {
     name      = "repo-helm-${each.key}"

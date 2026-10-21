@@ -194,9 +194,10 @@ limit_range:       # optional defaults for containers that set no resources
 
 The quota covers both requests and limits, so every container, init
 containers included, must declare cpu and memory or it is rejected.
-`limit_range` fills them in for containers that declare nothing (for example
-a chart's init container); containers with their own resources are not
-changed.
+`limit_range` fills in each missing value on its own: a container without a
+cpu limit gets the default one even if it sets a cpu request. A container
+whose request is above the default limit must therefore set its own limit,
+or it is rejected (request above limit).
 
 ### Backing services
 
