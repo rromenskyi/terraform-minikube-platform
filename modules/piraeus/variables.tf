@@ -33,7 +33,7 @@ variable "node_hostnames" {
 }
 
 variable "csi_controller_replicas" {
-  description = "Replicas of the CSI controller (leader-elected attacher, provisioner, resizer, snapshotter), spread over nodes when more than one. With one, losing its node blocks every attach/detach until the node is back: an RWO volume cannot move off a dead node."
+  description = "Replicas of the CSI controller (leader-elected attacher, provisioner, resizer, snapshotter), spread over nodes when more than one. With one, losing its node blocks every attach/detach until Kubernetes evicts it from the dead node (about 5 minutes): an RWO volume cannot move off that node meanwhile. Keep it below the number of nodes the controller may run on (required anti-affinity: a replica without a free node stays Pending)."
   type        = number
   default     = 1
 
