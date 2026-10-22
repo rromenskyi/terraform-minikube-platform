@@ -61,6 +61,21 @@ variable "controller_properties" {
   nullable    = false
 }
 
+variable "satellite_properties" {
+  description = "LINSTOR node properties by node name: key => { node_hostnames, properties (name => value) }, one LinstorSatelliteConfiguration each. E.g. an `Aux/...` property on the storage nodes for `storage_classes[].x_replicas_on_different`. Do not use the `Aux/topology/` prefix (the CSI driver reads those as topology segments)."
+  type = map(object({
+    node_hostnames = list(string)
+    properties     = map(string)
+  }))
+  default  = {}
+  nullable = false
+
+  validation {
+    condition     = alltrue([for s in values(var.satellite_properties) : length(s.node_hostnames) > 0 && alltrue([for k in keys(s.properties) : !startswith(k, "Aux/topology/")])])
+    error_message = "satellite_properties: each entry needs node_hostnames; property names must not start with Aux/topology/."
+  }
+}
+
 variable "control_plane_node_selector" {
   description = "Labels of the nodes for the operator, the LINSTOR controller and the CSI controller. Empty = anywhere."
   type        = map(string)
@@ -108,6 +123,13 @@ variable "storage_classes" {
       - resource_group: LINSTOR resource group the volumes are spawned from
         (created on first use). Empty: LINSTOR names it sc-<hash>. See the
         README for raising the copies of existing volumes.
+      - x_replicas_on_different: node property => max replicas of a volume on
+        nodes sharing one value of it (LINSTOR `--x-replicas-on-different`,
+        applied to the class's resource group when a volume is created).
+        LINSTOR forces it to 1 when placing a quorum tiebreaker, so e.g.
+        { "Aux/storage-site" = 2 } with that property only on the storage
+        nodes keeps 2 copies there and every tiebreaker on the other nodes.
+        Changing it replaces the class.
       - mount_options: passed to mount as is. ReadWriteMany claims on a
         class are NFS exports (the operator's NFS server), so e.g. `soft`,
         `timeo` (deciseconds), `retrans` there make an unreachable server
@@ -120,16 +142,22 @@ variable "storage_classes" {
         their pods restart.
   EOT
   type = list(object({
-    name            = string
-    storage_pool    = string
-    placement_count = optional(number, 1)
-    fs_type         = optional(string, "ext4")
-    reclaim_policy  = optional(string, "Retain")
-    default         = optional(bool, false)
-    resource_group  = optional(string, "")
-    mount_options   = optional(list(string), [])
+    name                    = string
+    storage_pool            = string
+    placement_count         = optional(number, 1)
+    fs_type                 = optional(string, "ext4")
+    reclaim_policy          = optional(string, "Retain")
+    default                 = optional(bool, false)
+    resource_group          = optional(string, "")
+    mount_options           = optional(list(string), [])
+    x_replicas_on_different = optional(map(number), {})
   }))
   default = []
+
+  validation {
+    condition     = alltrue(flatten([for sc in var.storage_classes : [for v in values(sc.x_replicas_on_different) : v >= 1 && floor(v) == v]]))
+    error_message = "storage_classes[].x_replicas_on_different: values must be whole numbers >= 1."
+  }
 }
 
 variable "monitoring" {

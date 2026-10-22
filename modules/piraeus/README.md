@@ -84,6 +84,21 @@ nodes: clients get I/O errors (soft mounts) or stall (hard) until another node
 has promoted the volume and NFS-Ganesha has finished its grace period. Check
 afterwards that no removed node is still DRBD Primary for an export.
 
+Quorum tiebreakers: with two copies LINSTOR adds a diskless tiebreaker on
+some other node, by default any node, storage nodes included. To keep them on
+dedicated witness nodes, mark the storage nodes and cap replicas per mark:
+
+    satellite_properties:
+      storage-site: { node_hostnames: [storage-1, storage-2], properties: { Aux/storage-site: storage } }
+    storage_classes:
+      - { name: ..., placement_count: 2, x_replicas_on_different: { Aux/storage-site: 2 } }
+
+Two copies may still sit on storage nodes; a tiebreaker (LINSTOR forces the
+limit to 1 for it) cannot. Consumer pods attach on any node as before. The
+class parameter reaches the resource group when a volume is created, so for
+existing groups set it once with `linstor rg modify <group>
+--x-replicas-on-different Aux/storage-site 2`.
+
 Removing a node from the list deletes its Satellite: first move the pods
 that use Piraeus volumes there and, if it holds replicas, evacuate them
 (`linstor node evacuate`); the LINSTOR node record may stay behind.
