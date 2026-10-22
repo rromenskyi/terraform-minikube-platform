@@ -327,6 +327,17 @@ resource "kubernetes_persistent_volume_v1" "seed" {
       }
     }
   }
+  # Clearing `seed` deletes the claim while the running pod still mounts
+  # it (pvc-protection holds the delete) and only then would update the
+  # Deployment that drops it: a deadlock. Create-before-destroy makes
+  # Terraform update the Deployment first. Recorded in state on the next
+  # apply, so it takes effect from the apply after that (tested: added in
+  # the same apply that clears `seed`, Terraform still uses the state's
+  # flag). Any replacement of the seed PV/PVC (source, size, ...) now fails
+  # on the fixed names: clear `seed`, apply, set the new one.
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 resource "kubernetes_persistent_volume_claim_v1" "seed" {
@@ -348,6 +359,10 @@ resource "kubernetes_persistent_volume_claim_v1" "seed" {
         storage = var.size
       }
     }
+  }
+  # See the seed PV above.
+  lifecycle {
+    create_before_destroy = true
   }
 }
 
