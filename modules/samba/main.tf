@@ -180,6 +180,32 @@ resource "kubernetes_service_account_v1" "vso_proxy" {
   }
 }
 
+# Own VaultAuth when a narrow role is given, instead of VSO's default.
+resource "kubectl_manifest" "vault_auth" {
+  for_each = var.enabled && var.vault_auth_role != "" ? toset(["enabled"]) : toset([])
+
+  yaml_body = yamlencode({
+    apiVersion = "secrets.hashicorp.com/v1beta1"
+    kind       = "VaultAuth"
+    metadata = {
+      name      = "vault-samba"
+      namespace = kubernetes_namespace_v1.this["enabled"].metadata[0].name
+      labels = merge(local.tags, {
+        "app.kubernetes.io/managed-by" = "terraform"
+      })
+    }
+    spec = {
+      method = "kubernetes"
+      mount  = "kubernetes"
+      kubernetes = {
+        role                   = var.vault_auth_role
+        serviceAccount         = kubernetes_service_account_v1.vso_proxy["enabled"].metadata[0].name
+        tokenExpirationSeconds = 600
+      }
+    }
+  })
+}
+
 # One key per account at `var.vault_path`; rendered into
 # `ACCOUNT_<user>` env keys the image expects. `excludes: [".*"]` +
 # `excludeRaw` drop the passthrough keys/`_raw` blob so only the
@@ -191,6 +217,7 @@ resource "kubectl_manifest" "accounts_vault" {
   depends_on = [
     kubernetes_namespace_v1.this,
     kubernetes_service_account_v1.vso_proxy,
+    kubectl_manifest.vault_auth,
   ]
 
   yaml_body = yamlencode({
@@ -204,7 +231,7 @@ resource "kubectl_manifest" "accounts_vault" {
       })
     }
     spec = {
-      vaultAuthRef = ""
+      vaultAuthRef = var.vault_auth_role != "" ? "vault-samba" : ""
       mount        = "secret"
       type         = "kv-v2"
       path         = var.vault_path

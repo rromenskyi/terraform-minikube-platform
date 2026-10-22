@@ -113,6 +113,12 @@ module "vault" {
   # Raft snapshots for module.backup without the root token.
   snapshot_backup = local.platform.services.backup.enabled ? { namespace = "backups", service_account = "backup-vault" } : null
 
+  # Narrow readers of single platform secrets (modules/vault
+  # vso_platform_readers): the file server reads its account passwords only.
+  vso_platform_readers = local.platform.services.samba.enabled ? {
+    samba = { namespaces = [local.platform.services.samba.namespace], paths = [local.platform.services.samba.vault_path] }
+  } : {}
+
   vso_shared_namespaces = distinct(concat(
     local.platform.services.argocd.enabled ? [local.platform.services.argocd.namespace] : [],
     [for s in values(local.platform.services.github_runners.scale_sets) : s.namespace if try(s.vault, false)],

@@ -17,6 +17,8 @@ module "samba" {
   allowed_networks = local.platform.services.samba.allowed_networks
   users            = local.platform.services.samba.users
   vault_path       = local.platform.services.samba.vault_path
+  # Narrow Vault role from module.vault (vso_platform_readers): this path only.
+  vault_auth_role  = local.platform.services.vault.enabled ? "vso-platform-samba" : ""
   shares           = local.platform.services.samba.shares
   seed             = local.platform.services.samba.seed
   seed_image       = local.platform.services.samba.seed_image

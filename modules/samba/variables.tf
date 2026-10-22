@@ -136,3 +136,9 @@ variable "failover_seconds" {
   type        = number
   default     = 30
 }
+
+variable "vault_auth_role" {
+  description = "Vault kubernetes-auth role the account-password sync authenticates with, through a VaultAuth in the namespace (e.g. a role limited to `vault_path`). Empty = VSO's cluster-default VaultAuth, whose role must then bind this namespace."
+  type        = string
+  default     = ""
+}
