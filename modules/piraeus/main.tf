@@ -33,6 +33,25 @@ locals {
       }]
     }
   } : {}
+  # NFS server only on the listed nodes. The operator applies this pod
+  # template after its own node affinity patch, so it replaces it.
+  nfs_server = length(var.nfs_server_node_hostnames) > 0 ? {
+    nfsServer = {
+      podTemplate = {
+        spec = {
+          affinity = {
+            nodeAffinity = {
+              requiredDuringSchedulingIgnoredDuringExecution = {
+                nodeSelectorTerms = [{
+                  matchExpressions = [{ key = "kubernetes.io/hostname", operator = "In", values = var.nfs_server_node_hostnames }]
+                }]
+              }
+            }
+          }
+        }
+      }
+    }
+  } : {}
   # Several CSI controller replicas only help on different nodes.
   csi_controller_spread = var.csi_controller_replicas > 1 ? {
     affinity = {
@@ -80,7 +99,7 @@ resource "kubectl_manifest" "cluster" {
       nodeSelector  = var.node_selector
       controller    = { podTemplate = { spec = local.cp_pin } }
       csiController = { replicas = var.csi_controller_replicas, podTemplate = { spec = merge(local.cp_pin, local.csi_controller_spread) } }
-    }, local.satellite_affinity)
+    }, local.satellite_affinity, local.nfs_server)
   })
 }
 
