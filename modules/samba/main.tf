@@ -32,8 +32,11 @@ terraform {
 }
 
 locals {
-  instances = var.enabled ? toset(["enabled"]) : toset([])
-  seed      = var.enabled && var.seed != null
+  # Seed claim name, shared by the claim and the Deployment's volume (which
+  # names it rather than referencing the resource; see there).
+  seed_claim_name = "samba-seed"
+  instances       = var.enabled ? toset(["enabled"]) : toset([])
+  seed            = var.enabled && var.seed != null
 
   tags = module.label.tags
 
@@ -327,24 +330,13 @@ resource "kubernetes_persistent_volume_v1" "seed" {
       }
     }
   }
-  # Clearing `seed` deletes the claim while the running pod still mounts
-  # it (pvc-protection holds the delete) and only then would update the
-  # Deployment that drops it: a deadlock. Create-before-destroy makes
-  # Terraform update the Deployment first. Recorded in state on the next
-  # apply, so it takes effect from the apply after that (tested: added in
-  # the same apply that clears `seed`, Terraform still uses the state's
-  # flag). Any replacement of the seed PV/PVC (source, size, ...) now fails
-  # on the fixed names: clear `seed`, apply, set the new one.
-  lifecycle {
-    create_before_destroy = true
-  }
 }
 
 resource "kubernetes_persistent_volume_claim_v1" "seed" {
   for_each = local.seed ? toset(["enabled"]) : toset([])
 
   metadata {
-    name      = "samba-seed"
+    name      = local.seed_claim_name
     namespace = kubernetes_namespace_v1.this["enabled"].metadata[0].name
     labels    = local.tags
   }
@@ -359,10 +351,6 @@ resource "kubernetes_persistent_volume_claim_v1" "seed" {
         storage = var.size
       }
     }
-  }
-  # See the seed PV above.
-  lifecycle {
-    create_before_destroy = true
   }
 }
 
@@ -566,7 +554,16 @@ resource "kubernetes_deployment_v1" "this" {
           content {
             name = "old"
             persistent_volume_claim {
-              claim_name = kubernetes_persistent_volume_claim_v1.seed["enabled"].metadata[0].name
+              # By name, not by reference: with a dependency, clearing `seed`
+              # made Terraform delete the claim (held by the running pod,
+              # pvc-protection) before updating this Deployment, and the apply
+              # hung. Without one both run at once: the pod is replaced, the
+              # claim is released and its delete completes. On creation the
+              # pod waits for the claim like for any unbound one. Replacing
+              # the seed (new source or size) keeps this name, so the running
+              # pod would still hold the old claim: clear `seed`, apply, then
+              # set the new one.
+              claim_name = local.seed_claim_name
               read_only  = true
             }
           }
