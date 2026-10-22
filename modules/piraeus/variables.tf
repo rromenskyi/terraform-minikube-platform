@@ -153,6 +153,11 @@ variable "storage_classes" {
     x_replicas_on_different = optional(map(number), {})
   }))
   default = []
+
+  validation {
+    condition     = alltrue(flatten([for sc in var.storage_classes : [for v in values(sc.x_replicas_on_different) : v >= 1 && floor(v) == v]]))
+    error_message = "storage_classes[].x_replicas_on_different: values must be whole numbers >= 1."
+  }
 }
 
 variable "monitoring" {
