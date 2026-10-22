@@ -97,7 +97,8 @@ Two copies may still sit on storage nodes; a tiebreaker (LINSTOR forces the
 limit to 1 for it) cannot. Consumer pods attach on any node as before. The
 class parameter reaches the resource group when a volume is created, so for
 existing groups set it once with `linstor rg modify <group>
---x-replicas-on-different Aux/storage-site 2`.
+--x-replicas-on-different storage-site 2` (the CLI adds the `Aux/` prefix
+itself; with it you get `Aux/Aux/storage-site`).
 
 Removing a node from the list deletes its Satellite: first move the pods
 that use Piraeus volumes there and, if it holds replicas, evacuate them
