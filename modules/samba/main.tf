@@ -445,9 +445,19 @@ resource "kubernetes_deployment_v1" "this" {
         dynamic "init_container" {
           for_each = local.seed ? [1] : []
           content {
-            name    = "seed"
-            image   = var.seed_image
-            command = ["rsync", "-aHAX", "--numeric-ids", "--delete", "--exclude=/lost+found", "/old/", "/shares/"]
+            name  = "seed"
+            image = var.seed_image
+            # --delete mirrors the source: an empty or missing source (the old
+            # disk gone or rebuilt) would wipe the volume, so refuse unless it
+            # holds at least one file.
+            command = ["sh", "-c", <<-EOT
+              if [ -z "$(find /old -mindepth 1 -path /old/lost+found -prune -o -type f -print -quit 2>/dev/null)" ]; then
+                echo "seed: /old has no files; refusing to mirror an empty source over the volume" >&2
+                exit 1
+              fi
+              exec rsync -aHAX --numeric-ids --delete --exclude=/lost+found /old/ /shares/
+            EOT
+            ]
 
             # mirroring module.volume_seed's sizing — the copy goes
             # through the page cache, which counts against the
