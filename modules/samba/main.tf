@@ -451,7 +451,7 @@ resource "kubernetes_deployment_v1" "this" {
             # disk gone or rebuilt) would wipe the volume, so refuse unless it
             # holds at least one file.
             command = ["sh", "-c", <<-EOT
-              if [ -z "$(find /old -mindepth 2 -print -quit 2>/dev/null)" ]; then
+              if [ -z "$(find /old -mindepth 1 -path /old/lost+found -prune -o -type f -print -quit 2>/dev/null)" ]; then
                 echo "seed: /old has no files; refusing to mirror an empty source over the volume" >&2
                 exit 1
               fi
