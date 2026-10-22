@@ -92,8 +92,14 @@ variable "storage_classes" {
         README for raising the copies of existing volumes.
       - mount_options: passed to mount as is. ReadWriteMany claims on a
         class are NFS exports (the operator's NFS server), so e.g. `soft`,
-        `timeo`, `retrans` there make an unreachable server an I/O error
-        instead of a hung process. Changing them replaces the class.
+        `timeo` (deciseconds), `retrans` there make an unreachable server
+        an I/O error after the retries (tens of seconds; NFS recovery after
+        a failover can add more) instead of a hung process. NFS-only
+        options break ReadWriteOnce (block) mounts: keep such a class for
+        RWX claims. Soft mounts can fail an operation the server did
+        complete, so only for data that may be lost or verified. Changing
+        the options replaces the class; existing mounts keep theirs until
+        their pods restart.
   EOT
   type = list(object({
     name            = string
