@@ -769,6 +769,8 @@ locals {
           git_deploy_keys          = try(env_spec.git_deploy_keys, {})
           image_pull_secrets       = try(env_spec.image_pull_secrets, {})
           gcp_wif_service_accounts = try(env_spec.gcp_wif_service_accounts, {})
+          # Claims for chart-managed workloads (modules/project volume_claims).
+          volume_claims = try(env_spec.volume_claims, {})
           # Engine-managed Zitadel OIDC clients for chart-deployed
           # apps. Engine creates a Zitadel Project + OIDC Application
           # per entry and emits a Secret in the project namespace

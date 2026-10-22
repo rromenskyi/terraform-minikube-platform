@@ -307,6 +307,7 @@ module "project" {
   chart_oidc_apps    = try(each.value.chart_oidc_apps, {})
 
   gcp_wif_service_accounts = try(each.value.gcp_wif_service_accounts, {})
+  volume_claims            = try(each.value.volume_claims, {})
 
   # Operator-supplied literal data for entries declared in this
   # project's `secrets:` map. When a `secrets:<name>` entry's name

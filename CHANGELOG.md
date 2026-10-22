@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Project `envs.<env>.volume_claims`: PersistentVolumeClaims the engine creates for chart-managed workloads (class, size, access modes), e.g. a shared ReadWriteMany volume an Argo CD chart mounts by name.
+- Piraeus `storage_classes[].mount_options`.
+
+### Added
 - `volume_node_label` on `component`, `roundcube`, `stalwart`, `seafile` and `mysql` (and `volume_node_labels` on `project`): pods with data on a StorageClass require that node label (`Exists`). The root passes `piraeus.volume_node_labels` (Piraeus classes => `linbit.com/hostname`, set by the LINSTOR CSI node plugin), so pods with LINSTOR volumes are scheduled only where the volume can attach. Applying it restarts those workloads once.
 
 ### Fixed

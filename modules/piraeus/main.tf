@@ -147,6 +147,7 @@ resource "kubernetes_storage_class_v1" "this" {
   reclaim_policy         = each.value.reclaim_policy
   volume_binding_mode    = "WaitForFirstConsumer"
   allow_volume_expansion = true
+  mount_options          = length(each.value.mount_options) > 0 ? each.value.mount_options : null
   parameters = merge(
     {
       "linstor.csi.linbit.com/storagePool"    = each.value.storage_pool

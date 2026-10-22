@@ -90,6 +90,16 @@ variable "storage_classes" {
       - resource_group: LINSTOR resource group the volumes are spawned from
         (created on first use). Empty: LINSTOR names it sc-<hash>. See the
         README for raising the copies of existing volumes.
+      - mount_options: passed to mount as is. ReadWriteMany claims on a
+        class are NFS exports (the operator's NFS server), so e.g. `soft`,
+        `timeo` (deciseconds), `retrans` there make an unreachable server
+        an I/O error after the retries (tens of seconds; NFS recovery after
+        a failover can add more) instead of a hung process. NFS-only
+        options break ReadWriteOnce (block) mounts: keep such a class for
+        RWX claims. Soft mounts can fail an operation the server did
+        complete, so only for data that may be lost or verified. Changing
+        the options replaces the class; existing mounts keep theirs until
+        their pods restart.
   EOT
   type = list(object({
     name            = string
@@ -99,6 +109,7 @@ variable "storage_classes" {
     reclaim_policy  = optional(string, "Retain")
     default         = optional(bool, false)
     resource_group  = optional(string, "")
+    mount_options   = optional(list(string), [])
   }))
   default = []
 }

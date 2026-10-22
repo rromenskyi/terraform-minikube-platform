@@ -223,3 +223,25 @@ variable "volume_node_labels" {
   type        = map(string)
   default     = {}
 }
+
+variable "volume_claims" {
+  description = "PersistentVolumeClaims the engine creates in the project namespace for workloads it does not render (Argo CD helm charts that mount an existing claim). Map of claim name => { storage_class, size, access_modes (default [\"ReadWriteOnce\"]) }. Declared under `envs.<env>.volume_claims:` in the domain yaml. Removing an entry, or changing its class or access modes, deletes the claim (a new one is created for a change): the volume is gone with a Delete class, or kept as a Released PersistentVolume with Retain, which does not bind to the new claim by itself. The size can only grow. With WaitForFirstConsumer classes a wrong class surfaces only when the chart's pod is scheduled (claim Pending)."
+  type = map(object({
+    storage_class = string
+    size          = string
+    access_modes  = optional(list(string), ["ReadWriteOnce"])
+  }))
+  default = {}
+
+  validation {
+    condition = alltrue([for c in values(var.volume_claims) : length(c.access_modes) > 0 && alltrue([
+      for m in c.access_modes : contains(["ReadWriteOnce", "ReadWriteMany", "ReadOnlyMany", "ReadWriteOncePod"], m)
+    ])])
+    error_message = "volume_claims: access_modes must be non-empty and each one of ReadWriteOnce, ReadWriteMany, ReadOnlyMany, ReadWriteOncePod."
+  }
+
+  validation {
+    condition     = alltrue([for c in values(var.volume_claims) : can(regex("^[0-9]+(Mi|Gi|Ti)$", c.size))])
+    error_message = "volume_claims: size must look like 500Mi, 250Gi or 1Ti."
+  }
+}
