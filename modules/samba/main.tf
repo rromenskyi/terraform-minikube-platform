@@ -32,8 +32,11 @@ terraform {
 }
 
 locals {
-  instances = var.enabled ? toset(["enabled"]) : toset([])
-  seed      = var.enabled && var.seed != null
+  # Seed claim name, shared by the claim and the Deployment's volume (which
+  # names it rather than referencing the resource; see there).
+  seed_claim_name = "samba-seed"
+  instances       = var.enabled ? toset(["enabled"]) : toset([])
+  seed            = var.enabled && var.seed != null
 
   tags = module.label.tags
 
@@ -333,7 +336,7 @@ resource "kubernetes_persistent_volume_claim_v1" "seed" {
   for_each = local.seed ? toset(["enabled"]) : toset([])
 
   metadata {
-    name      = "samba-seed"
+    name      = local.seed_claim_name
     namespace = kubernetes_namespace_v1.this["enabled"].metadata[0].name
     labels    = local.tags
   }
@@ -556,8 +559,11 @@ resource "kubernetes_deployment_v1" "this" {
               # pvc-protection) before updating this Deployment, and the apply
               # hung. Without one both run at once: the pod is replaced, the
               # claim is released and its delete completes. On creation the
-              # pod waits for the claim like for any unbound one.
-              claim_name = "samba-seed"
+              # pod waits for the claim like for any unbound one. Replacing
+              # the seed (new source or size) keeps this name, so the running
+              # pod would still hold the old claim: clear `seed`, apply, then
+              # set the new one.
+              claim_name = local.seed_claim_name
               read_only  = true
             }
           }
