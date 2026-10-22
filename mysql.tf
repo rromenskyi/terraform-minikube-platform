@@ -15,6 +15,7 @@ module "mysql" {
 
   storage_class     = local.platform.services.mysql.storage_class
   storage_seed_node = local.platform.services.mysql.storage_seed_node
+  volume_node_label = lookup(module.piraeus.volume_node_labels, local.platform.services.mysql.storage_class, "")
 
   node_selector = local.platform.services.mysql.node_selector
   tolerations   = local.platform.services.mysql.tolerations

@@ -201,6 +201,23 @@ resource "kubernetes_stateful_set_v1" "mysql" {
           local.seed ? { "kubernetes.io/hostname" = var.storage_seed_node } : {},
         ) : null
 
+        # Only on nodes where the volume can attach (volume_node_label).
+        dynamic "affinity" {
+          for_each = local.csi_storage && var.volume_node_label != "" ? [var.volume_node_label] : []
+          content {
+            node_affinity {
+              required_during_scheduling_ignored_during_execution {
+                node_selector_term {
+                  match_expressions {
+                    key      = affinity.value
+                    operator = "Exists"
+                  }
+                }
+              }
+            }
+          }
+        }
+
         # First start on a new volume: copy the old datadir in, so MySQL
         # never initialises an empty one (modules/volume-seed).
         dynamic "init_container" {

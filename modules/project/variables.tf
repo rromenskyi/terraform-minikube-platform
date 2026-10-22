@@ -217,3 +217,9 @@ variable "pod_security_level" {
     error_message = "pod_security_level must be empty, privileged, baseline or restricted."
   }
 }
+
+variable "volume_node_labels" {
+  description = "StorageClass name => node label its volumes need on the node (`Exists`), passed to components on that class as `volume_node_label`. Classes not listed add no constraint."
+  type        = map(string)
+  default     = {}
+}

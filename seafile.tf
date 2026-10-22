@@ -89,6 +89,7 @@ module "seafile" {
   redis_password = local.platform.services.redis.enabled ? module.redis.default_password : ""
 
   storage_class      = local.platform.services.seafile.storage_class
+  volume_node_label  = lookup(module.piraeus.volume_node_labels, local.platform.services.seafile.storage_class, "")
   storage_size       = local.platform.services.seafile.storage_size
   storage_layout     = local.platform.services.seafile.storage_layout
   storage_seed_class = local.platform.services.seafile.storage_seed_class

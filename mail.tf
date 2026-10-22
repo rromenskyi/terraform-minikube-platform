@@ -167,6 +167,7 @@ module "stalwart" {
 
   storage_class     = try(local.mail.storage_class, "")
   storage_seed_node = try(local.mail.storage_seed_node, "")
+  volume_node_label = lookup(module.piraeus.volume_node_labels, try(local.mail.storage_class, ""), "")
 
   # Primary domain + matching Cloudflare zone come from the domain
   # yaml that opts in via `mail.primary: true`. Hostname defaults to
@@ -289,6 +290,7 @@ module "roundcube" {
   # data (Stalwart + Roundcube) to a StorageClass; see the module variables.
   storage_class     = try(local.mail.storage_class, "")
   storage_seed_node = try(local.mail.storage_seed_node, "")
+  volume_node_label = lookup(module.piraeus.volume_node_labels, try(local.mail.storage_class, ""), "")
 
   zitadel_org_id                 = local.platform.services.zitadel.enabled ? data.zitadel_orgs.platform_org["enabled"].ids[0] : ""
   zitadel_issuer_url             = local.platform.services.zitadel.enabled ? "https://${local.platform.services.zitadel.external_domain}" : ""
