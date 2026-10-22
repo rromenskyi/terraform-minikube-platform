@@ -220,7 +220,7 @@ variable "vso_platform_readers" {
 
   validation {
     condition = alltrue([for r in values(var.vso_platform_readers) : length(r.namespaces) > 0 && length(r.paths) > 0 && alltrue([
-      for p in r.paths : can(regex("^platform/[A-Za-z0-9_./-]+$", p)) && !strcontains(p, "*") && !strcontains(p, "..")
+      for p in r.paths : can(regex("^platform(/[A-Za-z0-9_-]+)+$", p))
     ])])
     error_message = "vso_platform_readers: each entry needs namespaces and paths; paths are exact KV paths under platform/ (no wildcards)."
   }
