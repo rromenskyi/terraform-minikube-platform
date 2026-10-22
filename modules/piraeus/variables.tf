@@ -44,9 +44,14 @@ variable "csi_controller_replicas" {
 }
 
 variable "nfs_server_node_hostnames" {
-  description = "Nodes (`kubernetes.io/hostname`) the NFS server (DRBD Reactor + NFS-Ganesha, serving ReadWriteMany claims) runs on. The export comes up on whichever of its nodes promotes the volume first, so list the nodes holding the data copies: the export then always reads a local copy and moves to another copy on failure, instead of landing on a diskless node and pulling every read over its link. Must be a subset of `node_hostnames` (if set): this list replaces the node affinity there. Empty = every Satellite node."
+  description = "Nodes (`kubernetes.io/hostname`) the NFS server (DRBD Reactor + NFS-Ganesha, serving ReadWriteMany claims) runs on. The export comes up on whichever of its nodes promotes the volume first, so list the nodes holding the data copies: the export then reads a local copy (as long as the volumes' copies are on these nodes) and moves to another listed node on failure, instead of landing on a diskless node and pulling every read over its link. List at least two for failover. Must be a subset of `node_hostnames` when that is set: this list replaces its node affinity for the NFS server (`node_selector` still applies on top). Empty = the operator's default placement."
   type        = list(string)
   default     = []
+
+  validation {
+    condition     = length(var.node_hostnames) == 0 || alltrue([for h in var.nfs_server_node_hostnames : contains(var.node_hostnames, h)])
+    error_message = "nfs_server_node_hostnames must be a subset of node_hostnames."
+  }
 }
 
 variable "control_plane_node_selector" {

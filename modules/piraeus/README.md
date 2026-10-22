@@ -77,9 +77,12 @@ number of nodes the controller may run on). Changing it rolls the controller.
 ReadWriteMany claims are NFS exports: DRBD Reactor in the NFS server pod
 promotes the volume and starts NFS-Ganesha on whichever node wins, a diskless
 one included (then every read crosses that node's link twice). Set
-`nfs_server_node_hostnames` to the nodes with the storage pools to keep the
-export on a local copy; changing it moves live exports (clients see I/O errors
-for about the NFS grace period, longer than a soft mount's retries).
+`nfs_server_node_hostnames` to the nodes with the storage pools (at least two)
+to keep exports on a local copy, as long as the volumes' copies live there.
+Changing it rolls the NFS server pods and moves live exports off removed
+nodes: clients get I/O errors (soft mounts) or stall (hard) until another node
+has promoted the volume and NFS-Ganesha has finished its grace period. Check
+afterwards that no removed node is still DRBD Primary for an export.
 
 Removing a node from the list deletes its Satellite: first move the pods
 that use Piraeus volumes there and, if it holds replicas, evacuate them
