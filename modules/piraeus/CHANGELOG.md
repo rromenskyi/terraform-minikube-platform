@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- `controller_properties` (optional): LINSTOR cluster-wide properties via LinstorCluster `spec.properties` (merged over the operator's defaults), e.g. a higher DRBD resync cap `DrbdOptions/PeerDevice/c-max-rate`.
 - `nfs_server_node_hostnames` (optional): run the NFS server (ReadWriteMany exports) only on the listed nodes, e.g. those with the data copies, so an export never lands on a diskless node.
 - `storage_classes[].mount_options` (optional): mount options of the class, e.g. `soft`/`timeo`/`retrans` for ReadWriteMany (NFS-exported) volumes.
 - `csi_controller_replicas` (default 1): run the CSI controller with several leader-elected replicas on different nodes, so attach/detach keeps working when the node with the active one dies (with one replica an RWO volume could not move off a dead node until the replica was evicted, ~5 min).

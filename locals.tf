@@ -268,6 +268,7 @@ locals {
         node_hostnames              = []
         csi_controller_replicas     = 1
         nfs_server_node_hostnames   = []
+        controller_properties       = {}
         control_plane_node_selector = {}
         host_network                = true
         drbd_loader_mode            = "deps_only"

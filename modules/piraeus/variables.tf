@@ -54,6 +54,13 @@ variable "nfs_server_node_hostnames" {
   }
 }
 
+variable "controller_properties" {
+  description = "LINSTOR controller (cluster-wide) properties, name => value, set through LinstorCluster `spec.properties` and merged over the operator's defaults. Inherited by every resource unless a resource group or resource overrides them, e.g. `DrbdOptions/PeerDevice/c-max-rate` (KiB/s; DRBD's default 102400 caps a resync at ~100 MiB/s)."
+  type        = map(string)
+  default     = {}
+  nullable    = false
+}
+
 variable "control_plane_node_selector" {
   description = "Labels of the nodes for the operator, the LINSTOR controller and the CSI controller. Empty = anywhere."
   type        = map(string)
