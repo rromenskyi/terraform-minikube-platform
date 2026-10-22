@@ -90,6 +90,10 @@ variable "storage_classes" {
       - resource_group: LINSTOR resource group the volumes are spawned from
         (created on first use). Empty: LINSTOR names it sc-<hash>. See the
         README for raising the copies of existing volumes.
+      - mount_options: passed to mount as is. ReadWriteMany claims on a
+        class are NFS exports (the operator's NFS server), so e.g. `soft`,
+        `timeo`, `retrans` there make an unreachable server an I/O error
+        instead of a hung process. Changing them replaces the class.
   EOT
   type = list(object({
     name            = string
@@ -99,6 +103,7 @@ variable "storage_classes" {
     reclaim_policy  = optional(string, "Retain")
     default         = optional(bool, false)
     resource_group  = optional(string, "")
+    mount_options   = optional(list(string), [])
   }))
   default = []
 }

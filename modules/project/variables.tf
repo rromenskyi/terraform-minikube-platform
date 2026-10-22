@@ -223,3 +223,20 @@ variable "volume_node_labels" {
   type        = map(string)
   default     = {}
 }
+
+variable "volume_claims" {
+  description = "PersistentVolumeClaims the engine creates in the project namespace for workloads it does not render (Argo CD helm charts that mount an existing claim). Map of claim name => { storage_class, size, access_modes (default [\"ReadWriteOnce\"]) }. Declared under `envs.<env>.volume_claims:` in the domain yaml. Removing an entry deletes the claim; the volume stays only if its class retains it."
+  type = map(object({
+    storage_class = string
+    size          = string
+    access_modes  = optional(list(string), ["ReadWriteOnce"])
+  }))
+  default = {}
+
+  validation {
+    condition = alltrue([for c in values(var.volume_claims) : length(c.access_modes) > 0 && alltrue([
+      for m in c.access_modes : contains(["ReadWriteOnce", "ReadWriteMany", "ReadOnlyMany", "ReadWriteOncePod"], m)
+    ])])
+    error_message = "volume_claims: access_modes must be non-empty and each one of ReadWriteOnce, ReadWriteMany, ReadOnlyMany, ReadWriteOncePod."
+  }
+}
