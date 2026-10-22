@@ -32,6 +32,17 @@ variable "node_hostnames" {
   }
 }
 
+variable "csi_controller_replicas" {
+  description = "Replicas of the CSI controller (leader-elected attacher, provisioner, resizer, snapshotter), spread over nodes when more than one. With one, losing its node blocks every attach/detach until Kubernetes evicts it from the dead node (about 5 minutes): an RWO volume cannot move off that node meanwhile. Keep it below the number of nodes the controller may run on (required anti-affinity: a replica without a free node stays Pending)."
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.csi_controller_replicas >= 1 && floor(var.csi_controller_replicas) == var.csi_controller_replicas
+    error_message = "csi_controller_replicas must be a whole number >= 1."
+  }
+}
+
 variable "control_plane_node_selector" {
   description = "Labels of the nodes for the operator, the LINSTOR controller and the CSI controller. Empty = anywhere."
   type        = map(string)

@@ -33,6 +33,17 @@ locals {
       }]
     }
   } : {}
+  # Several CSI controller replicas only help on different nodes.
+  csi_controller_spread = var.csi_controller_replicas > 1 ? {
+    affinity = {
+      podAntiAffinity = {
+        requiredDuringSchedulingIgnoredDuringExecution = [{
+          topologyKey   = "kubernetes.io/hostname"
+          labelSelector = { matchLabels = { "app.kubernetes.io/component" = "linstor-csi-controller" } }
+        }]
+      }
+    }
+  } : {}
 }
 
 resource "kubernetes_namespace_v1" "this" {
@@ -68,7 +79,7 @@ resource "kubectl_manifest" "cluster" {
     spec = merge({
       nodeSelector  = var.node_selector
       controller    = { podTemplate = { spec = local.cp_pin } }
-      csiController = { podTemplate = { spec = local.cp_pin } }
+      csiController = { replicas = var.csi_controller_replicas, podTemplate = { spec = merge(local.cp_pin, local.csi_controller_spread) } }
     }, local.satellite_affinity)
   })
 }

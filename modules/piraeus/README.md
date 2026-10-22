@@ -66,6 +66,14 @@ HA/affinity controllers, NFS server): include the nodes
 Setting or changing it rolls those workloads once; mounted volumes keep
 working, attach/detach and provisioning pause meanwhile.
 
+Node failure: the HA controller (operator default) force-deletes a pod with a
+DRBD volume on a node that dropped out of the DRBD connections and deletes its
+VolumeAttachment; the CSI controller's attacher then detaches it, and the pod
+starts elsewhere. With one CSI controller replica on the failed node nothing
+detaches until Kubernetes evicts that replica (about 5 minutes): set
+`csi_controller_replicas: 2` (leader-elected, one per node; keep it below the
+number of nodes the controller may run on). Changing it rolls the controller.
+
 Removing a node from the list deletes its Satellite: first move the pods
 that use Piraeus volumes there and, if it holds replicas, evacuate them
 (`linstor node evacuate`); the LINSTOR node record may stay behind.
