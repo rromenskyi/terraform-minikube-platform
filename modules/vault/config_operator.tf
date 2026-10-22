@@ -325,3 +325,54 @@ resource "kubectl_manifest" "vso_tenant_role" {
     }
   })
 }
+
+# Narrow VSO identities for platform services (`var.vso_platform_readers`):
+# read on the listed `platform/<path>` secrets only, bound to the service's
+# namespaces, instead of the shared role that reads every tenant's and the
+# platform's secrets.
+resource "kubectl_manifest" "vso_platform_reader_policy" {
+  for_each = var.enabled ? var.vso_platform_readers : {}
+
+  depends_on = [helm_release.vault_config_operator]
+
+  yaml_body = yamlencode({
+    apiVersion = "redhatcop.redhat.io/v1alpha1"
+    kind       = "Policy"
+    metadata = {
+      name      = "vso-platform-${each.key}"
+      namespace = kubernetes_namespace_v1.vault_config_operator["enabled"].metadata[0].name
+    }
+    spec = {
+      authentication = local.vco_authentication
+      connection     = local.vco_connection
+      policy = join("\n", flatten([for path in each.value.paths : [
+        "path \"secret/data/${path}\"     { capabilities = [\"read\"] }",
+        "path \"secret/metadata/${path}\" { capabilities = [\"read\"] }",
+      ]]))
+    }
+  })
+}
+
+resource "kubectl_manifest" "vso_platform_reader_role" {
+  for_each = var.enabled ? var.vso_platform_readers : {}
+
+  depends_on = [kubectl_manifest.vso_platform_reader_policy, kubectl_manifest.kv_v2_mount]
+
+  yaml_body = yamlencode({
+    apiVersion = "redhatcop.redhat.io/v1alpha1"
+    kind       = "KubernetesAuthEngineRole"
+    metadata = {
+      name      = "vso-platform-${each.key}"
+      namespace = kubernetes_namespace_v1.vault_config_operator["enabled"].metadata[0].name
+    }
+    spec = {
+      authentication        = local.vco_authentication
+      connection            = local.vco_connection
+      path                  = "kubernetes"
+      targetServiceAccounts = ["vault-secrets-operator-controller-manager"]
+      targetNamespaces      = { targetNamespaces = each.value.namespaces }
+      policies              = ["vso-platform-${each.key}"]
+      tokenTTL              = 86400 # 24h
+    }
+  })
+}

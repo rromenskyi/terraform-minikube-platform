@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Samba: the account passwords sync from Vault again (they never did: `secret "samba-accounts" not found`, Vault login 403 — the default VSO role does not bind the `nas` namespace). Samba now authenticates through its own VaultAuth with role `vso-platform-samba`, which reads only `services.samba.vault_path`.
+
+### Added
+- Vault `vso_platform_readers`: narrow VSO identities (policy + kubernetes-auth role `vso-platform-<name>`) that read only listed `platform/...` secrets, for platform services that must not get the shared role.
+- Samba `vault_auth_role`.
+
 ### Added
 - Project `envs.<env>.volume_claims`: PersistentVolumeClaims the engine creates for chart-managed workloads (class, size, access modes), e.g. a shared ReadWriteMany volume an Argo CD chart mounts by name.
 - Piraeus `storage_classes[].mount_options`.

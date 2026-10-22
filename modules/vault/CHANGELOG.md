@@ -7,6 +7,9 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- `vso_platform_readers`: narrow VSO identities (policy + kubernetes-auth role `vso-platform-<name>`) reading only listed `platform/...` secrets.
+
 ### Security
 - `snapshot_backup`: kubernetes-auth role `backup-snapshot` with read on
   `sys/storage/raft/snapshot` only, for the backup Job.

@@ -208,3 +208,20 @@ variable "init_image" {
   type        = string
   default     = "bitnami/kubectl:latest@sha256:f7f9e4f64d9e114650c115a4ac6fd383394b3d494061a8f17b1a0f6c8d55bc25"
 }
+
+variable "vso_platform_readers" {
+  description = "Name => { namespaces, paths }: a VSO identity that reads only the listed secrets (KV paths under the `secret` mount, each starting with `platform/`, exact, no wildcards), for platform services that need one or two secrets and not the shared role's everything. Each entry gets a policy and a kubernetes-auth role `vso-platform-<name>` bound to those namespaces; the service references the role through its own VaultAuth."
+  type = map(object({
+    namespaces = list(string)
+    paths      = list(string)
+  }))
+  default  = {}
+  nullable = false
+
+  validation {
+    condition = alltrue([for r in values(var.vso_platform_readers) : length(r.namespaces) > 0 && length(r.paths) > 0 && alltrue([
+      for p in r.paths : can(regex("^platform(/[A-Za-z0-9_-]+)+$", p))
+    ])])
+    error_message = "vso_platform_readers: each entry needs namespaces and paths; paths are exact KV paths under platform/ (no wildcards)."
+  }
+}
