@@ -33,6 +33,9 @@ locals {
       }]
     }
   } : {}
+  cluster_properties = length(var.controller_properties) > 0 ? {
+    properties = [for name, value in var.controller_properties : { name = name, value = value }]
+  } : {}
   # NFS server only on the listed nodes. The operator applies this pod
   # template after its own node affinity patch, so it replaces it.
   nfs_server = length(var.nfs_server_node_hostnames) > 0 ? {
@@ -99,7 +102,7 @@ resource "kubectl_manifest" "cluster" {
       nodeSelector  = var.node_selector
       controller    = { podTemplate = { spec = local.cp_pin } }
       csiController = { replicas = var.csi_controller_replicas, podTemplate = { spec = merge(local.cp_pin, local.csi_controller_spread) } }
-    }, local.satellite_affinity, local.nfs_server)
+    }, local.satellite_affinity, local.nfs_server, local.cluster_properties)
   })
 }
 
