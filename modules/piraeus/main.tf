@@ -156,6 +156,24 @@ resource "kubectl_manifest" "storage_pool" {
   })
 }
 
+resource "kubectl_manifest" "satellite_properties" {
+  for_each   = var.enabled ? var.satellite_properties : {}
+  depends_on = [helm_release.operator]
+  yaml_body = yamlencode({
+    apiVersion = "piraeus.io/v1"
+    kind       = "LinstorSatelliteConfiguration"
+    metadata   = { name = "properties-${each.key}" }
+    spec = {
+      nodeAffinity = {
+        nodeSelectorTerms = [{
+          matchExpressions = [{ key = "kubernetes.io/hostname", operator = "In", values = each.value.node_hostnames }]
+        }]
+      }
+      properties = [for name, value in each.value.properties : { name = name, value = value }]
+    }
+  })
+}
+
 resource "kubernetes_storage_class_v1" "this" {
   for_each = var.enabled ? { for sc in var.storage_classes : sc.name => sc } : {}
 
@@ -177,5 +195,6 @@ resource "kubernetes_storage_class_v1" "this" {
       "csi.storage.k8s.io/fstype"             = each.value.fs_type
     },
     each.value.resource_group != "" ? { "linstor.csi.linbit.com/resourceGroup" = each.value.resource_group } : {},
+    length(each.value.x_replicas_on_different) > 0 ? { "linstor.csi.linbit.com/xReplicasOnDifferent" = jsonencode(each.value.x_replicas_on_different) } : {},
   )
 }

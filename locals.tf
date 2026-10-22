@@ -267,6 +267,7 @@ locals {
         node_selector               = {}
         node_hostnames              = []
         csi_controller_replicas     = 1
+        satellite_properties        = {}
         nfs_server_node_hostnames   = []
         controller_properties       = {}
         control_plane_node_selector = {}
