@@ -44,12 +44,14 @@ locals {
   # set, `<label> Exists` ANDed into every required node selector term (the
   # pod only goes where the volume can attach).
   volume_node_requirement = local.csi_storage && var.volume_node_label != "" ? [{ key = var.volume_node_label, operator = "Exists" }] : []
-  required_node_terms     = try(var.affinity.node_affinity.required_during_scheduling_ignored_during_execution.node_selector_terms, [])
+  # null = no required node affinity given; an explicit empty list (match
+  # no node) stays empty.
+  required_node_terms = try(var.affinity.node_affinity.required_during_scheduling_ignored_during_execution.node_selector_terms, null)
   pod_affinity = merge(var.affinity, { for k, v in {
     node_affinity = merge(try(var.affinity.node_affinity, {}), {
       required_during_scheduling_ignored_during_execution = {
         node_selector_terms = [
-          for t in(length(local.required_node_terms) > 0 ? local.required_node_terms : [{}]) :
+          for t in(local.required_node_terms == null ? [{}] : local.required_node_terms) :
           merge(t, { match_expressions = concat(try(t.match_expressions, []), local.volume_node_requirement) })
         ]
       }
