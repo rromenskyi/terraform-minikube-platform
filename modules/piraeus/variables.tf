@@ -43,6 +43,12 @@ variable "csi_controller_replicas" {
   }
 }
 
+variable "nfs_server_node_hostnames" {
+  description = "Nodes (`kubernetes.io/hostname`) the NFS server (DRBD Reactor + NFS-Ganesha, serving ReadWriteMany claims) runs on. The export comes up on whichever of its nodes promotes the volume first, so list the nodes holding the data copies: the export then always reads a local copy and moves to another copy on failure, instead of landing on a diskless node and pulling every read over its link. Must be a subset of `node_hostnames` (if set): this list replaces the node affinity there. Empty = every Satellite node."
+  type        = list(string)
+  default     = []
+}
+
 variable "control_plane_node_selector" {
   description = "Labels of the nodes for the operator, the LINSTOR controller and the CSI controller. Empty = anywhere."
   type        = map(string)

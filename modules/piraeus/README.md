@@ -74,6 +74,13 @@ detaches until Kubernetes evicts that replica (about 5 minutes): set
 `csi_controller_replicas: 2` (leader-elected, one per node; keep it below the
 number of nodes the controller may run on). Changing it rolls the controller.
 
+ReadWriteMany claims are NFS exports: DRBD Reactor in the NFS server pod
+promotes the volume and starts NFS-Ganesha on whichever node wins, a diskless
+one included (then every read crosses that node's link twice). Set
+`nfs_server_node_hostnames` to the nodes with the storage pools to keep the
+export on a local copy; changing it moves live exports (clients see I/O errors
+for about the NFS grace period, longer than a soft mount's retries).
+
 Removing a node from the list deletes its Satellite: first move the pods
 that use Piraeus volumes there and, if it holds replicas, evacuate them
 (`linstor node evacuate`); the LINSTOR node record may stay behind.
