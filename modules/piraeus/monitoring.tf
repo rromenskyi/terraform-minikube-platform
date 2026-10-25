@@ -75,8 +75,11 @@ resource "kubectl_manifest" "rules" {
               # registered in Kubernetes: a node removed on purpose (e.g. a
               # powered-off autoscaled node) keeps its LINSTOR node under
               # deletionPolicy Retain, offline until it registers again.
+              # Satellites are named after their Nodes (Piraeus). While
+              # kube-state-metrics reports no nodes at all, every satellite
+              # counts, so its outage cannot silence this alert.
               alert       = "LinstorSatelliteNotOnline"
-              expr        = "linstor_node_state{nodetype=\"SATELLITE\"} != 2 and on (node) kube_node_info"
+              expr        = "linstor_node_state{nodetype=\"SATELLITE\"} != 2 and on (node) (kube_node_info or (linstor_node_state{nodetype=\"SATELLITE\"} unless on () kube_node_info))"
               for         = "5m"
               labels      = { severity = "critical" }
               annotations = { summary = "LINSTOR satellite {{ $labels.node }} is not online" }

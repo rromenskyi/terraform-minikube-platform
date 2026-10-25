@@ -23,7 +23,7 @@ variable "version_pin" {
 }
 
 variable "cluster_autoscaler_enabled" {
-  description = "Longhorn setting `kubernetes-cluster-autoscaler-enabled`: tells Longhorn that cluster-autoscaler removes nodes, so it no longer blocks the scale-down of a node with its instance-manager PodDisruptionBudget unless the node holds the last healthy replica of a volume. Needed when any node with Longhorn components is autoscaled."
+  description = "Longhorn setting `kubernetes-cluster-autoscaler-enabled` (experimental upstream): tells Longhorn that cluster-autoscaler removes nodes. Longhorn then drops a node's instance-manager PodDisruptionBudget when the node has no attached volume and holds no last healthy replica, and marks its own workloads safe to evict, so cluster-autoscaler can empty the node. Cluster-wide: manual drains get the same relaxed budgets. Needed when any node with Longhorn components is autoscaled."
   type        = bool
   default     = false
   nullable    = false
