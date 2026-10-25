@@ -8,6 +8,9 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- `volume_preferred_node_selectors`: with the data on `storage_class`, a soft preference for the nodes holding the volume's copies.
+
+### Added
 - `storage_class` / `storage_seed_node`: SQLite volume on a StorageClass (PVC
   `data-roundcube`), with a one-time copy of the old hostPath directory on
   the first start (modules/volume-seed).

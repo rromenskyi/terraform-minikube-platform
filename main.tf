@@ -274,6 +274,8 @@ module "project" {
 
   # Components on a Piraeus class only go where its volumes can attach.
   volume_node_labels = module.piraeus.volume_node_labels
+  # Components with volumes on a LINSTOR class prefer its storage nodes.
+  volume_preferred_node_selectors = module.piraeus.volume_preferred_node_selectors
 
   pod_security_enforce = each.value.pod_security_enforce
   components           = local.components

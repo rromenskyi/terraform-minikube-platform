@@ -8,6 +8,9 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- `volume_preferred_node_selectors`: with volumes on `storage_class`, a soft preference (weight 100, one term per selector) for the nodes holding the volume's copies, added to the caller's own preferred node terms.
+
+### Added
 - `env_from_secrets`: existing Secrets mounted whole as env (`envFrom`).
 - `image_pull_secrets`: the pod's `imagePullSecrets`, for components under
   their own ServiceAccount, which does not inherit the default one's.

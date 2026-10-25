@@ -8,6 +8,9 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- `volume_preferred_node_selectors` (StorageClass => node selectors), passed to components with `storage_class`.
+
+### Added
 - `argocd_helm_repos` input: registry paths of OCI Helm chart repositories join
   the AppProject `sourceRepos`, so multi-source Applications can take the chart
   from a registry and values from the bootstrap repo.
