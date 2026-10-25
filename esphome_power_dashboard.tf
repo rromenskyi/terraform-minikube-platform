@@ -100,10 +100,12 @@ resource "kubernetes_config_map_v1" "esphome_power_dashboard" {
           }]
         },
         {
-          type       = "state-timeline"
-          title      = "Relay (1 = on) and reachability"
-          gridPos    = { x = 0, y = 20, w = 24, h = 7 }
+          type  = "state-timeline"
+          title = "Relay (1 = on) and reachability"
+          # Two rows per plug: ~25 px each, with a gap between rows.
+          gridPos    = { x = 0, y = 20, w = 24, h = 20 }
           datasource = local._esphome_ds
+          options    = { rowHeight = 0.8, mergeValues = true, showValue = "auto" }
           # Without an explicit color mode the state timeline uses its
           # continuous green-to-red default, which paints 1 (on / up) red.
           fieldConfig = {
