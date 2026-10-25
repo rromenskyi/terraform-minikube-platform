@@ -98,13 +98,14 @@ module "seafile" {
   oidc_client_id     = try(module.seafile_oidc["enabled"].client_id, "")
   oidc_client_secret = try(module.seafile_oidc["enabled"].client_secret, "")
 
-  timezone       = local.platform.services.seafile.timezone
-  cpu_request    = local.platform.services.seafile.cpu_request
-  cpu_limit      = local.platform.services.seafile.cpu_limit
-  memory_request = local.platform.services.seafile.memory_request
-  memory_limit   = local.platform.services.seafile.memory_limit
-  node_selector  = local.platform.services.seafile.node_selector
-  tolerations    = local.platform.services.seafile.tolerations
+  timezone                = local.platform.services.seafile.timezone
+  cpu_request             = local.platform.services.seafile.cpu_request
+  cpu_limit               = local.platform.services.seafile.cpu_limit
+  memory_request          = local.platform.services.seafile.memory_request
+  memory_limit            = local.platform.services.seafile.memory_limit
+  node_selector           = local.platform.services.seafile.node_selector
+  preferred_node_affinity = local.node_pool_preference["seafile"]
+  tolerations             = local.platform.services.seafile.tolerations
 }
 
 output "seafile_url" {

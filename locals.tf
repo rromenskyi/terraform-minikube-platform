@@ -269,6 +269,8 @@ locals {
         csi_controller_replicas     = 1
         satellite_properties        = {}
         nfs_server_node_hostnames   = []
+        nfs_server_node_pools       = []
+        node_hostname_pools         = []
         controller_properties       = {}
         control_plane_node_selector = {}
         host_network                = true
@@ -679,6 +681,9 @@ locals {
     monitoring = try(local._platform_raw.monitoring, {})
     # Operator gate allowlist (`forward_auth.allowed_emails` / `allowed_domains`).
     forward_auth = try(local._platform_raw.forward_auth, {})
+    # Node pools (node_pools.tf): pool name => { nodes }.
+    node_pools      = try(local._platform_raw.node_pools, {})
+    node_pool_label = try(local._platform_raw.node_pool_label, "node-pool")
   }
 
   # Load raw domain configs from YAML files

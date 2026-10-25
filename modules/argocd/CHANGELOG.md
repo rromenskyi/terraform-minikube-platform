@@ -7,6 +7,9 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- `preferred_node_affinity` (label => values): soft node preference (`preferredDuringScheduling`, weight 100).
+
 ### Security
 - OIDC client secret moved from `argocd-cm` (ConfigMap) to `argocd-secret`;
   the config references `$oidc.clientSecret`.

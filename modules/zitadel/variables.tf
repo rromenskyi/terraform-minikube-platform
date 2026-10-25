@@ -108,3 +108,10 @@ variable "login_policy" {
   })
   default = {}
 }
+
+variable "preferred_node_affinity" {
+  description = "Soft node preference, node label key => values (`preferredDuringScheduling`, operator In, weight 100): the pod goes to such a node when one fits and anywhere allowed otherwise. E.g. a node-pool label (ADR 0020 in the operator's config). Empty = none."
+  type        = map(list(string))
+  default     = {}
+  nullable    = false
+}

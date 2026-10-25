@@ -419,16 +419,36 @@ resource "kubernetes_deployment_v1" "this" {
       spec {
         node_selector = var.node_selector
 
-        # Only on nodes where the volume can attach (volume_node_label).
+        # Only on nodes where the volume can attach (volume_node_label), and
+        # preferably on the nodes in preferred_node_affinity.
         dynamic "affinity" {
-          for_each = var.storage_class != "" && var.volume_node_label != "" ? [var.volume_node_label] : []
+          for_each = (var.storage_class != "" && var.volume_node_label != "") || length(var.preferred_node_affinity) > 0 ? [1] : []
           content {
             node_affinity {
-              required_during_scheduling_ignored_during_execution {
-                node_selector_term {
-                  match_expressions {
-                    key      = affinity.value
-                    operator = "Exists"
+              dynamic "required_during_scheduling_ignored_during_execution" {
+                for_each = var.storage_class != "" && var.volume_node_label != "" ? [var.volume_node_label] : []
+                content {
+                  node_selector_term {
+                    match_expressions {
+                      key      = required_during_scheduling_ignored_during_execution.value
+                      operator = "Exists"
+                    }
+                  }
+                }
+              }
+              dynamic "preferred_during_scheduling_ignored_during_execution" {
+                for_each = length(var.preferred_node_affinity) > 0 ? [1] : []
+                content {
+                  weight = 100
+                  preference {
+                    dynamic "match_expressions" {
+                      for_each = var.preferred_node_affinity
+                      content {
+                        key      = match_expressions.key
+                        operator = "In"
+                        values   = match_expressions.value
+                      }
+                    }
                   }
                 }
               }
