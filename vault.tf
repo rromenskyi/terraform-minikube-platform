@@ -115,9 +115,15 @@ module "vault" {
 
   # Narrow readers of single platform secrets (modules/vault
   # vso_platform_readers): the file server reads its account passwords only.
-  vso_platform_readers = local.platform.services.samba.enabled ? {
-    samba = { namespaces = [local.platform.services.samba.namespace], paths = [local.platform.services.samba.vault_path] }
-  } : {}
+  vso_platform_readers = merge(
+    local.platform.services.samba.enabled ? {
+      samba = { namespaces = [local.platform.services.samba.namespace], paths = [local.platform.services.samba.vault_path] }
+    } : {},
+    # plugpool reads the plugs' web password only.
+    local.cluster_autoscaler_on ? {
+      plugpool = { namespaces = [local.platform.services.cluster_autoscaler.namespace], paths = [local.cluster_autoscaler_vault_path] }
+    } : {},
+  )
 
   vso_shared_namespaces = distinct(concat(
     local.platform.services.argocd.enabled ? [local.platform.services.argocd.namespace] : [],
