@@ -426,9 +426,13 @@ locals {
         # contends with the active build for the OCI worker lock).
         # Defaults below are the values that survived a real ARC
         # build cycle on this cluster.
-        enabled                         = false
-        image_tag                       = "v0.33.1"
-        host_path                       = "/data/vol/buildkit-cache"
+        enabled   = false
+        image_tag = "v0.33.1"
+        host_path = "/data/vol/buildkit-cache"
+        # Non-empty = the cache on a PVC of this class (`storage_size`)
+        # instead of `host_path`, so it follows the Pod across nodes.
+        storage_class                   = ""
+        storage_size                    = "100Gi"
         mount_path                      = "/var/lib/buildkit"
         cpu_request                     = "200m"
         cpu_limit                       = "4"

@@ -6,7 +6,8 @@
 # live on a hostPath so sequential builds reuse layers across runner
 # pods (which are ephemeral). hostPath survives Pod restarts but
 # pins the daemon to one node — single-replica + node_selector
-# keeps the cache stable.
+# keeps the cache stable. With `storage_class` the cache is a PVC
+# instead, and on a replicated class it moves with the Pod.
 #
 # Why standalone vs `--driver kubernetes` (per-job buildkitd Pod):
 # the kubernetes driver creates / destroys a buildkitd Pod per
@@ -56,6 +57,36 @@ terraform {
 
 locals {
   instances = var.enabled ? toset(["enabled"]) : toset([])
+
+  # Cache on a PVC (`storage_class`) instead of a hostPath.
+  cache_on_pvc = var.storage_class != ""
+
+  # (jsondecode/jsonencode: the two branches are objects of different shapes)
+  cache_volume = jsondecode(local.cache_on_pvc ? jsonencode({
+    name                  = "cache"
+    persistentVolumeClaim = { claimName = "buildkitd-cache" }
+    }) : jsonencode({
+    name     = "cache"
+    hostPath = { path = var.host_path, type = "DirectoryOrCreate" }
+  }))
+
+  # Required: only nodes where the cache volume can attach. Preferred:
+  # `preferred_node_affinity`. Omitted from the Pod spec when both are empty.
+  node_affinity = merge(
+    local.cache_on_pvc && var.volume_node_label != "" ? {
+      requiredDuringSchedulingIgnoredDuringExecution = {
+        nodeSelectorTerms = [{ matchExpressions = [{ key = var.volume_node_label, operator = "Exists" }] }]
+      }
+    } : {},
+    length(var.preferred_node_affinity) > 0 ? {
+      preferredDuringSchedulingIgnoredDuringExecution = [{
+        weight = 100
+        preference = {
+          matchExpressions = [for k, v in var.preferred_node_affinity : { key = k, operator = "In", values = v }]
+        }
+      }]
+    } : {},
+  )
 }
 
 # Module-tier label, chained off `var.context` (root passes
@@ -107,24 +138,23 @@ resource "kubectl_manifest" "this" {
     }
     spec = {
       # Single replica — one shared cache. Scaling out fragments
-      # cache locality (each Pod's hostPath is independent on its
-      # node) and would need a session-affinity layer in front of
+      # cache locality (each Pod's cache is its own) and would need a session-affinity layer in front of
       # the Service to keep a build pinned to its warm replica.
       replicas = 1
       selector = {
         matchLabels = { "app.kubernetes.io/name" = "buildkitd" }
       }
       strategy = {
-        # Recreate not RollingUpdate: hostPath cache is
-        # node-pinned and we don't want two Pods racing on the
-        # same files during a rollover.
+        # Recreate not RollingUpdate: two Pods must not race on the
+        # same cache files during a rollover (and a ReadWriteOnce
+        # cache PVC attaches to one node at a time).
         type = "Recreate"
       }
       template = {
         metadata = {
           labels = { "app.kubernetes.io/name" = "buildkitd" }
         }
-        spec = {
+        spec = merge({
           hostUsers    = false
           nodeSelector = var.node_selector
           tolerations  = var.tolerations
@@ -169,20 +199,43 @@ resource "kubectl_manifest" "this" {
               }
             }
           }]
-          volumes = [{
-            name = "cache"
-            hostPath = {
-              path = var.host_path
-              type = "DirectoryOrCreate"
-            }
-          }]
-        }
+          volumes = [local.cache_volume]
+        }, length(local.node_affinity) > 0 ? { affinity = { nodeAffinity = local.node_affinity } } : {})
       }
     }
   })
 
   wait_for_rollout = true
-  depends_on       = [kubernetes_namespace_v1.this]
+  depends_on       = [kubernetes_namespace_v1.this, kubernetes_persistent_volume_claim_v1.cache]
+}
+
+# Build cache volume when `storage_class` is set. Disposable data: a lost
+# cache only makes the next builds slower.
+resource "kubernetes_persistent_volume_claim_v1" "cache" {
+  for_each = local.cache_on_pvc ? local.instances : toset([])
+
+  metadata {
+    name      = "buildkitd-cache"
+    namespace = kubernetes_namespace_v1.this["enabled"].metadata[0].name
+    labels = merge(module.label.tags, {
+      "app.kubernetes.io/name"      = "buildkitd"
+      "app.kubernetes.io/component" = "buildkitd"
+    })
+  }
+
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = var.storage_class
+
+    resources {
+      requests = {
+        storage = var.storage_size
+      }
+    }
+  }
+
+  # Bound only once the Pod is scheduled (WaitForFirstConsumer classes).
+  wait_until_bound = false
 }
 
 resource "kubernetes_service_v1" "this" {

@@ -7,6 +7,13 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- `storage_class` / `storage_size`: build cache on a PVC (`buildkitd-cache`)
+  instead of the hostPath, so on a replicated class the cache follows the
+  Pod. Default unchanged (hostPath). `volume_node_label` (required
+  affinity on the CSI node label) and `preferred_node_affinity` (soft
+  node preference).
+
 ### Security
 - `allowed_client_namespaces`: NetworkPolicy so only those namespaces reach
   the unauthenticated buildkitd API.

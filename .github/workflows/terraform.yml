@@ -40,3 +40,9 @@ jobs:
       run: |
         terraform init -backend=false
         terraform test
+
+    - name: Terraform Test (modules/buildkitd)
+      working-directory: modules/buildkitd
+      run: |
+        terraform init -backend=false
+        terraform test

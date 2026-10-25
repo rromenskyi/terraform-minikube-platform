@@ -30,6 +30,11 @@ module "buildkitd" {
   readiness_timeout_seconds       = local.platform.services.buildkitd.readiness_timeout_seconds
   readiness_failure_threshold     = local.platform.services.buildkitd.readiness_failure_threshold
 
+  storage_class           = local.platform.services.buildkitd.storage_class
+  storage_size            = local.platform.services.buildkitd.storage_size
+  volume_node_label       = lookup(module.piraeus.volume_node_labels, local.platform.services.buildkitd.storage_class, "")
+  preferred_node_affinity = local.node_pool_preference["buildkitd"]
+
   node_selector = local.platform.services.buildkitd.node_selector
   tolerations   = local.platform.services.buildkitd.tolerations
 }
