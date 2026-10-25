@@ -14,8 +14,8 @@ Cluster-internal BuildKit daemon for self-hosted runner image builds — single 
 
 | Name | Version |
 | ---- | ------- |
-| <a name="provider_kubectl"></a> [kubectl](#provider\_kubectl) | ~> 1.14 |
-| <a name="provider_kubernetes"></a> [kubernetes](#provider\_kubernetes) | ~> 2.0 |
+| <a name="provider_kubectl"></a> [kubectl](#provider\_kubectl) | 1.19.0 |
+| <a name="provider_kubernetes"></a> [kubernetes](#provider\_kubernetes) | 2.38.0 |
 
 ## Modules
 
@@ -54,7 +54,7 @@ Cluster-internal BuildKit daemon for self-hosted runner image builds — single 
 | <a name="input_readiness_initial_delay_seconds"></a> [readiness\_initial\_delay\_seconds](#input\_readiness\_initial\_delay\_seconds) | `readinessProbe.initialDelaySeconds`. buildkitd boots fast (binary, no JVM), so the default of `5` is more than enough. | `number` | `5` | no |
 | <a name="input_readiness_period_seconds"></a> [readiness\_period\_seconds](#input\_readiness\_period\_seconds) | `readinessProbe.periodSeconds`. The buildkit-default of `10` killed Pods mid-build under load — `buildctl debug workers` (the probe command) contends with the active build for the OCI worker lock. `60` keeps the probe out of the build's hot path. | `number` | `60` | no |
 | <a name="input_readiness_timeout_seconds"></a> [readiness\_timeout\_seconds](#input\_readiness\_timeout\_seconds) | `readinessProbe.timeoutSeconds`. The buildkit-default of `1` is too aggressive when the worker is busy serving a build. `15` is the value that survived a real ARC build cycle on this cluster. | `number` | `15` | no |
-| <a name="input_storage_class"></a> [storage\_class](#input\_storage\_class) | StorageClass for the build cache volume (a PVC `buildkitd-cache`). Set it to a class whose volumes attach on more than one node (e.g. replicated LINSTOR) and the cache follows the Pod instead of pinning it to one node. Empty (default) = the `host_path` hostPath volume. Switching between the two starts with a cold cache; the old one is not copied. | `string` | `""` | no |
+| <a name="input_storage_class"></a> [storage\_class](#input\_storage\_class) | StorageClass for the build cache volume (a PVC `buildkitd-cache-<class>`). Set it to a class whose volumes attach on more than one node (e.g. replicated LINSTOR) and the cache follows the Pod instead of pinning it to one node. Empty (default) = the `host_path` hostPath volume. Switching between the two starts with a cold cache; the old one is not copied. | `string` | `""` | no |
 | <a name="input_storage_size"></a> [storage\_size](#input\_storage\_size) | Size of the build cache PVC (only with `storage_class`). BuildKit's default garbage collection keys off the size of the filesystem the cache is on, so a dedicated volume also bounds the cache. | `string` | `"100Gi"` | no |
 | <a name="input_tolerations"></a> [tolerations](#input\_tolerations) | Tolerations for the buildkitd Pod. Standard k8s toleration shape — set this when the chosen node carries a NoSchedule taint that the buildkitd Pod needs to bypass. | <pre>list(object({<br/>    key      = optional(string)<br/>    operator = optional(string, "Exists")<br/>    value    = optional(string)<br/>    effect   = optional(string)<br/>  }))</pre> | `[]` | no |
 | <a name="input_volume_node_label"></a> [volume\_node\_label](#input\_volume\_node\_label) | Node label the Pod requires (operator `Exists`) when the cache is on `storage_class`: the label a CSI driver puts on the nodes where its node plugin runs (LINSTOR: `linbit.com/hostname`), so the Pod is never scheduled onto a node where the volume cannot attach. Empty = no constraint. | `string` | `""` | no |

@@ -58,13 +58,17 @@ terraform {
 locals {
   instances = var.enabled ? toset(["enabled"]) : toset([])
 
-  # Cache on a PVC (`storage_class`) instead of a hostPath.
+  # Cache on a PVC (`storage_class`) instead of a hostPath. The claim is
+  # named after its class: a class change adds a new claim and rolls the
+  # Pod onto it before the old one is deleted, instead of replacing a
+  # claim the running Pod holds (PVC protection would block that delete).
   cache_on_pvc = var.storage_class != ""
+  cache_claim  = "buildkitd-cache-${var.storage_class}"
 
   # (jsondecode/jsonencode: the two branches are objects of different shapes)
   cache_volume = jsondecode(local.cache_on_pvc ? jsonencode({
     name                  = "cache"
-    persistentVolumeClaim = { claimName = "buildkitd-cache" }
+    persistentVolumeClaim = { claimName = local.cache_claim }
     }) : jsonencode({
     name     = "cache"
     hostPath = { path = var.host_path, type = "DirectoryOrCreate" }
@@ -138,7 +142,8 @@ resource "kubectl_manifest" "this" {
     }
     spec = {
       # Single replica — one shared cache. Scaling out fragments
-      # cache locality (each Pod's cache is its own) and would need a session-affinity layer in front of
+      # cache locality (each Pod's cache is its own) and would need
+      # a session-affinity layer in front of
       # the Service to keep a build pinned to its warm replica.
       replicas = 1
       selector = {
@@ -212,10 +217,10 @@ resource "kubectl_manifest" "this" {
 # Build cache volume when `storage_class` is set. Disposable data: a lost
 # cache only makes the next builds slower.
 resource "kubernetes_persistent_volume_claim_v1" "cache" {
-  for_each = local.cache_on_pvc ? local.instances : toset([])
+  for_each = var.enabled && local.cache_on_pvc ? toset([var.storage_class]) : toset([])
 
   metadata {
-    name      = "buildkitd-cache"
+    name      = local.cache_claim
     namespace = kubernetes_namespace_v1.this["enabled"].metadata[0].name
     labels = merge(module.label.tags, {
       "app.kubernetes.io/name"      = "buildkitd"

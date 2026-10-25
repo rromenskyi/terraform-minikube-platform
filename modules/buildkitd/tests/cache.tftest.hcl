@@ -38,18 +38,18 @@ run "pvc_cache_with_storage_class" {
   }
 
   assert {
-    condition     = kubernetes_persistent_volume_claim_v1.cache["enabled"].spec[0].storage_class_name == "replicated"
+    condition     = kubernetes_persistent_volume_claim_v1.cache["replicated"].spec[0].storage_class_name == "replicated"
     error_message = "The cache PVC must use storage_class."
   }
 
   assert {
-    condition     = kubernetes_persistent_volume_claim_v1.cache["enabled"].spec[0].resources[0].requests.storage == "150Gi"
+    condition     = kubernetes_persistent_volume_claim_v1.cache["replicated"].spec[0].resources[0].requests.storage == "150Gi"
     error_message = "The cache PVC must request storage_size."
   }
 
   assert {
-    condition     = yamldecode(kubectl_manifest.this["enabled"].yaml_body).spec.template.spec.volumes[0].persistentVolumeClaim.claimName == "buildkitd-cache"
-    error_message = "The cache volume must be the PVC."
+    condition     = yamldecode(kubectl_manifest.this["enabled"].yaml_body).spec.template.spec.volumes[0].persistentVolumeClaim.claimName == "buildkitd-cache-replicated"
+    error_message = "The cache volume must be the PVC, named after its class (a class change then adds a new claim instead of replacing one the Pod still holds)."
   }
 
   assert {
@@ -79,5 +79,10 @@ run "preference_without_pvc" {
   assert {
     condition     = !contains(keys(yamldecode(kubectl_manifest.this["enabled"].yaml_body).spec.template.spec.affinity.nodeAffinity), "requiredDuringSchedulingIgnoredDuringExecution")
     error_message = "volume_node_label applies only to a PVC cache."
+  }
+
+  assert {
+    condition     = yamldecode(kubectl_manifest.this["enabled"].yaml_body).spec.template.spec.affinity.nodeAffinity.preferredDuringSchedulingIgnoredDuringExecution[0].preference.matchExpressions[0] == { key = "node-pool", operator = "In", values = ["storage"] }
+    error_message = "preferred_node_affinity applies with a hostPath cache too."
   }
 }

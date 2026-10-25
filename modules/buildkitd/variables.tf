@@ -29,7 +29,7 @@ variable "host_path" {
 }
 
 variable "storage_class" {
-  description = "StorageClass for the build cache volume (a PVC `buildkitd-cache`). Set it to a class whose volumes attach on more than one node (e.g. replicated LINSTOR) and the cache follows the Pod instead of pinning it to one node. Empty (default) = the `host_path` hostPath volume. Switching between the two starts with a cold cache; the old one is not copied."
+  description = "StorageClass for the build cache volume (a PVC `buildkitd-cache-<class>`). Set it to a class whose volumes attach on more than one node (e.g. replicated LINSTOR) and the cache follows the Pod instead of pinning it to one node. Empty (default) = the `host_path` hostPath volume. Switching between the two starts with a cold cache; the old one is not copied."
   type        = string
   default     = ""
   nullable    = false
