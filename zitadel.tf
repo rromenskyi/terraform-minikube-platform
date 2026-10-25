@@ -116,8 +116,9 @@ module "zitadel" {
   login_policy              = local.platform.services.zitadel.login_policy
   login_client_pat          = var.zitadel_login_client_pat
 
-  node_selector = local.platform.services.zitadel.node_selector
-  tolerations   = local.platform.services.zitadel.tolerations
+  node_selector           = local.platform.services.zitadel.node_selector
+  preferred_node_affinity = local.node_pool_preference["zitadel"]
+  tolerations             = local.platform.services.zitadel.tolerations
 }
 
 # Default Login Policy reconciler.

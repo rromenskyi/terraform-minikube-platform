@@ -261,6 +261,28 @@ resource "kubernetes_deployment_v1" "zitadel" {
         # scheduler behaviour.
         node_selector = length(var.node_selector) > 0 ? var.node_selector : null
 
+        # Preferably on the nodes in preferred_node_affinity.
+        dynamic "affinity" {
+          for_each = length(var.preferred_node_affinity) > 0 ? [1] : []
+          content {
+            node_affinity {
+              preferred_during_scheduling_ignored_during_execution {
+                weight = 100
+                preference {
+                  dynamic "match_expressions" {
+                    for_each = var.preferred_node_affinity
+                    content {
+                      key      = match_expressions.key
+                      operator = "In"
+                      values   = match_expressions.value
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+
         dynamic "toleration" {
           for_each = var.tolerations
           content {

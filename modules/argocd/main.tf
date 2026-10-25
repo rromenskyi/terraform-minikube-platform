@@ -45,7 +45,7 @@ locals {
   # resource. Server-config is built conditionally so empty OIDC
   # inputs don't render a half-shaped `oidc.config` block.
   values = yamlencode(merge({
-    global = {
+    global = merge({
       # Chart 10+ creates NetworkPolicies by default. The platform runs
       # one trust boundary without NetworkPolicy; policies on Argo CD alone
       # would only cut off cross-namespace callers such as Prometheus.
@@ -62,7 +62,19 @@ locals {
           tolerationSeconds = try(tonumber(t.toleration_seconds), null)
         }
       ]
-    }
+      },
+      # Soft node preference (chart preset `soft` = preferredDuringScheduling).
+      # Only when set: a null `affinity` would drop the chart's default
+      # (podAntiAffinity soft).
+      length(var.preferred_node_affinity) > 0 ? {
+        affinity = {
+          nodeAffinity = {
+            type             = "soft"
+            matchExpressions = [for k, v in var.preferred_node_affinity : { key = k, operator = "In", values = v }]
+          }
+        }
+      } : {},
+    )
 
     configs = {
       # `server.insecure = true` runs argocd-server with `--insecure`

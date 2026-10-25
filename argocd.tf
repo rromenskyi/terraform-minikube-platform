@@ -103,8 +103,9 @@ module "argocd" {
   oidc_client_secret = try(module.argocd_oidc["enabled"].client_secret, "")
   oidc_admin_groups  = ["argocd_admin"]
 
-  node_selector = local.platform.services.argocd.node_selector
-  tolerations   = local.platform.services.argocd.tolerations
+  node_selector           = local.platform.services.argocd.node_selector
+  preferred_node_affinity = local.node_pool_preference["argocd"]
+  tolerations             = local.platform.services.argocd.tolerations
 
   controller_resources = local.platform.services.argocd.controller_resources
   built_from_apps      = local.platform.services.argocd.built_from_apps
