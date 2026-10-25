@@ -7,10 +7,9 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-### Added
-- `preferred_node_affinity` (label => values): soft node preference (`preferredDuringScheduling`, weight 100).
 
 ### Added
+- `preferred_node_affinity` (label => values): soft node preference (`preferredDuringScheduling`, weight 100).
 - `storage_layout = "data"` (PVC `data-seafile`, /shared = its `data/`) and
   `storage_seed_class`: one-time copy of the `root`-layout `seafile-data` PVC
   on the first start (modules/volume-seed).

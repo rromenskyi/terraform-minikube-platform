@@ -7,10 +7,9 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-### Added
-- `preferred_node_affinity` (label => values): soft node preference (`preferredDuringScheduling`, weight 100).
 
 ### Added
+- `preferred_node_affinity` (label => values): soft node preference (`preferredDuringScheduling`, weight 100).
 - `storage_class` / `storage_seed_node`: datadir on a StorageClass (PVC
   `data-mysql`, datadir = its `data/`), with a one-time copy of the old
   hostPath datadir on the first start (modules/volume-seed).

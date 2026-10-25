@@ -66,5 +66,21 @@ resource "terraform_data" "node_pool_references" {
       ])
       error_message = "node_pool.preferred names a pool that is not in node_pools."
     }
+    precondition {
+      condition = alltrue([
+        for pool in concat(
+          local.platform.services.piraeus.node_hostname_pools,
+          local.platform.services.piraeus.nfs_server_node_pools,
+          flatten([for s in values(local.platform.services.piraeus.satellite_properties) : try(s.node_pools, [])]),
+        ) : contains(keys(local.platform.node_pools), pool)
+      ])
+      error_message = "services.piraeus: node_hostname_pools / nfs_server_node_pools / satellite_properties.*.node_pools name a pool that is not in node_pools (declared: ${jsonencode(keys(local.platform.node_pools))})."
+    }
+    precondition {
+      condition = can(regex("^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?$", local.platform.node_pool_label)) && alltrue([
+        for pool in keys(local.platform.node_pools) : can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", pool))
+      ])
+      error_message = "node_pool_label must be a valid label key and pool names lowercase DNS labels (they become label values)."
+    }
   }
 }
