@@ -47,16 +47,34 @@ locals {
   # null = no required node affinity given; an explicit empty list (match
   # no node) stays empty.
   required_node_terms = try(var.affinity.node_affinity.required_during_scheduling_ignored_during_execution.node_selector_terms, null)
+  # With volumes on a StorageClass, a soft preference for the nodes holding
+  # the volume's copies (volume_preferred_node_selectors), added to the
+  # caller's own preferred terms.
+  volume_locality_terms = local.csi_storage ? [
+    for sel in var.volume_preferred_node_selectors : {
+      weight     = 100
+      preference = { match_expressions = [for k, v in sel : { key = k, operator = "In", values = [v] }] }
+    }
+  ] : []
   pod_affinity = merge(var.affinity, { for k, v in {
-    node_affinity = merge(try(var.affinity.node_affinity, {}), {
-      required_during_scheduling_ignored_during_execution = {
-        node_selector_terms = [
-          for t in(local.required_node_terms == null ? [{}] : local.required_node_terms) :
-          merge(t, { match_expressions = concat(try(t.match_expressions, []), local.volume_node_requirement) })
-        ]
-      }
-    })
-  } : k => v if length(local.volume_node_requirement) > 0 })
+    node_affinity = merge(
+      try(var.affinity.node_affinity, {}),
+      { for rk, rv in {
+        required_during_scheduling_ignored_during_execution = {
+          node_selector_terms = [
+            for t in(local.required_node_terms == null ? [{}] : local.required_node_terms) :
+            merge(t, { match_expressions = concat(try(t.match_expressions, []), local.volume_node_requirement) })
+          ]
+        }
+      } : rk => rv if length(local.volume_node_requirement) > 0 },
+      { for pk, pv in {
+        preferred_during_scheduling_ignored_during_execution = concat(
+          try(var.affinity.node_affinity.preferred_during_scheduling_ignored_during_execution, []),
+          local.volume_locality_terms,
+        )
+      } : pk => pv if length(local.volume_locality_terms) > 0 },
+    )
+  } : k => v if length(local.volume_node_requirement) + length(local.volume_locality_terms) > 0 })
   seed          = local.csi_storage && var.storage_seed_node != ""
   data_sub_path = local.csi_storage ? module.volume_seed.sub_path : null
 

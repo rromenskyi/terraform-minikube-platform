@@ -13,7 +13,7 @@ Generic application-component primitive: turns a `kind: deployment` component ya
 
 | Name | Version |
 | ---- | ------- |
-| <a name="provider_kubernetes"></a> [kubernetes](#provider\_kubernetes) | 2.38.0 |
+| <a name="provider_kubernetes"></a> [kubernetes](#provider\_kubernetes) | ~> 2.0 |
 
 ## Modules
 
@@ -76,6 +76,8 @@ Generic application-component primitive: turns a `kind: deployment` component ya
 | <a name="input_storage_seed_node"></a> [storage\_seed\_node](#input\_storage\_seed\_node) | With `storage_class` set: the node holding the old hostPath volumes. On<br/>the first start, one init container per volume copies the old directory<br/>into the new volume (only into an empty one, once), and the pod is pinned<br/>to this node meanwhile. Clear it once the data has moved. | `string` | `""` | no |
 | <a name="input_tolerations"></a> [tolerations](#input\_tolerations) | Taints the pod tolerates. Each entry is one toleration block with<br/>the standard k8s fields. Effects accepted by the API: NoSchedule /<br/>PreferNoSchedule / NoExecute. `operator` defaults to "Equal" on<br/>the API side; pass "Exists" to match any value (or omit `value`).<br/>Empty list = pod cannot land on any tainted node. | <pre>list(object({<br/>    key                = optional(string)<br/>    operator           = optional(string)<br/>    value              = optional(string)<br/>    effect             = optional(string)<br/>    toleration_seconds = optional(string)<br/>  }))</pre> | `[]` | no |
 | <a name="input_volume_base_path"></a> [volume\_base\_path](#input\_volume\_base\_path) | Parent path used verbatim by hostPath PersistentVolumes for this component. Each volume lands at <volume\_base\_path>/<namespace>/<name>/<slug>/. Must resolve to a real writable directory from the kubelet's point of view (native k3s / --driver=none: any host dir; macOS minikube Docker driver: /minikube-host/Shared/vol). | `string` | `"/data/vol"` | no |
+| <a name="input_volume_node_label"></a> [volume\_node\_label](#input\_volume\_node\_label) | Node label the pod requires (operator `Exists`) when its data is on `storage_class`: the label a CSI driver puts on the nodes where its node plugin runs (LINSTOR: `linbit.com/hostname`), so the pod is never scheduled onto a node where the volume cannot attach. Empty = no constraint. | `string` | `""` | no |
+| <a name="input_volume_preferred_node_selectors"></a> [volume\_preferred\_node\_selectors](#input\_volume\_preferred\_node\_selectors) | Node selectors (label => value) of the nodes holding copies of `storage_class` volumes, e.g. the LINSTOR storage pool's `node_selector`. With volumes on `storage_class` the pod prefers those nodes (`preferredDuringScheduling`, one term per selector, weight 100): its data is then a local copy. Empty = no preference. | `list(map(string))` | `[]` | no |
 
 ## Outputs
 

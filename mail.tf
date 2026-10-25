@@ -291,6 +291,8 @@ module "roundcube" {
   storage_class     = try(local.mail.storage_class, "")
   storage_seed_node = try(local.mail.storage_seed_node, "")
   volume_node_label = lookup(module.piraeus.volume_node_labels, try(local.mail.storage_class, ""), "")
+  # Prefer the nodes holding the volume's copies.
+  volume_preferred_node_selectors = lookup(module.piraeus.volume_preferred_node_selectors, try(local.mail.storage_class, ""), [])
 
   zitadel_org_id                 = local.platform.services.zitadel.enabled ? data.zitadel_orgs.platform_org["enabled"].ids[0] : ""
   zitadel_issuer_url             = local.platform.services.zitadel.enabled ? "https://${local.platform.services.zitadel.external_domain}" : ""

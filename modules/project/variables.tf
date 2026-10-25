@@ -218,6 +218,13 @@ variable "pod_security_level" {
   }
 }
 
+variable "volume_preferred_node_selectors" {
+  description = "StorageClass name => node selectors of the nodes holding copies of its volumes (modules/piraeus output `volume_preferred_node_selectors`). Components with `storage_class` prefer those nodes."
+  type        = map(list(map(string)))
+  default     = {}
+  nullable    = false
+}
+
 variable "volume_node_labels" {
   description = "StorageClass name => node label its volumes need on the node (`Exists`), passed to components on that class as `volume_node_label`. Classes not listed add no constraint."
   type        = map(string)

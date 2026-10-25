@@ -388,16 +388,37 @@ resource "kubernetes_deployment_v1" "roundcube" {
         # Pinned to the node with the old hostPath data while seeding.
         node_selector = local.seed ? { "kubernetes.io/hostname" = var.storage_seed_node } : null
 
-        # Only on nodes where the volume can attach (volume_node_label).
+        # Only on nodes where the volume can attach (volume_node_label),
+        # preferably on those holding its copies
+        # (volume_preferred_node_selectors).
         dynamic "affinity" {
-          for_each = local.csi_storage && var.volume_node_label != "" ? [var.volume_node_label] : []
+          for_each = local.csi_storage && (var.volume_node_label != "" || length(var.volume_preferred_node_selectors) > 0) ? [1] : []
           content {
             node_affinity {
-              required_during_scheduling_ignored_during_execution {
-                node_selector_term {
-                  match_expressions {
-                    key      = affinity.value
-                    operator = "Exists"
+              dynamic "required_during_scheduling_ignored_during_execution" {
+                for_each = var.volume_node_label != "" ? [var.volume_node_label] : []
+                content {
+                  node_selector_term {
+                    match_expressions {
+                      key      = required_during_scheduling_ignored_during_execution.value
+                      operator = "Exists"
+                    }
+                  }
+                }
+              }
+              dynamic "preferred_during_scheduling_ignored_during_execution" {
+                for_each = var.volume_preferred_node_selectors
+                content {
+                  weight = 100
+                  preference {
+                    dynamic "match_expressions" {
+                      for_each = preferred_during_scheduling_ignored_during_execution.value
+                      content {
+                        key      = match_expressions.key
+                        operator = "In"
+                        values   = [match_expressions.value]
+                      }
+                    }
                   }
                 }
               }

@@ -3,6 +3,9 @@
 ## [Unreleased]
 
 ### Added
+- Output `volume_preferred_node_selectors`: StorageClass => node selectors of its storage pool's entries (the nodes holding copies of its volumes).
+
+### Added
 - `satellite_properties` (LINSTOR node properties by node name) and `storage_classes[].x_replicas_on_different`: e.g. mark the storage nodes `Aux/storage-site` and allow 2 replicas per site, which keeps quorum tiebreakers off the storage nodes (LINSTOR forces the limit to 1 for tiebreakers).
 - `controller_properties` (optional): LINSTOR cluster-wide properties via LinstorCluster `spec.properties` (merged over the operator's defaults), e.g. a higher DRBD resync cap `DrbdOptions/PeerDevice/c-max-rate`.
 - `nfs_server_node_hostnames` (optional): run the NFS server (ReadWriteMany exports) only on the listed nodes, e.g. those with the data copies, so an export never lands on a diskless node.

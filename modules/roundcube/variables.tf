@@ -104,6 +104,13 @@ variable "cpu_limit" {
   default = "500m"
 }
 
+variable "volume_preferred_node_selectors" {
+  description = "Node selectors (label => value) of the nodes holding copies of `storage_class` volumes, e.g. the LINSTOR storage pool's `node_selector`. With the data on `storage_class` the pod prefers those nodes (one `preferredDuringScheduling` term per selector, weight 100), so its data is a local copy. Empty = no preference."
+  type        = list(map(string))
+  default     = []
+  nullable    = false
+}
+
 variable "volume_node_label" {
   description = "Node label the pod requires (operator `Exists`) when its data is on `storage_class`: the label a CSI driver puts on the nodes where its node plugin runs (LINSTOR: `linbit.com/hostname`), so the pod is never scheduled onto a node where the volume cannot attach. Empty = no constraint."
   type        = string
