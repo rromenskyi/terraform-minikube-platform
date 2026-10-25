@@ -23,7 +23,7 @@ locals {
   # Services with `node_pool.preferred`: label => pools, for the modules'
   # preferred_node_affinity.
   node_pool_preference = {
-    for svc in ["mysql", "seafile", "zitadel", "argocd"] :
+    for svc in ["mysql", "seafile", "zitadel", "argocd", "buildkitd"] :
     svc => (
       length(try(local.platform.services[svc].node_pool.preferred, [])) > 0
       ? { (local.platform.node_pool_label) = local.platform.services[svc].node_pool.preferred }

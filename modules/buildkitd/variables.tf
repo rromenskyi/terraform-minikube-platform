@@ -23,9 +23,36 @@ variable "image_tag" {
 }
 
 variable "host_path" {
-  description = "Cluster-node directory the build cache slabs land in (hostPath volume). Survives Pod restarts but is node-pinned — the daemon should be pinned to the same node via `node_selector` so the cache stays warm. Convention is `<host_volume_path>/buildkit-cache`."
+  description = "Cluster-node directory the build cache slabs land in (hostPath volume) when `storage_class` is empty. Survives Pod restarts but is node-pinned — the daemon should be pinned to the same node via `node_selector` so the cache stays warm. Convention is `<host_volume_path>/buildkit-cache`."
   type        = string
   default     = "/data/vol/buildkit-cache"
+}
+
+variable "storage_class" {
+  description = "StorageClass for the build cache volume (a PVC `buildkitd-cache-<class>`). Set it to a class whose volumes attach on more than one node (e.g. replicated LINSTOR) and the cache follows the Pod instead of pinning it to one node. Empty (default) = the `host_path` hostPath volume. Switching between the two starts with a cold cache; the old one is not copied."
+  type        = string
+  default     = ""
+  nullable    = false
+}
+
+variable "storage_size" {
+  description = "Size of the build cache PVC (only with `storage_class`). BuildKit's default garbage collection keys off the size of the filesystem the cache is on, so a dedicated volume also bounds the cache."
+  type        = string
+  default     = "100Gi"
+}
+
+variable "volume_node_label" {
+  description = "Node label the Pod requires (operator `Exists`) when the cache is on `storage_class`: the label a CSI driver puts on the nodes where its node plugin runs (LINSTOR: `linbit.com/hostname`), so the Pod is never scheduled onto a node where the volume cannot attach. Empty = no constraint."
+  type        = string
+  default     = ""
+  nullable    = false
+}
+
+variable "preferred_node_affinity" {
+  description = "Soft node preference, node label key => values (`preferredDuringScheduling`, operator In, weight 100): the Pod goes to such a node when one fits and anywhere allowed otherwise. E.g. a node-pool label. Empty = none."
+  type        = map(list(string))
+  default     = {}
+  nullable    = false
 }
 
 variable "mount_path" {
