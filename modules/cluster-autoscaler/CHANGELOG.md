@@ -8,6 +8,7 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- `scale_down_utilization_threshold` (`--scale-down-utilization-threshold`, default 0.5).
 - Initial module: cluster-autoscaler v1.36.1 (externalgrpc) with the
   plugpool 0.1.0 sidecar, RBAC, config from `node_groups`, the plugs'
   password from Vault through VSO, Service + ServiceMonitor for metrics.

@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- cluster-autoscaler: `services.cluster_autoscaler.scale_down_utilization_threshold` (default 0.5). DRA counts whole devices, so above 0.5 a machine left with one GPU pod of two can be emptied onto free GPUs elsewhere.
 - cluster-autoscaler for power-managed node pools (`modules/cluster-autoscaler`, `cluster_autoscaler.tf`): a pool in `node_pools` with `autoscaling` (min, max, machine template) and `power` (Vault path of the plugs' password, plug URL + switch per node) becomes a cluster-autoscaler node group served by the plugpool sidecar, which powers machines on and off through their ESPHome plugs. `services.cluster_autoscaler` turns it on; the plan fails on inconsistent pool declarations or when the autoscaler's `node_selector` selects an autoscaled pool. plugpool reads only the plug password (narrow Vault role `vso-platform-plugpool`).
 - Volume locality: components and Roundcube with volumes on a LINSTOR StorageClass prefer the nodes holding the volume's copies (the storage pool's `node_selector`, new piraeus output `volume_preferred_node_selectors`), so their data is a local copy and they stay off nodes that hold none (e.g. a power-managed pool). Affected pods restart once.
 - `services.longhorn.cluster_autoscaler_enabled`: Longhorn's cluster-autoscaler mode, so its instance-manager PodDisruptionBudgets stop blocking the scale-down of nodes that hold no attached volume and no last healthy replica.

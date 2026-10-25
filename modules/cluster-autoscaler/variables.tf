@@ -142,6 +142,18 @@ variable "scale_down_delay_after_add" {
   nullable    = false
 }
 
+variable "scale_down_utilization_threshold" {
+  description = "cluster-autoscaler `--scale-down-utilization-threshold`: a machine is a scale-down candidate while its utilization (CPU, memory and DRA devices, the highest) is below this. DRA counts whole devices: one busy GPU of two is 0.5, so above 0.5 a machine with one GPU pod left can be emptied onto free GPUs elsewhere."
+  type        = number
+  default     = 0.5
+  nullable    = false
+
+  validation {
+    condition     = var.scale_down_utilization_threshold > 0 && var.scale_down_utilization_threshold <= 1
+    error_message = "scale_down_utilization_threshold must be in (0, 1]."
+  }
+}
+
 variable "max_node_provision_time" {
   description = "cluster-autoscaler `--max-node-provision-time`: a machine that has not registered this long after its power-on counts as failed; its plug is switched off again."
   type        = string

@@ -173,6 +173,8 @@ locals {
         namespace     = "cluster-autoscaler"
         node_selector = {}
         tolerations   = []
+        # cluster-autoscaler's default; see modules/cluster-autoscaler.
+        scale_down_utilization_threshold = 0.5
       }
       keda = {
         enabled       = false

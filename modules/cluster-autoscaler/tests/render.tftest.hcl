@@ -170,3 +170,14 @@ run "ca_container_hardened" {
     error_message = "cluster-autoscaler needs its /health-check liveness probe."
   }
 }
+
+run "utilization_threshold" {
+  command = plan
+  variables {
+    scale_down_utilization_threshold = 0.6
+  }
+  assert {
+    condition     = contains(kubernetes_deployment_v1.this["enabled"].spec[0].template[0].spec[0].container[0].args, "--scale-down-utilization-threshold=0.6")
+    error_message = "The utilization threshold must reach cluster-autoscaler."
+  }
+}

@@ -354,6 +354,7 @@ resource "kubernetes_deployment_v1" "this" {
             "--namespace=${var.namespace}",
             "--scale-down-unneeded-time=${var.scale_down_unneeded_time}",
             "--scale-down-delay-after-add=${var.scale_down_delay_after_add}",
+            "--scale-down-utilization-threshold=${var.scale_down_utilization_threshold}",
             "--max-node-provision-time=${var.max_node_provision_time}",
             "--skip-nodes-with-system-pods=false",
             # Pods with emptyDir would otherwise keep a machine on forever.

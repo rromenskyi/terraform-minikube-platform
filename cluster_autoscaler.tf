@@ -105,5 +105,7 @@ module "cluster_autoscaler" {
   vault_path      = local.cluster_autoscaler_vault_path
   vault_auth_role = local.platform.services.vault.enabled ? "vso-platform-plugpool" : ""
   node_selector   = local.platform.services.cluster_autoscaler.node_selector
-  tolerations     = local.platform.services.cluster_autoscaler.tolerations
+
+  scale_down_utilization_threshold = local.platform.services.cluster_autoscaler.scale_down_utilization_threshold
+  tolerations                      = local.platform.services.cluster_autoscaler.tolerations
 }
