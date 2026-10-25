@@ -46,3 +46,9 @@ jobs:
       run: |
         terraform init -backend=false
         terraform test
+
+    - name: Terraform Test (modules/cluster-autoscaler)
+      working-directory: modules/cluster-autoscaler
+      run: |
+        terraform init -backend=false
+        terraform test
