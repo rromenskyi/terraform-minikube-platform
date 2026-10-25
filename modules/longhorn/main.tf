@@ -125,6 +125,8 @@ locals {
         # managers, share-managers, system-managed jobs). Same
         # taints as chart-level components — keep them in sync.
         taintToleration = local.taint_toleration_setting
+        # See var.cluster_autoscaler_enabled.
+        kubernetesClusterAutoscalerEnabled = var.cluster_autoscaler_enabled
       },
     )
     # Longhorn 1.8+ keeps backup targets as BackupTarget objects and the

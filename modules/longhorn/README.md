@@ -35,7 +35,9 @@ that class.
 
 ## Modules
 
-No modules.
+| Name | Source | Version |
+| ---- | ------ | ------- |
+| <a name="module_label"></a> [label](#module\_label) | git::https://github.com/rromenskyi/terraform-null-label.git | v0.1.0 |
 
 ## Resources
 
@@ -55,6 +57,8 @@ No modules.
 | <a name="input_backup_b2_endpoint"></a> [backup\_b2\_endpoint](#input\_backup\_b2\_endpoint) | S3-compatible endpoint URL for the B2 region (`https://s3.<region>.backblazeb2.com`). Required when `backup_b2_bucket` is set. | `string` | `""` | no |
 | <a name="input_backup_b2_region"></a> [backup\_b2\_region](#input\_backup\_b2\_region) | Token Longhorn embeds in the `s3://<bucket>@<region>/` URL. B2 doesn't enforce AWS regional routing; the value just has to be non-empty. Uses the bucket region name from the endpoint by default. | `string` | `"us-east-005"` | no |
 | <a name="input_backup_b2_secret_access_key"></a> [backup\_b2\_secret\_access\_key](#input\_backup\_b2\_secret\_access\_key) | B2 application key secret matching `backup_b2_access_key_id`. | `string` | `""` | no |
+| <a name="input_cluster_autoscaler_enabled"></a> [cluster\_autoscaler\_enabled](#input\_cluster\_autoscaler\_enabled) | Longhorn setting `kubernetes-cluster-autoscaler-enabled`: tells Longhorn that cluster-autoscaler removes nodes, so it no longer blocks the scale-down of a node with its instance-manager PodDisruptionBudget unless the node holds the last healthy replica of a volume. Needed when any node with Longhorn components is autoscaled. | `bool` | `false` | no |
+| <a name="input_context"></a> [context](#input\_context) | Serialised parent context from `terraform-null-label`. Caller passes `module.platform_label.context` from the root stack so this module can chain its own label off the platform-wide context — tags propagate down, keeping every k8s resource the module emits consistent with the rest of the engine. Default `null` means the module produces a label with no inherited context. | `string` | `null` | no |
 | <a name="input_default_data_path"></a> [default\_data\_path](#input\_default\_data\_path) | Host directory each Longhorn instance-manager pod writes replica data to. Should NOT be the same path the platform's hostPath PVs use — keep blast radius separate. | `string` | `"/var/lib/longhorn/"` | no |
 | <a name="input_default_replica_count"></a> [default\_replica\_count](#input\_default\_replica\_count) | Number of replicas Longhorn maintains for every new volume. 3 = one per node on a 3-node cluster (default). 1 keeps the volume single-node — useful for single-node dev clusters where the durability guarantee doesn't apply anyway. | `number` | `3` | no |
 | <a name="input_enabled"></a> [enabled](#input\_enabled) | Whether to deploy Longhorn. False collapses every resource. | `bool` | `false` | no |
@@ -63,7 +67,7 @@ No modules.
 | <a name="input_recurring_backup_retain"></a> [recurring\_backup\_retain](#input\_recurring\_backup\_retain) | Number of daily backups Longhorn keeps per volume before pruning. Pair with `recurring_backup_cron` — together they define the per-volume retention window. | `number` | `7` | no |
 | <a name="input_tag_pools"></a> [tag\_pools](#input\_tag\_pools) | Operator-defined topology pools. Each entry causes the engine to emit a sibling StorageClass named `longhorn-<key>` whose volumes are constrained to nodes carrying the specified Longhorn node tag (and optionally with a custom replica count + reclaim policy). Operator decides which pools exist (keys are operator-named, e.g. `home`, `edge`, `fast-ssd`) and tags the matching nodes one-time via `kubectl -n longhorn-system patch node.longhorn.io <name> --type=merge -p '{"spec":{"tags":["<key>"]}}'`. Consumers (e.g. `services.redis.storage_class`) opt in by referencing `longhorn-<key>` SC name. Empty map (default) emits no extra SCs — only the default `longhorn` SC the chart creates is in play. | <pre>map(object({<br/>    replicas       = optional(number, 2)<br/>    reclaim_policy = optional(string, "Delete")<br/>    fs_type        = optional(string, "ext4")<br/>    data_locality  = optional(string, "best-effort")<br/>  }))</pre> | `{}` | no |
 | <a name="input_tolerations"></a> [tolerations](#input\_tolerations) | Tolerations propagated to every Longhorn pod (manager DaemonSet, CSI components, UI, instance-managers). Empty = Longhorn pods land only on un-tainted nodes; on a tainted-edge or tainted-control-plane setup the storage layer must tolerate the same taints workloads do, otherwise replicas can't bind to those nodes and `replicaCount` can't be satisfied. Standard k8s toleration shape — passed both to the chart's `longhornManager` / `longhornUI` / `longhornDriver` values AND rendered into the Longhorn-format `taintToleration` setting for dynamic instance-managers. | <pre>list(object({<br/>    key                = optional(string)<br/>    operator           = optional(string, "Exists")<br/>    value              = optional(string)<br/>    effect             = optional(string)<br/>    toleration_seconds = optional(string)<br/>  }))</pre> | `[]` | no |
-| <a name="input_version_pin"></a> [version\_pin](#input\_version\_pin) | Helm chart version for longhorn/longhorn. Pinned so an upstream re-tag doesn't change behavior across applies. | `string` | `"1.11.1"` | no |
+| <a name="input_version_pin"></a> [version\_pin](#input\_version\_pin) | Helm chart version for longhorn/longhorn. Pinned so an upstream re-tag doesn't change behavior across applies. | `string` | `"1.13.0"` | no |
 
 ## Outputs
 

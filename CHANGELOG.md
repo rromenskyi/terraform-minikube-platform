@@ -9,11 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Volume locality: components and Roundcube with volumes on a LINSTOR StorageClass prefer the nodes holding the volume's copies (the storage pool's `node_selector`, new piraeus output `volume_preferred_node_selectors`), so their data is a local copy and they stay off nodes that hold none (e.g. a power-managed pool). Affected pods restart once.
-
-### Added
+- `services.longhorn.cluster_autoscaler_enabled`: Longhorn's cluster-autoscaler mode, so its instance-manager PodDisruptionBudgets stop blocking the scale-down of nodes that hold no attached volume and no last healthy replica.
 - buildkitd: `services.buildkitd.storage_class` / `storage_size` put the build cache on a PVC instead of the hostPath (on a replicated class it follows the Pod), and `services.buildkitd.node_pool.preferred` gives a soft node-pool preference. Switching starts with a cold cache. Default unchanged.
 - Node pools (`node_pools.tf`): `node_pools` (pool => nodes) and `node_pool_label` (default `node-pool`) in `config/platform.yaml`; the plan fails when a registered node's pool label disagrees with `node_pools` or a node is in no pool (nodes that are not registered, e.g. powered off, are fine). Services mysql, seafile, zitadel and argocd take `node_pool: { preferred: [...] }`, rendered as a soft node affinity on the pool label (`preferred_node_affinity` on the modules).
 - Piraeus node lists from node pools: `services.piraeus.node_hostname_pools`, `nfs_server_node_pools` and `satellite_properties.<key>.node_pools` expand to the pools' members (merged with host names given directly, sorted).
+
+### Changed
+- `LinstorSatelliteNotOnline` fires only for nodes still registered in Kubernetes (or for all satellites while kube-state-metrics reports no nodes): a node removed on purpose (an autoscaled node powered off) stays offline in LINSTOR under deletionPolicy Retain without alerting.
 
 ### Fixed
 - Samba: the account passwords sync from Vault again (they never did: `secret "samba-accounts" not found`, Vault login 403 — the default VSO role does not bind the `nas` namespace). Samba now authenticates through its own VaultAuth with role `vso-platform-samba`, which reads only `services.samba.vault_path`.

@@ -7,6 +7,9 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- `cluster_autoscaler_enabled` (Longhorn setting `kubernetes-cluster-autoscaler-enabled`).
+
 ### Changed
 - File layout split into `main.tf` / `variables.tf` / `outputs.tf` per AGENT.md
   module conventions. Pure file reorganisation — no resource, input, output, or
