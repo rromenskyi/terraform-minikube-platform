@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- `LinstorSatelliteNotOnline` only for nodes registered in Kubernetes (`and on (node) kube_node_info`).
+
 ### Added
 - Output `volume_preferred_node_selectors`: StorageClass => node selectors of its storage pool's entries (the nodes holding copies of its volumes).
 

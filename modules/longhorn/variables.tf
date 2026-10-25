@@ -22,6 +22,13 @@ variable "version_pin" {
   default     = "1.13.0"
 }
 
+variable "cluster_autoscaler_enabled" {
+  description = "Longhorn setting `kubernetes-cluster-autoscaler-enabled` (experimental upstream): tells Longhorn that cluster-autoscaler removes nodes. Longhorn then drops a node's instance-manager PodDisruptionBudget when the node has no attached volume and holds no last healthy replica, and marks its own workloads safe to evict, so cluster-autoscaler can empty the node. Cluster-wide: manual drains get the same relaxed budgets. Needed when any node with Longhorn components is autoscaled."
+  type        = bool
+  default     = false
+  nullable    = false
+}
+
 variable "default_replica_count" {
   description = "Number of replicas Longhorn maintains for every new volume. 3 = one per node on a 3-node cluster (default). 1 keeps the volume single-node — useful for single-node dev clusters where the durability guarantee doesn't apply anyway."
   type        = number

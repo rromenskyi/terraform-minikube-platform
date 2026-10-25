@@ -155,11 +155,15 @@ locals {
         dns_zones = []
       }
       longhorn = {
-        enabled          = false
-        replica_count    = 3
-        backup_b2_region = ""
-        tolerations      = []
-        tag_pools        = {}
+        enabled       = false
+        replica_count = 3
+        # Longhorn's cluster-autoscaler mode (modules/longhorn
+        # cluster_autoscaler_enabled): set when an autoscaled node pool
+        # runs Longhorn components.
+        cluster_autoscaler_enabled = false
+        backup_b2_region           = ""
+        tolerations                = []
+        tag_pools                  = {}
       }
       keda = {
         enabled       = false

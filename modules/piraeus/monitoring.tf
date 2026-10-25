@@ -71,9 +71,15 @@ resource "kubectl_manifest" "rules" {
               annotations = { summary = "LINSTOR controller is down: no new volumes, no attach/detach" }
             },
             {
-              # LINSTOR node states: 2 = ONLINE.
+              # LINSTOR node states: 2 = ONLINE. Only for nodes still
+              # registered in Kubernetes: a node removed on purpose (e.g. a
+              # powered-off autoscaled node) keeps its LINSTOR node under
+              # deletionPolicy Retain, offline until it registers again.
+              # Satellites are named after their Nodes (Piraeus). While
+              # kube-state-metrics reports no nodes at all, every satellite
+              # counts, so its outage cannot silence this alert.
               alert       = "LinstorSatelliteNotOnline"
-              expr        = "linstor_node_state{nodetype=\"SATELLITE\"} != 2"
+              expr        = "linstor_node_state{nodetype=\"SATELLITE\"} != 2 and on (node) (kube_node_info or (linstor_node_state{nodetype=\"SATELLITE\"} unless on () kube_node_info))"
               for         = "5m"
               labels      = { severity = "critical" }
               annotations = { summary = "LINSTOR satellite {{ $labels.node }} is not online" }
