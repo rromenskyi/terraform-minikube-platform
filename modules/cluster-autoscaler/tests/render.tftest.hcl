@@ -123,3 +123,50 @@ run "max_above_nodes_rejected" {
   }
   expect_failures = [var.node_groups]
 }
+
+run "fractional_sizes_rejected" {
+  command = plan
+  variables {
+    node_groups = [{
+      id       = "workers"
+      min_size = 0.5
+      max_size = 1.5
+      template = { cpu = "24", memory = "60Gi" }
+      nodes = [
+        { name = "worker-1", plug_url = "http://plug-1.example", plug_switch = "Relay" },
+        { name = "worker-2", plug_url = "http://plug-2.example", plug_switch = "Relay" },
+      ]
+    }]
+  }
+  expect_failures = [var.node_groups]
+}
+
+run "default_vault_auth_omits_ref" {
+  command = plan
+  variables {
+    vault_auth_role = ""
+  }
+  assert {
+    condition     = !contains(keys(yamldecode(kubectl_manifest.plug_secret["enabled"].yaml_body).spec), "vaultAuthRef")
+    error_message = "Without a role, vaultAuthRef must be absent (VSO's default VaultAuth), not empty."
+  }
+}
+
+run "ca_container_hardened" {
+  command = plan
+  assert {
+    condition     = kubernetes_deployment_v1.this["enabled"].spec[0].template[0].spec[0].priority_class_name == "system-cluster-critical"
+    error_message = "The autoscaler must not be preempted mid scale-down."
+  }
+  assert {
+    condition = (
+      kubernetes_deployment_v1.this["enabled"].spec[0].template[0].spec[0].container[0].security_context[0].run_as_non_root == true &&
+      kubernetes_deployment_v1.this["enabled"].spec[0].template[0].spec[0].container[0].security_context[0].read_only_root_filesystem == true
+    )
+    error_message = "cluster-autoscaler container must be hardened like the sidecar."
+  }
+  assert {
+    condition     = kubernetes_deployment_v1.this["enabled"].spec[0].template[0].spec[0].container[0].liveness_probe[0].http_get[0].path == "/health-check"
+    error_message = "cluster-autoscaler needs its /health-check liveness probe."
+  }
+}

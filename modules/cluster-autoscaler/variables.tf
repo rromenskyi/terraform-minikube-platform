@@ -81,8 +81,8 @@ variable "node_groups" {
     error_message = "node_groups: ids must be unique."
   }
   validation {
-    condition     = alltrue([for g in var.node_groups : g.min_size >= 0 && g.min_size <= g.max_size && g.max_size <= length(g.nodes)])
-    error_message = "node_groups: need 0 <= min_size <= max_size <= number of nodes."
+    condition     = alltrue([for g in var.node_groups : g.min_size >= 0 && g.min_size <= g.max_size && g.max_size <= length(g.nodes) && floor(g.min_size) == g.min_size && floor(g.max_size) == g.max_size])
+    error_message = "node_groups: need whole numbers 0 <= min_size <= max_size <= number of nodes."
   }
   validation {
     condition     = alltrue(flatten([for g in var.node_groups : [for n in g.nodes : can(regex("^https?://[^/]+", n.plug_url)) && n.plug_switch != ""]]))

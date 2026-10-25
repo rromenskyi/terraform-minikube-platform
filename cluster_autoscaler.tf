@@ -44,6 +44,9 @@ locals {
   cluster_autoscaler_vault_paths = distinct([for p in values(local.autoscaled_pools) : try(p.power.vault_path, "")])
   cluster_autoscaler_vault_path  = length(local.cluster_autoscaler_vault_paths) == 1 ? local.cluster_autoscaler_vault_paths[0] : ""
   cluster_autoscaler_on          = local.platform.services.cluster_autoscaler.enabled && length(local.autoscaled_pools) > 0
+  # The pool the autoscaler pod is pinned to by its node_selector.
+  cluster_autoscaler_home_pool = lookup(local.platform.services.cluster_autoscaler.node_selector, local.platform.node_pool_label, "")
+  cluster_autoscaler_usernames = distinct([for p in values(local.autoscaled_pools) : try(p.power.username, "admin")])
 }
 
 # Pool declarations that cluster-autoscaler relies on, checked at plan time
@@ -72,9 +75,20 @@ resource "terraform_data" "cluster_autoscaler_checks" {
       condition     = length(local.autoscaled_pools) == 0 || (length(local.cluster_autoscaler_vault_paths) == 1 && local.cluster_autoscaler_vault_path != "")
       error_message = "node_pools: every autoscaled pool needs the same non-empty `power.vault_path` (one plug password Secret)."
     }
+    # The autoscaler must be pinned to a declared pool that is never
+    # powered off: on a managed machine it would keep that machine on (its
+    # pod is not evictable), and it could not start again if every
+    # eligible machine were off.
     precondition {
-      condition     = !contains(keys(local.autoscaled_pools), lookup(local.platform.services.cluster_autoscaler.node_selector, local.platform.node_pool_label, ""))
-      error_message = "services.cluster_autoscaler.node_selector selects an autoscaled pool: the autoscaler could power off the node it runs on."
+      condition = !local.platform.services.cluster_autoscaler.enabled || length(local.autoscaled_pools) == 0 || (
+        contains(keys(local.platform.node_pools), local.cluster_autoscaler_home_pool) &&
+        !contains(keys(local.autoscaled_pools), local.cluster_autoscaler_home_pool)
+      )
+      error_message = "services.cluster_autoscaler.node_selector must select a node pool that is not autoscaled (`${local.platform.node_pool_label}: <pool>`); got ${jsonencode(local.platform.services.cluster_autoscaler.node_selector)}."
+    }
+    precondition {
+      condition     = length(local.cluster_autoscaler_usernames) <= 1
+      error_message = "node_pools: every autoscaled pool needs the same `power.username` (one plug credential)."
     }
   }
 }
@@ -87,7 +101,7 @@ module "cluster_autoscaler" {
   enabled         = local.cluster_autoscaler_on
   namespace       = local.platform.services.cluster_autoscaler.namespace
   node_groups     = local.cluster_autoscaler_groups
-  plug_username   = try(one(distinct([for p in values(local.autoscaled_pools) : try(p.power.username, "admin")])), "admin")
+  plug_username   = try(local.cluster_autoscaler_usernames[0], "admin")
   vault_path      = local.cluster_autoscaler_vault_path
   vault_auth_role = local.platform.services.vault.enabled ? "vso-platform-plugpool" : ""
   node_selector   = local.platform.services.cluster_autoscaler.node_selector

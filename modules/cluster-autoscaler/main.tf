@@ -268,11 +268,11 @@ resource "kubectl_manifest" "plug_secret" {
       namespace = kubernetes_namespace_v1.this["enabled"].metadata[0].name
       labels    = module.label.tags
     }
-    spec = {
-      vaultAuthRef = var.vault_auth_role != "" ? local.vault_auth : ""
-      mount        = "secret"
-      type         = "kv-v2"
-      path         = var.vault_path
+    # Without a role, no vaultAuthRef at all: VSO's default VaultAuth.
+    spec = merge(var.vault_auth_role != "" ? { vaultAuthRef = local.vault_auth } : {}, {
+      mount = "secret"
+      type  = "kv-v2"
+      path  = var.vault_path
       destination = {
         name   = local.plug_secret
         create = true
@@ -284,7 +284,7 @@ resource "kubectl_manifest" "plug_secret" {
       }
       rolloutRestartTargets = [{ kind = "Deployment", name = "cluster-autoscaler" }]
       refreshAfter          = "60s"
-    }
+    })
   })
 
   lifecycle {
@@ -328,7 +328,9 @@ resource "kubernetes_deployment_v1" "this" {
       }
 
       spec {
-        service_account_name             = kubernetes_service_account_v1.this["enabled"].metadata[0].name
+        service_account_name = kubernetes_service_account_v1.this["enabled"].metadata[0].name
+        # Not preempted in the middle of a scale-down.
+        priority_class_name              = "system-cluster-critical"
         node_selector                    = var.node_selector
         termination_grace_period_seconds = 60
 
@@ -361,6 +363,24 @@ resource "kubernetes_deployment_v1" "this" {
           port {
             name           = "metrics"
             container_port = 8085
+          }
+          liveness_probe {
+            http_get {
+              path = "/health-check"
+              port = "metrics"
+            }
+            initial_delay_seconds = 30
+            period_seconds        = 30
+            failure_threshold     = 6
+          }
+          security_context {
+            allow_privilege_escalation = false
+            read_only_root_filesystem  = true
+            run_as_non_root            = true
+            run_as_user                = 65532
+            capabilities {
+              drop = ["ALL"]
+            }
           }
           resources {
             requests = { cpu = "50m", memory = "128Mi" }
