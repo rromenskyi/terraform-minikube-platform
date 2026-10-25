@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Node pools (`node_pools.tf`): `node_pools` (pool => nodes) and `node_pool_label` (default `node-pool`) in `config/platform.yaml`; the plan fails when a registered node's pool label disagrees with `node_pools` or a node is in no pool (nodes that are not registered, e.g. powered off, are fine). Services mysql, seafile, zitadel and argocd take `node_pool: { preferred: [...] }`, rendered as a soft node affinity on the pool label (`preferred_node_affinity` on the modules).
+- Piraeus node lists from node pools: `services.piraeus.node_hostname_pools`, `nfs_server_node_pools` and `satellite_properties.<key>.node_pools` expand to the pools' members (merged with host names given directly, sorted).
 
 ### Fixed
 - Samba: the account passwords sync from Vault again (they never did: `secret "samba-accounts" not found`, Vault login 403 — the default VSO role does not bind the `nas` namespace). Samba now authenticates through its own VaultAuth with role `vso-platform-samba`, which reads only `services.samba.vault_path`.

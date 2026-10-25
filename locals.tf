@@ -269,6 +269,8 @@ locals {
         csi_controller_replicas     = 1
         satellite_properties        = {}
         nfs_server_node_hostnames   = []
+        nfs_server_node_pools       = []
+        node_hostname_pools         = []
         controller_properties       = {}
         control_plane_node_selector = {}
         host_network                = true
