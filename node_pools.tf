@@ -46,19 +46,25 @@ resource "terraform_data" "node_pool_checks" {
     }
     precondition {
       condition = alltrue([
-        for p in values(local.platform.services) : alltrue([
-          for pool in try(p.node_pool.preferred, []) : contains(keys(local.platform.node_pools), pool)
-        ])
-      ])
-      error_message = "node_pool.preferred names a pool that is not in node_pools."
-    }
-    precondition {
-      condition = alltrue([
         for n in data.kubernetes_nodes.all["enabled"].nodes :
         try(n.metadata[0].labels[local.platform.node_pool_label], "") == lookup(local.node_pool_of, n.metadata[0].name, "")
         && lookup(local.node_pool_of, n.metadata[0].name, "") != ""
       ])
       error_message = "node_pools: registered nodes and their ${local.platform.node_pool_label} labels disagree with node_pools (or a node is in no pool): ${jsonencode({ for n in data.kubernetes_nodes.all["enabled"].nodes : n.metadata[0].name => { label = try(n.metadata[0].labels[local.platform.node_pool_label], ""), declared = lookup(local.node_pool_of, n.metadata[0].name, "") } if try(n.metadata[0].labels[local.platform.node_pool_label], "") != lookup(local.node_pool_of, n.metadata[0].name, "") || lookup(local.node_pool_of, n.metadata[0].name, "") == "" })}."
+    }
+  }
+}
+
+# References to pools are checked even when no pool is declared.
+resource "terraform_data" "node_pool_references" {
+  lifecycle {
+    precondition {
+      condition = alltrue([
+        for p in values(local.platform.services) : alltrue([
+          for pool in try(p.node_pool.preferred, []) : contains(keys(local.platform.node_pools), pool)
+        ])
+      ])
+      error_message = "node_pool.preferred names a pool that is not in node_pools."
     }
   }
 }
