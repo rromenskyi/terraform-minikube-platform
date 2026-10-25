@@ -78,17 +78,24 @@ resource "kubernetes_config_map_v1" "esphome_power_dashboard" {
             legendFormat = "{{plug}}"
           }]
         },
+        # Energy since local midnight, computed here: the plugs' own
+        # `total_daily_energy` resets only when the plug has valid time, so
+        # without it the counter just grows from the plug's last boot.
+        # increase() also absorbs the counter's resets (midnight on the
+        # plug, reboots). The panel's own range is "today so far".
         {
           type        = "bargauge"
           title       = "Energy today"
           gridPos     = { x = 12, y = 13, w = 12, h = 7 }
           datasource  = local._esphome_ds
+          timeFrom    = "now/d"
           fieldConfig = { defaults = { unit = "kwatth", decimals = 2 } }
           options     = { orientation = "horizontal", reduceOptions = { calcs = ["lastNotNull"] } }
           targets = [{
             refId        = "A"
             datasource   = local._esphome_ds
-            expr         = "max by (plug, node) (esphome_sensor_value{id=\"total_daily_energy\"})"
+            expr         = "max by (plug, node) (increase(esphome_sensor_value{id=\"total_daily_energy\"}[$__range]))"
+            instant      = true
             legendFormat = "{{plug}}"
           }]
         },
