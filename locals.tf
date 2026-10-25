@@ -165,6 +165,15 @@ locals {
         tolerations                = []
         tag_pools                  = {}
       }
+      # cluster-autoscaler + plugpool for node pools with `autoscaling` and
+      # `power` (cluster_autoscaler.tf). node_selector must keep the pod off
+      # those pools, on a node that reaches the plugs.
+      cluster_autoscaler = {
+        enabled       = false
+        namespace     = "cluster-autoscaler"
+        node_selector = {}
+        tolerations   = []
+      }
       keda = {
         enabled       = false
         namespace     = "keda"
@@ -657,6 +666,7 @@ locals {
       dns01_cloudflare     = merge(local._platform_defaults.services.dns01_cloudflare, try(local._platform_services.dns01_cloudflare, {}))
       longhorn             = merge(local._platform_defaults.services.longhorn, try(local._platform_services.longhorn, {}))
       keda                 = merge(local._platform_defaults.services.keda, try(local._platform_services.keda, {}))
+      cluster_autoscaler   = merge(local._platform_defaults.services.cluster_autoscaler, try(local._platform_services.cluster_autoscaler, {}))
       samba                = merge(local._platform_defaults.services.samba, try(local._platform_services.samba, {}))
       metallb              = merge(local._platform_defaults.services.metallb, try(local._platform_services.metallb, {}))
       minio                = merge(local._platform_defaults.services.minio, try(local._platform_services.minio, {}))
