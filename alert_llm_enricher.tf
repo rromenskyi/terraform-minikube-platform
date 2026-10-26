@@ -1,6 +1,7 @@
-# AI alert enrichment — asks the local Ollama model for a diagnosis + action
-# plan for each firing log alert, emailed alongside (never instead of) the
-# existing plain-text alert email. See modules/logging's
+# AI alert enrichment — asks a local LLM (the shared Ollama, or an
+# OpenAI-compatible server: `services.alert_llm_enrichment.api`) for a
+# diagnosis + action plan for each firing log alert, emailed alongside (never
+# instead of) the existing plain-text alert email. See modules/logging's
 # `ai_enrichment_webhook_url` variable for why this is a second integration
 # on the SAME Alertmanager receiver rather than a competing route.
 #
@@ -23,6 +24,9 @@ locals {
   )
 
   alert_llm_enricher_name = "alert-llm-enricher"
+  alert_llm_enricher_model = (
+    local.alert_llm_enrichment.model != "" ? local.alert_llm_enrichment.model : local.alert_llm_enrichment.ollama_model
+  )
 }
 
 resource "kubernetes_config_map_v1" "alert_llm_enricher" {
@@ -93,8 +97,16 @@ resource "kubernetes_deployment_v1" "alert_llm_enricher" {
 
   lifecycle {
     precondition {
-      condition     = local.alert_llm_enrichment.ollama_model != ""
-      error_message = "services.alert_llm_enrichment.ollama_model must be set when the enricher is enabled (use the chat default model)."
+      condition     = local.alert_llm_enricher_model != ""
+      error_message = "services.alert_llm_enrichment.model must be set when the enricher is enabled (with the shared Ollama, use the chat default model)."
+    }
+    precondition {
+      condition     = contains(["ollama", "openai"], local.alert_llm_enrichment.api)
+      error_message = "services.alert_llm_enrichment.api must be \"ollama\" or \"openai\"."
+    }
+    precondition {
+      condition     = local.alert_llm_enrichment.api == "ollama" || local.alert_llm_enrichment.url != ""
+      error_message = "services.alert_llm_enrichment.url is required when api is \"openai\" (base URL including /v1)."
     }
   }
 
@@ -154,8 +166,16 @@ resource "kubernetes_deployment_v1" "alert_llm_enricher" {
             value = local.alert_llm_enrichment.smtp_hello
           }
           env {
-            name  = "OLLAMA_MODEL"
-            value = local.alert_llm_enrichment.ollama_model
+            name  = "LLM_API"
+            value = local.alert_llm_enrichment.api
+          }
+          env {
+            name  = "LLM_URL"
+            value = local.alert_llm_enrichment.url
+          }
+          env {
+            name  = "LLM_MODEL"
+            value = local.alert_llm_enricher_model
           }
           env {
             name  = "DIAGNOSIS_LANGUAGE"

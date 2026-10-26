@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Alertmanager webhook receiver: for each firing log alert, re-fetches the
-matching log lines from VictoriaLogs, asks the local Ollama model for a
-diagnosis + action plan, and emails the result via the in-cluster Stalwart
+matching log lines from VictoriaLogs, asks a local LLM (the shared Ollama, or
+any OpenAI-compatible server) for a diagnosis + action plan, and emails the result via the in-cluster Stalwart
 SMTP listener. Runs alongside Alertmanager's existing plain-text email
 receiver (not instead of it) — see modules/logging's ai_enrichment_webhook_url.
 
@@ -25,8 +25,11 @@ VICTORIALOGS_URL = os.environ.get("VICTORIALOGS_URL", "http://victorialogs.monit
 K8S_API_URL = os.environ.get("K8S_API_URL", "https://kubernetes.default.svc")
 K8S_TOKEN_FILE = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 K8S_CA_FILE = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
-OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://ollama.platform.svc.cluster.local:11434")
-OLLAMA_MODEL = os.environ["OLLAMA_MODEL"]
+# "ollama" (Ollama /api/generate) or "openai" (OpenAI-compatible
+# /chat/completions; LLM_URL then includes the /v1 prefix).
+LLM_API = os.environ.get("LLM_API", "ollama")
+LLM_URL = os.environ.get("LLM_URL") or "http://ollama.platform.svc.cluster.local:11434"
+LLM_MODEL = os.environ["LLM_MODEL"]
 DIAGNOSIS_LANGUAGE = os.environ.get("DIAGNOSIS_LANGUAGE", "English")
 SMTP_HOST = os.environ.get("SMTP_HOST", "stalwart-smtp.mail.svc.cluster.local")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "25"))
@@ -125,7 +128,7 @@ def query_pod_events(namespace: str, name: str) -> str:
     return "\n".join(lines) if lines else "(no warning events)"
 
 
-def ask_ollama(alertname: str, summary: str, log_lines: list[str], k8s_context: str) -> str:
+def ask_llm(alertname: str, summary: str, log_lines: list[str], k8s_context: str) -> str:
     log_excerpt = "\n".join(log_lines[:LOG_CONTEXT_LINES]) if log_lines else "(no log lines — the context query matched nothing)"
     k8s_block = f"\nKubernetes pod status and events:\n{k8s_context}\n" if k8s_context else ""
     prompt = (
@@ -137,9 +140,11 @@ def ask_ollama(alertname: str, summary: str, log_lines: list[str], k8s_context: 
         "plan (2-4 steps): what the operator should check or do first. Be "
         f"specific, no filler. Write the answer in {DIAGNOSIS_LANGUAGE}."
     )
+    if LLM_API == "openai":
+        return ask_openai(prompt)
     payload = json.dumps(
         {
-            "model": OLLAMA_MODEL,
+            "model": LLM_MODEL,
             "prompt": prompt,
             "stream": False,
             # gemma4 always produces a <think>...</think> block unless told
@@ -154,7 +159,7 @@ def ask_ollama(alertname: str, summary: str, log_lines: list[str], k8s_context: 
         }
     ).encode()
     req = urllib.request.Request(
-        f"{OLLAMA_URL}/api/generate", data=payload, headers={"Content-Type": "application/json"}
+        f"{LLM_URL}/api/generate", data=payload, headers={"Content-Type": "application/json"}
     )
     # This is the SAME shared Ollama instance OpenWebUI chat uses, with only
     # OLLAMA_NUM_PARALLEL=2 slots — a live chat reply (which does NOT get
@@ -166,6 +171,27 @@ def ask_ollama(alertname: str, summary: str, log_lines: list[str], k8s_context: 
     with urllib.request.urlopen(req, timeout=300) as resp:
         data = json.loads(resp.read())
     return data.get("response", "").strip()
+
+
+def ask_openai(prompt: str) -> str:
+    payload = json.dumps(
+        {
+            "model": LLM_MODEL,
+            "messages": [{"role": "user", "content": prompt}],
+            "stream": False,
+            "max_tokens": 400,
+            # Same reason as think:false above: a reasoning model spends the
+            # token budget thinking and returns empty content. llama.cpp and
+            # vLLM pass this to the chat template.
+            "chat_template_kwargs": {"enable_thinking": False},
+        }
+    ).encode()
+    req = urllib.request.Request(
+        f"{LLM_URL}/chat/completions", data=payload, headers={"Content-Type": "application/json"}
+    )
+    with urllib.request.urlopen(req, timeout=300) as resp:
+        data = json.loads(resp.read())
+    return (data["choices"][0]["message"].get("content") or "").strip()
 
 
 def send_email(subject: str, body: str) -> None:
@@ -200,16 +226,16 @@ def handle_alert(alert: dict) -> None:
         k8s_context = f"Container status:\n{status}\n\nRecent warning events:\n{events}"
 
     try:
-        diagnosis = ask_ollama(alertname, summary, log_lines, k8s_context)
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as e:
-        print(f"ollama request failed for {alertname}: {e}", file=sys.stderr)
+        diagnosis = ask_llm(alertname, summary, log_lines, k8s_context)
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, KeyError, IndexError) as e:
+        print(f"llm request failed for {alertname}: {e}", file=sys.stderr)
         diagnosis = f"(LLM diagnosis unavailable: {e})"
 
     subject = f"[AI diagnosis] {alertname}: {summary}"[:200]
     k8s_section = f"\n--- Kubernetes pod status / events ---\n{k8s_context}\n" if k8s_context else ""
     body = (
         f"{summary}\n\n"
-        f"--- Diagnosis by the local LLM ({OLLAMA_MODEL}) ---\n{diagnosis}\n"
+        f"--- Diagnosis by the local LLM ({LLM_MODEL}) ---\n{diagnosis}\n"
         f"{k8s_section}\n"
         f"--- Log context ({len(log_lines)} lines, first 30 shown) ---\n"
         + "\n".join(log_lines[:30])

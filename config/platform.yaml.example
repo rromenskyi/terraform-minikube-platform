@@ -249,14 +249,16 @@ services:
     #     summary: "{{ $value }} hits in 5m"   # to avoid alerting on dev/test.
 
   # AI alert enrichment (alert_llm_enricher.tf) — for each firing log alert
-  # above, asks the local Ollama model for a diagnosis + action plan and
+  # above, asks a local LLM for a diagnosis + action plan and
   # emails it too. This is a SECOND integration on the same Alertmanager
   # receiver, not a replacement — the plain-text alert email keeps sending
   # even if this (or Ollama, or VictoriaLogs) is down. No-op unless
   # `logging.alert_email` is also set.
   alert_llm_enrichment:
     enabled: false
-    # ollama_model: gemma4:26b-a4b-q3km   # must already be pulled/registered
+    # model: gemma4:26b-a4b-q3km   # must already be pulled/registered
+    # api: ollama                  # or openai: any OpenAI-compatible server
+    # url: ""                      # empty = shared Ollama; openai: base URL incl. /v1
     # cpu_request/cpu_limit/memory_request/memory_limit: tiny — the script
     # itself is a thin webhook->VictoriaLogs->Ollama->SMTP relay, no local
     # inference.

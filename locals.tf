@@ -629,9 +629,17 @@ locals {
       # built image — see scripts/alert-llm-enricher.py.
       alert_llm_enrichment = {
         enabled = false
-        # Required when enabled. Use the chat default model: with
-        # OLLAMA_MAX_LOADED_MODELS=1 a different model evicts it from VRAM
-        # on every alert.
+        # LLM backend: "ollama" (Ollama /api/generate) or "openai" (an
+        # OpenAI-compatible /chat/completions, e.g. llama.cpp server).
+        api = "ollama"
+        # Base URL; empty = the shared in-cluster Ollama. For "openai"
+        # include the /v1 prefix.
+        url = ""
+        # Required when enabled. With the shared Ollama use the chat default
+        # model: with OLLAMA_MAX_LOADED_MODELS=1 a different model evicts it
+        # from VRAM on every alert.
+        model = ""
+        # Older name of `model` (used when `model` is empty).
         ollama_model = ""
         # Language the diagnosis is written in (the email itself is English).
         language       = "English"
