@@ -171,8 +171,14 @@ resource "kubernetes_role_v1" "this" {
   rule {
     api_groups     = [""]
     resources      = ["configmaps"]
-    resource_names = ["cluster-autoscaler-status", "plugpool-template-slices"]
+    resource_names = ["cluster-autoscaler-status"]
     verbs          = ["delete", "get", "update"]
+  }
+  rule {
+    api_groups     = [""]
+    resources      = ["configmaps"]
+    resource_names = ["plugpool-template-slices"]
+    verbs          = ["get", "update"]
   }
   rule {
     api_groups = [""]
