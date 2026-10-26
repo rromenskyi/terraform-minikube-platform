@@ -549,11 +549,17 @@ def _render(group: str, total: int, contexts: list[dict], logs: list[list[str]],
                 "Log lines (oldest first; matches with surrounding lines, repeats folded):\n" + "\n".join(lines) + "\n"
             )
     parts.append(f"### Other alerts firing in the cluster now\n{cluster}\n")
-    parts.append(
+    parts.append(_final_instruction())
+    return "\n".join(parts)
+
+
+def _final_instruction() -> str:
+    # Last in the prompt, where models heed it most: with only the system
+    # prompt asking for the language, answers drifted back to English.
+    return (
         f"Diagnose this alert group in the required format. Write the entire answer in {DIAGNOSIS_LANGUAGE}, "
         "section headings included; keep commands, resource names and quoted log text as they are."
     )
-    return "\n".join(parts)
 
 
 def build_prompt(
@@ -585,6 +591,9 @@ def build_prompt(
     if len(prompt) > budget:
         keep = max(len(cluster) - (len(prompt) - budget) - 10, 0)
         prompt = render(cluster[:keep] + "\n(cut)")
+    if len(prompt) > budget:
+        tail = "\n…\n" + _final_instruction()
+        prompt = prompt[: max(budget - len(tail), 0)] + tail
     return prompt[:budget]
 
 

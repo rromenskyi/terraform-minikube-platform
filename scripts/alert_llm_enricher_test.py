@@ -176,10 +176,15 @@ class LanguageTest(unittest.TestCase):
         self.assertIn("Russian", last)
         self.assertIn("headings", last)
 
-    def test_system_prompt_forbids_pod_creating_commands(self):
-        s = load().system_prompt()
-        for word in ("run", "debug", "exec"):
-            self.assertIn(word, s)
+    def test_system_prompt_forbids_write_commands(self):
+        s = " ".join(load().system_prompt().split())
+        self.assertIn("no delete, patch, edit, apply, restart, scale, exec, run, debug or cp", s)
+
+    def test_language_line_survives_an_over_budget_prompt(self):
+        m = load(PROMPT_CHAR_BUDGET="1500", DIAGNOSIS_LANGUAGE="Russian")
+        prompt = m.build_prompt("grp", [{"header": "h" * 5000, "k8s": "", "logs": []}], "c")
+        self.assertLessEqual(len(prompt), 1500)
+        self.assertIn("Russian", prompt.strip().splitlines()[-1])
 
 
 class SystemPromptTest(unittest.TestCase):
@@ -411,7 +416,7 @@ class RedactTest(unittest.TestCase):
         for text in [
             "pod linstor-controller-847c8b9bbb-5gs26 exit status 143",
             "image sha256:dcdf2718eb84421502fe1b2d4368259bcd1ebb8e85326c455d930a7e98ed62a6",
-            "SETUSER tenant-a failed: Could not connect to Redis at redis-valkey-node-0:6379",
+            "SETUSER phost-example-org-prod failed: Could not connect to Redis at redis-valkey-node-0:6379",
             "token bucket refilled, 5 tokens left",
             "password authentication failed for user \"app\"",
             "owner=ReplicaSet/redis-acl-keeper-768485dbfc",
