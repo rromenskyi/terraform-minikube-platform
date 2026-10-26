@@ -73,6 +73,9 @@ _SEVERITY_RANK = {"none": 0, "info": 1, "warning": 2, "critical": 3}
 # Labels that say nothing about the incident (routing plumbing).
 SKIP_LABELS = {"alertname", "severity", "namespace", "alert_source", "prometheus", "endpoint", "service"}
 PUSH_MAX_BYTES = 3500
+# A diagnosis should stick to the evidence; a low temperature keeps small
+# models from inventing causes.
+LLM_TEMPERATURE = 0.2
 # Webhook bodies are a few KB; anything far larger is not Alertmanager.
 MAX_BODY_BYTES = 1 << 20
 # Groups processed at once; further notifications wait their turn instead of
@@ -92,12 +95,13 @@ next. Never invent a cause.
 - Link alerts that share a cause (same node, same time, same dependency) and say which one is most likely \
 the root and which are consequences.
 - Long-standing alerts are usually known background; mention one only if it plausibly relates.
-- Suggest read-only checks only (kubectl get/describe/logs, log or metric queries). Changes to the cluster \
-go through infrastructure-as-code: say what to change and where, never give delete, patch, edit, restart, \
-scale or exec commands.
+- Suggest read-only checks only (kubectl get/describe/logs/top, log or metric queries). Never suggest \
+commands that change anything or start pods: no delete, patch, edit, apply, restart, scale, exec, run, \
+debug or cp. Changes to the cluster go through infrastructure-as-code: say what to change and where.
 - Be specific and short. No filler, no generic advice.
 
-Answer in {language}, as plain text with these sections (headings translated into {language}):
+Write the whole answer in {language}, as plain text with these four sections, each heading written in \
+{language}:
 1. Summary: one or two sentences on what is happening as a whole. This part is also sent as a push \
 notification, so it must stand on its own.
 2. Likely cause: the cause, your confidence (high, medium or low) and the evidence from the data.
@@ -545,8 +549,17 @@ def _render(group: str, total: int, contexts: list[dict], logs: list[list[str]],
                 "Log lines (oldest first; matches with surrounding lines, repeats folded):\n" + "\n".join(lines) + "\n"
             )
     parts.append(f"### Other alerts firing in the cluster now\n{cluster}\n")
-    parts.append("Diagnose this alert group in the required format.")
+    parts.append(_final_instruction())
     return "\n".join(parts)
+
+
+def _final_instruction() -> str:
+    # Last in the prompt, where models heed it most: with only the system
+    # prompt asking for the language, answers drifted back to English.
+    return (
+        f"Diagnose this alert group in the required format. Write the entire answer in {DIAGNOSIS_LANGUAGE}, "
+        "section headings included; keep commands, resource names and quoted log text as they are."
+    )
 
 
 def build_prompt(
@@ -578,6 +591,9 @@ def build_prompt(
     if len(prompt) > budget:
         keep = max(len(cluster) - (len(prompt) - budget) - 10, 0)
         prompt = render(cluster[:keep] + "\n(cut)")
+    if len(prompt) > budget:
+        tail = "\n…\n" + _final_instruction()
+        prompt = prompt[: max(budget - len(tail), 0)] + tail
     return prompt[:budget]
 
 
@@ -610,7 +626,7 @@ def ask_llm(system: str, prompt: str) -> str:
             # model can't be asked via prompt text — it's baked in at
             # training time, not a runtime toggle any instruction changes).
             "think": False,
-            "options": {"num_predict": LLM_MAX_TOKENS},
+            "options": {"num_predict": LLM_MAX_TOKENS, "temperature": LLM_TEMPERATURE},
         }
     ).encode()
     req = urllib.request.Request(
@@ -635,6 +651,7 @@ def ask_openai(system: str, prompt: str) -> str:
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
             "stream": False,
             "max_tokens": LLM_MAX_TOKENS,
+            "temperature": LLM_TEMPERATURE,
             # Same reason as think:false above: a reasoning model spends the
             # token budget thinking and returns empty content. llama.cpp and
             # vLLM pass this to the chat template.
