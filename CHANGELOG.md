@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- cluster-autoscaler: plugpool 0.2.0, whose node group templates carry the DRA devices (ResourceSlices) of the powered-off machines (stored in the ConfigMap `plugpool-template-slices`); used by cluster-autoscaler 1.37+, ignored by 1.36.
+
 ### Fixed
 - gpu_dra: dra-driver-dri 0.2.1 counts each DRM client once; per-pod VRAM was doubled for processes with dup'ed DRM fds (RADV), raising a false DRIClaimVRAMOverClaim.
 
