@@ -7,6 +7,11 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- `DRIClaimVRAMOverClaim` and the "Per-pod VRAM" dashboard panel name the
+  pod that uses the VRAM (`exported_namespace`/`exported_pod`) instead of the
+  plugin pod that exports the metric; the alert also names the node.
+
 ### Added
 - Per-pod VRAM attribution: the DaemonSet runs with `hostPID` and
   `SYS_PTRACE` so the driver reads every GPU process's DRM fdinfo and exports

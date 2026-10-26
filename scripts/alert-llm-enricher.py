@@ -73,6 +73,8 @@ _SEVERITY_RANK = {"none": 0, "info": 1, "warning": 2, "critical": 3}
 # Labels that say nothing about the incident (routing plumbing).
 SKIP_LABELS = {"alertname", "severity", "namespace", "alert_source", "prometheus", "endpoint", "service"}
 PUSH_MAX_BYTES = 3500
+# ntfy refuses a JSON publish over twice its 4 KiB message limit (413).
+PUSH_MAX_BODY_BYTES = 8192
 # A diagnosis should stick to the evidence; a low temperature keeps small
 # models from inventing causes.
 LLM_TEMPERATURE = 0.2
@@ -681,18 +683,31 @@ def push_notification(title: str, message: str, severity: str) -> None:
     if not PUSH_URL:
         return None
     parts = urllib.parse.urlsplit(PUSH_URL)
-    data = message.encode()
-    if len(data) > PUSH_MAX_BYTES:
-        message = data[: PUSH_MAX_BYTES - 3].decode("utf-8", errors="ignore") + "…"
-    payload = json.dumps(
-        {
-            "topic": parts.path.strip("/"),
-            "title": title,
-            "message": message,
-            "priority": 4 if severity == "critical" else 3,
-            "tags": ["robot"],
-        }
-    ).encode()
+
+    def cut(text: str, limit: int) -> str:
+        data = text.encode()
+        return text if len(data) <= limit else data[: max(0, limit - 3)].decode("utf-8", errors="ignore") + "…"
+
+    def body(title: str, message: str) -> bytes:
+        return json.dumps(
+            {
+                "topic": parts.path.strip("/"),
+                "title": title,
+                "message": message,
+                "priority": 4 if severity == "critical" else 3,
+                "tags": ["robot"],
+            },
+            # UTF-8 as is: \uXXXX escapes would triple a Cyrillic answer.
+            ensure_ascii=False,
+        ).encode()
+
+    title, message = cut(title, 200), cut(message, PUSH_MAX_BYTES)
+    payload = body(title, message)
+    # Quotes and newlines escape to 2 bytes, control characters to 6: shrink
+    # the message until the whole body fits.
+    while len(payload) > PUSH_MAX_BODY_BYTES and len(message) > 1:
+        message = cut(message, len(message.encode()) - (len(payload) - PUSH_MAX_BODY_BYTES) - 1)
+        payload = body(title, message)
     req = urllib.request.Request(
         f"{parts.scheme}://{parts.netloc}/", data=payload, headers={"Content-Type": "application/json"}
     )

@@ -283,12 +283,14 @@ resource "kubectl_manifest" "rules" {
           {
             # Per-pod version of the above: names the pod that uses more than it
             # claimed (DRA accounts, the kernel does not cap), e.g. one that
-            # sized its claim for weights only. 10 % over its claim.
+            # sized its claim for weights only. 10 % over its claim. The scrape
+            # renames the series' own namespace/pod to exported_*; namespace
+            # and pod are the plugin pod's.
             alert       = "DRIClaimVRAMOverClaim"
             expr        = "dri_claim_vram_used_bytes > dri_claim_vram_bytes * 1.1 and dri_claim_vram_bytes > 0"
             for         = "5m"
             labels      = { severity = "warning" }
-            annotations = { summary = "{{ $labels.namespace }}/{{ $labels.pod }} on {{ $labels.device }}: uses more VRAM than it claimed" }
+            annotations = { summary = "{{ $labels.exported_namespace }}/{{ $labels.exported_pod }} on {{ $labels.node }} {{ $labels.device }}: uses more VRAM than it claimed" }
           },
           {
             alert       = "DRIVRAMNearlyFull"
