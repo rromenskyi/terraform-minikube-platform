@@ -379,6 +379,18 @@ class PushTest(unittest.TestCase):
         finally:
             stub.close()
 
+    def test_push_body_fits_ntfy_json_limit_whatever_the_text(self):
+        # JSON escapes quotes and newlines to 2 bytes, control characters to 6.
+        stub = Stub({"id": "x"})
+        try:
+            m = load(PUSH_URL=f"http://127.0.0.1:{stub.port}/topic")
+            for title, msg in [("t", "\x01" * 5000), ("t", '"\n' * 3000), ("x" * 5000, "short")]:
+                m.push_notification(title, msg, "warning")
+                self.assertLessEqual(stub.sizes[-1], 8192)
+                self.assertEqual(stub.seen[-1][1]["topic"], "topic")
+        finally:
+            stub.close()
+
     def test_push_failure_does_not_stop_mail(self):
         m = load(PUSH_URL="http://127.0.0.1:1/topic")
         m.fetch_active_alerts = lambda: []
