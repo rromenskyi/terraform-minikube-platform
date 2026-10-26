@@ -175,6 +175,12 @@ resource "kubernetes_role_v1" "this" {
     verbs          = ["delete", "get", "update"]
   }
   rule {
+    api_groups     = [""]
+    resources      = ["configmaps"]
+    resource_names = ["plugpool-template-slices"]
+    verbs          = ["get", "update"]
+  }
+  rule {
     api_groups = [""]
     resources  = ["pods"]
     verbs      = ["create", "list", "delete"]

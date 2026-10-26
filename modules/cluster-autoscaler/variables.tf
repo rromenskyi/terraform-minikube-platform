@@ -28,7 +28,7 @@ variable "ca_image" {
 variable "plugpool_image" {
   description = "plugpool image: the externalgrpc provider that powers machines through ESPHome smart plugs (github.com/ipsupport-llc/plugpool)."
   type        = string
-  default     = "ghcr.io/ipsupport-llc/plugpool:0.1.0@sha256:cab8356b58c7d2aff7dc7827caaeddd4c45fa8be15e646bbc2feaa2835bcf151"
+  default     = "ghcr.io/ipsupport-llc/plugpool:0.2.0@sha256:dcdf2718eb84421502fe1b2d4368259bcd1ebb8e85326c455d930a7e98ed62a6"
   nullable    = false
 }
 
