@@ -8,6 +8,9 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- `alert_rules.<name>.description` (optional): what the alert means and its
+  known false positives, rendered as the rule's `description` annotation so
+  webhook consumers (the AI enricher) can explain the alert.
 - `push_webhook_url`: a second integration on the log-alert e-mail receiver
   (e.g. ntfy), stored in a Secret and referenced by `urlSecret`. Empty =
   e-mail only.

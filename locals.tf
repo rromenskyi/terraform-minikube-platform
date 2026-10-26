@@ -629,16 +629,42 @@ locals {
       # built image — see scripts/alert-llm-enricher.py.
       alert_llm_enrichment = {
         enabled = false
-        # Required when enabled. Use the chat default model: with
-        # OLLAMA_MAX_LOADED_MODELS=1 a different model evicts it from VRAM
-        # on every alert.
+        # LLM backend: "ollama" (Ollama /api/generate) or "openai" (an
+        # OpenAI-compatible /chat/completions without an API key that
+        # accepts chat_template_kwargs, e.g. llama.cpp or vLLM).
+        api = "ollama"
+        # Base URL; empty = the shared in-cluster Ollama. For "openai"
+        # include the /v1 prefix.
+        url = ""
+        # Required when enabled. With the shared Ollama use the chat default
+        # model: with OLLAMA_MAX_LOADED_MODELS=1 a different model evicts it
+        # from VRAM on every alert.
+        model = ""
+        # Older name of `model`; used only when `model` is empty.
         ollama_model = ""
         # Language the diagnosis is written in (the email itself is English).
-        language       = "English"
-        cpu_request    = "50m"
-        cpu_limit      = "500m"
-        memory_request = "64Mi"
-        memory_limit   = "256Mi"
+        language = "English"
+        # Longest answer, in tokens.
+        max_tokens = 900
+        # The prompt is cut to this many characters, oldest log lines first.
+        # Keep it well inside the model's context window, which also holds
+        # the answer (~3 characters per token for log text): the default fits
+        # an 8K-token Ollama context.
+        prompt_char_budget = 16000
+        # Operator runbook (Markdown) appended to the system prompt: the
+        # cluster's layout, conventions, known noise. Path relative to the
+        # repository root, e.g. "config/alert-runbook.md"; empty = none. It
+        # lands in a ConfigMap and in Terraform state: no credentials in it.
+        runbook_file = ""
+        # Also send the diagnosis as an ntfy push to `monitoring.alert_push_url`
+        # (when that is set).
+        push = true
+        # Alertmanager whose active alerts give the "what else is firing" picture.
+        alertmanager_url = "http://kube-prometheus-stack-alertmanager.monitoring.svc.cluster.local:9093"
+        cpu_request      = "50m"
+        cpu_limit        = "500m"
+        memory_request   = "64Mi"
+        memory_limit     = "256Mi"
         # From address and EHLO FQDN for the enriched alert mail.
         smtp_from  = ""
         smtp_hello = ""

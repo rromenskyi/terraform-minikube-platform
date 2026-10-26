@@ -152,12 +152,14 @@ variable "push_webhook_url" {
 }
 
 variable "alert_rules" {
-  description = "Log alert rules the module renders into a vmalert `type: vlogs` rule group. Each: `query` is a LogsQL stats query ending in `stats count() as <name> | filter <name>:>N` (the time window lives in the query's `_time:` filter, the threshold in `| filter`); `for` is the sustain duration; `summary` is the notification text. The caller supplies these — the root wires a generic default set (panic/fatal/OOM) merged with the operator's `services.logging.alert_rules`."
+  description = "Log alert rules the module renders into a vmalert `type: vlogs` rule group. Each: `query` is a LogsQL stats query ending in `stats count() as <name> | filter <name>:>N` (the time window lives in the query's `_time:` filter, the threshold in `| filter`); `for` is the sustain duration; `summary` is the notification text; `description` (optional) says what the alert means and its known false positives — it reaches webhook consumers such as the AI enricher as the `description` annotation. The caller supplies these — the root wires a generic default set (panic/fatal/OOM) merged with the operator's `services.logging.alert_rules`."
   type = map(object({
     query    = string
     for      = optional(string, "5m")
     severity = optional(string, "warning")
     summary  = string
+    # What the alert means; empty = no `description` annotation.
+    description = optional(string, "")
   }))
   default = {}
 }

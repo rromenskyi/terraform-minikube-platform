@@ -1,6 +1,7 @@
-# AI alert enrichment — asks the local Ollama model for a diagnosis + action
-# plan for each firing log alert, emailed alongside (never instead of) the
-# existing plain-text alert email. See modules/logging's
+# AI alert enrichment — asks a local LLM (the shared Ollama, or an
+# OpenAI-compatible server: `services.alert_llm_enrichment.api`) for a
+# diagnosis + action plan for each firing log alert, emailed alongside (never
+# instead of) the existing plain-text alert email. See modules/logging's
 # `ai_enrichment_webhook_url` variable for why this is a second integration
 # on the SAME Alertmanager receiver rather than a competing route.
 #
@@ -23,6 +24,25 @@ locals {
   )
 
   alert_llm_enricher_name = "alert-llm-enricher"
+  alert_llm_enricher_model = (
+    local.alert_llm_enrichment.model != "" ? local.alert_llm_enrichment.model : local.alert_llm_enrichment.ollama_model
+  )
+
+  alert_llm_enricher_runbook_path = (
+    local.alert_llm_enrichment.runbook_file != "" ? "${path.module}/${local.alert_llm_enrichment.runbook_file}" : ""
+  )
+  alert_llm_enricher_runbook = (
+    local.alert_llm_enricher_runbook_path == "" ? "" : (
+      fileexists(local.alert_llm_enricher_runbook_path) ? file(local.alert_llm_enricher_runbook_path) : ""
+    )
+  )
+
+  # The push topic URL works like a password (anyone holding it can read and
+  # post), so it reaches the pod through a Secret, not a plain env value.
+  alert_llm_enricher_push = (
+    length(local.alert_llm_enrichment_instances) > 0 && local.alert_llm_enrichment.push && local._alert_push_url != ""
+    ? toset(["enabled"]) : toset([])
+  )
 }
 
 resource "kubernetes_config_map_v1" "alert_llm_enricher" {
@@ -34,19 +54,35 @@ resource "kubernetes_config_map_v1" "alert_llm_enricher" {
     labels    = merge(module.platform_label.tags, { "app.kubernetes.io/component" = "alert-llm-enricher" })
   }
 
+  data = merge(
+    { "enricher.py" = file("${path.module}/scripts/alert-llm-enricher.py") },
+    local.alert_llm_enricher_runbook != "" ? { "runbook.md" = local.alert_llm_enricher_runbook } : {},
+  )
+}
+
+resource "kubernetes_secret_v1" "alert_llm_enricher_push" {
+  for_each = local.alert_llm_enricher_push
+
+  metadata {
+    name      = "${local.alert_llm_enricher_name}-push"
+    namespace = local.platform.services.logging.namespace
+    labels    = merge(module.platform_label.tags, { "app.kubernetes.io/component" = "alert-llm-enricher" })
+  }
+
   data = {
-    "enricher.py" = file("${path.module}/scripts/alert-llm-enricher.py")
+    url = local._alert_push_url
   }
 }
 
-# ── RBAC: read-only access to real pod status + events ──────────────────────
+# ── RBAC: read-only access to real pod status, events and nodes ─────────────
 # Log text alone doesn't carry a kernel OOM-kill: a SIGKILL'd process gets no
 # chance to print "OOMKilled" itself — that reason/exit-code only exists in
 # the pod's status (containerStatuses[].lastState.terminated) and in Warning
 # events. Confirmed live: a real OOM-killed test pod's own stdout had no such
 # text at all. Cluster-wide (not namespaced) because alerting pods can be in
-# any namespace, not just this one — get/list only, no write, no other
-# resource kinds.
+# any namespace, not just this one — get/list only, no write. Nodes: the
+# alerting pod's node state (Ready, pressure, cordoned, gone) is often the
+# cause.
 
 resource "kubernetes_service_account_v1" "alert_llm_enricher" {
   for_each = local.alert_llm_enrichment_instances
@@ -67,6 +103,11 @@ resource "kubernetes_cluster_role_v1" "alert_llm_enricher" {
     api_groups = [""]
     resources  = ["pods", "events"]
     verbs      = ["get", "list"]
+  }
+  rule {
+    api_groups = [""]
+    resources  = ["nodes"]
+    verbs      = ["get"]
   }
 }
 
@@ -93,8 +134,20 @@ resource "kubernetes_deployment_v1" "alert_llm_enricher" {
 
   lifecycle {
     precondition {
-      condition     = local.alert_llm_enrichment.ollama_model != ""
-      error_message = "services.alert_llm_enrichment.ollama_model must be set when the enricher is enabled (use the chat default model)."
+      condition     = local.alert_llm_enricher_model != ""
+      error_message = "services.alert_llm_enrichment.model (or its older name ollama_model) must be set when the enricher is enabled (with the shared Ollama, use the chat default model)."
+    }
+    precondition {
+      condition     = contains(["ollama", "openai"], local.alert_llm_enrichment.api)
+      error_message = "services.alert_llm_enrichment.api must be \"ollama\" or \"openai\"."
+    }
+    precondition {
+      condition     = local.alert_llm_enricher_runbook_path == "" ? true : fileexists(local.alert_llm_enricher_runbook_path)
+      error_message = "services.alert_llm_enrichment.runbook_file: ${local.alert_llm_enrichment.runbook_file} does not exist (path relative to the repository root)."
+    }
+    precondition {
+      condition     = local.alert_llm_enrichment.api == "ollama" || local.alert_llm_enrichment.url != ""
+      error_message = "services.alert_llm_enrichment.url is required when api is \"openai\" (base URL including /v1)."
     }
   }
 
@@ -124,6 +177,10 @@ resource "kubernetes_deployment_v1" "alert_llm_enricher" {
           # Forces a rollout when the script content changes — a plain
           # ConfigMap update alone doesn't restart the pod to pick it up.
           "checksum/enricher-py" = sha256(file("${path.module}/scripts/alert-llm-enricher.py"))
+          "checksum/runbook"     = sha256(local.alert_llm_enricher_runbook)
+          # PUSH_URL is read from the Secret at container start only: a new
+          # topic must roll the pod.
+          "checksum/push-url" = sha256(length(local.alert_llm_enricher_push) > 0 ? local._alert_push_url : "")
         }
       }
 
@@ -154,12 +211,48 @@ resource "kubernetes_deployment_v1" "alert_llm_enricher" {
             value = local.alert_llm_enrichment.smtp_hello
           }
           env {
-            name  = "OLLAMA_MODEL"
-            value = local.alert_llm_enrichment.ollama_model
+            name  = "LLM_API"
+            value = local.alert_llm_enrichment.api
+          }
+          env {
+            name  = "LLM_URL"
+            value = local.alert_llm_enrichment.url
+          }
+          env {
+            name  = "LLM_MODEL"
+            value = local.alert_llm_enricher_model
           }
           env {
             name  = "DIAGNOSIS_LANGUAGE"
             value = local.alert_llm_enrichment.language
+          }
+          env {
+            name  = "LLM_MAX_TOKENS"
+            value = tostring(local.alert_llm_enrichment.max_tokens)
+          }
+          env {
+            name  = "PROMPT_CHAR_BUDGET"
+            value = tostring(local.alert_llm_enrichment.prompt_char_budget)
+          }
+          env {
+            name  = "ALERTMANAGER_URL"
+            value = local.alert_llm_enrichment.alertmanager_url
+          }
+          env {
+            name  = "NODE_POOL_LABEL"
+            value = local.platform.node_pool_label
+          }
+          dynamic "env" {
+            for_each = kubernetes_secret_v1.alert_llm_enricher_push
+            content {
+              name = "PUSH_URL"
+              value_from {
+                secret_key_ref {
+                  name = env.value.metadata[0].name
+                  key  = "url"
+                }
+              }
+            }
           }
 
           port {

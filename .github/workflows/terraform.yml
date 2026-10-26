@@ -29,6 +29,9 @@ jobs:
     - name: Terraform Validate
       run: terraform validate
 
+    - name: Script tests (alert enricher)
+      run: python3 -m unittest discover -s scripts -p '*_test.py'
+
     - name: Terraform Validate (cluster stack)
       working-directory: cluster
       run: |

@@ -71,7 +71,10 @@ locals {
           # re-run it — stripped of its trailing `| stats ... | filter ...`
           # aggregation tail — to fetch the actual matching log lines for
           # context. `summary` alone only carries the pre-aggregated count.
-          annotations = { summary = r.summary, logsql_query = r.query }
+          annotations = merge(
+            { summary = r.summary, logsql_query = r.query },
+            r.description != "" ? { description = r.description } : {},
+          )
         }
       ]
     }]
