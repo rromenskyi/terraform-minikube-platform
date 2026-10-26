@@ -572,7 +572,7 @@
             "uid": "${datasource}"
           },
           "expr": "dri_claim_vram_bytes{device=~\"$device\"}",
-          "legendFormat": "{{namespace}}/{{pod}} claimed"
+          "legendFormat": "{{exported_namespace}}/{{exported_pod}} claimed"
         },
         {
           "refId": "B",
@@ -581,7 +581,7 @@
             "uid": "${datasource}"
           },
           "expr": "dri_claim_vram_used_bytes{device=~\"$device\"}",
-          "legendFormat": "{{namespace}}/{{pod}} used"
+          "legendFormat": "{{exported_namespace}}/{{exported_pod}} used"
         }
       ]
     }

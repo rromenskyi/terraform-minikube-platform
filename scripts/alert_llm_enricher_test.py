@@ -205,15 +205,17 @@ class SystemPromptTest(unittest.TestCase):
 
 
 class Stub:
-    """Local OpenAI/Ollama stub; records request paths and bodies."""
+    """Local OpenAI/Ollama stub; records request paths, bodies and body sizes."""
 
     def __init__(self, reply):
-        self.reply, self.seen = reply, []
+        self.reply, self.seen, self.sizes = reply, [], []
         stub = self
 
         class H(BaseHTTPRequestHandler):
             def do_POST(self):
-                stub.seen.append((self.path, json.loads(self.rfile.read(int(self.headers["Content-Length"])))))
+                raw = self.rfile.read(int(self.headers["Content-Length"]))
+                stub.sizes.append(len(raw))
+                stub.seen.append((self.path, json.loads(raw)))
                 b = json.dumps(stub.reply).encode()
                 self.send_response(200)
                 self.send_header("Content-Length", str(len(b)))
@@ -362,6 +364,18 @@ class PushTest(unittest.TestCase):
             self.assertLessEqual(len(body["message"].encode()), 3500)
             self.assertEqual(body["priority"], 4)
             self.assertEqual(len(m.sent), 1)
+        finally:
+            stub.close()
+
+    def test_push_body_fits_ntfy_json_limit(self):
+        # ntfy rejects a JSON publish over twice its 4 KiB message limit (413);
+        # \uXXXX escapes made a Cyrillic answer three times its UTF-8 size.
+        stub = Stub({"id": "x"})
+        try:
+            m = load(PUSH_URL=f"http://127.0.0.1:{stub.port}/topic")
+            m.push_notification("Пул на паузе (1)", "Причина: " + "я" * 5000, "critical")
+            self.assertLessEqual(stub.sizes[-1], 8192)
+            self.assertTrue(stub.seen[-1][1]["message"].startswith("Причина: я"))
         finally:
             stub.close()
 

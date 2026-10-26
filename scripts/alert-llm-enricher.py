@@ -691,7 +691,10 @@ def push_notification(title: str, message: str, severity: str) -> None:
             "message": message,
             "priority": 4 if severity == "critical" else 3,
             "tags": ["robot"],
-        }
+        },
+        # UTF-8 as is: \uXXXX escapes triple a Cyrillic answer and ntfy refuses
+        # a JSON body over twice its 4 KiB message limit.
+        ensure_ascii=False,
     ).encode()
     req = urllib.request.Request(
         f"{parts.scheme}://{parts.netloc}/", data=payload, headers={"Content-Type": "application/json"}
