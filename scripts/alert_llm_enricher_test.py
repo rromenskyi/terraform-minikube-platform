@@ -168,6 +168,20 @@ class BudgetWithSystemTest(unittest.TestCase):
         self.assertIn("line 199 ", prompt)
 
 
+class LanguageTest(unittest.TestCase):
+    def test_prompt_ends_with_the_language_instruction(self):
+        m = load(DIAGNOSIS_LANGUAGE="Russian")
+        prompt = m.build_prompt("grp", [{"header": "a", "k8s": "", "logs": ["x"]}], "c")
+        last = prompt.strip().splitlines()[-1]
+        self.assertIn("Russian", last)
+        self.assertIn("headings", last)
+
+    def test_system_prompt_forbids_pod_creating_commands(self):
+        s = load().system_prompt()
+        for word in ("run", "debug", "exec"):
+            self.assertIn(word, s)
+
+
 class SystemPromptTest(unittest.TestCase):
     def test_runbook_appended_when_present(self):
         with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as f:
@@ -223,6 +237,7 @@ class AskLlmTest(unittest.TestCase):
             self.assertEqual(body["messages"], [{"role": "system", "content": "SYS"}, {"role": "user", "content": "USER"}])
             self.assertEqual(body["max_tokens"], 900)
             self.assertEqual(body["chat_template_kwargs"], {"enable_thinking": False})
+            self.assertEqual(body["temperature"], 0.2)
         finally:
             stub.close()
 
@@ -234,6 +249,7 @@ class AskLlmTest(unittest.TestCase):
             path, body = stub.seen[-1]
             self.assertEqual(path, "/api/generate")
             self.assertEqual((body["system"], body["prompt"], body["think"]), ("SYS", "USER", False))
+            self.assertEqual(body["options"]["temperature"], 0.2)
         finally:
             stub.close()
 
@@ -395,7 +411,7 @@ class RedactTest(unittest.TestCase):
         for text in [
             "pod linstor-controller-847c8b9bbb-5gs26 exit status 143",
             "image sha256:dcdf2718eb84421502fe1b2d4368259bcd1ebb8e85326c455d930a7e98ed62a6",
-            "SETUSER phost-paseka-co-prod failed: Could not connect to Redis at redis-valkey-node-0:6379",
+            "SETUSER tenant-a failed: Could not connect to Redis at redis-valkey-node-0:6379",
             "token bucket refilled, 5 tokens left",
             "password authentication failed for user \"app\"",
             "owner=ReplicaSet/redis-acl-keeper-768485dbfc",
