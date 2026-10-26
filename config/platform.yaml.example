@@ -257,7 +257,7 @@ services:
   alert_llm_enrichment:
     enabled: false
     # model: gemma4:26b-a4b-q3km   # must already be pulled/registered
-    # api: ollama                  # or openai: any OpenAI-compatible server
+    # api: ollama                  # or openai: OpenAI-compatible, no API key (llama.cpp, vLLM)
     # url: ""                      # empty = shared Ollama; openai: base URL incl. /v1
     # cpu_request/cpu_limit/memory_request/memory_limit: tiny — the script
     # itself is a thin webhook->VictoriaLogs->Ollama->SMTP relay, no local

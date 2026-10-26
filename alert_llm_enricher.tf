@@ -98,7 +98,7 @@ resource "kubernetes_deployment_v1" "alert_llm_enricher" {
   lifecycle {
     precondition {
       condition     = local.alert_llm_enricher_model != ""
-      error_message = "services.alert_llm_enrichment.model must be set when the enricher is enabled (with the shared Ollama, use the chat default model)."
+      error_message = "services.alert_llm_enrichment.model (or its older name ollama_model) must be set when the enricher is enabled (with the shared Ollama, use the chat default model)."
     }
     precondition {
       condition     = contains(["ollama", "openai"], local.alert_llm_enrichment.api)

@@ -630,7 +630,8 @@ locals {
       alert_llm_enrichment = {
         enabled = false
         # LLM backend: "ollama" (Ollama /api/generate) or "openai" (an
-        # OpenAI-compatible /chat/completions, e.g. llama.cpp server).
+        # OpenAI-compatible /chat/completions without an API key that
+        # accepts chat_template_kwargs, e.g. llama.cpp or vLLM).
         api = "ollama"
         # Base URL; empty = the shared in-cluster Ollama. For "openai"
         # include the /v1 prefix.
@@ -639,7 +640,7 @@ locals {
         # model: with OLLAMA_MAX_LOADED_MODELS=1 a different model evicts it
         # from VRAM on every alert.
         model = ""
-        # Older name of `model` (used when `model` is empty).
+        # Older name of `model`; used only when `model` is empty.
         ollama_model = ""
         # Language the diagnosis is written in (the email itself is English).
         language       = "English"

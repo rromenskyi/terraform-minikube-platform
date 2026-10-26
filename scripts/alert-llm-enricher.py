@@ -28,7 +28,7 @@ K8S_CA_FILE = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
 # "ollama" (Ollama /api/generate) or "openai" (OpenAI-compatible
 # /chat/completions; LLM_URL then includes the /v1 prefix).
 LLM_API = os.environ.get("LLM_API", "ollama")
-LLM_URL = os.environ.get("LLM_URL") or "http://ollama.platform.svc.cluster.local:11434"
+LLM_URL = (os.environ.get("LLM_URL") or "http://ollama.platform.svc.cluster.local:11434").rstrip("/")
 LLM_MODEL = os.environ["LLM_MODEL"]
 DIAGNOSIS_LANGUAGE = os.environ.get("DIAGNOSIS_LANGUAGE", "English")
 SMTP_HOST = os.environ.get("SMTP_HOST", "stalwart-smtp.mail.svc.cluster.local")
@@ -227,7 +227,7 @@ def handle_alert(alert: dict) -> None:
 
     try:
         diagnosis = ask_llm(alertname, summary, log_lines, k8s_context)
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, KeyError, IndexError) as e:
+    except Exception as e:  # noqa: BLE001 - any LLM failure still sends the e-mail, with this note
         print(f"llm request failed for {alertname}: {e}", file=sys.stderr)
         diagnosis = f"(LLM diagnosis unavailable: {e})"
 
