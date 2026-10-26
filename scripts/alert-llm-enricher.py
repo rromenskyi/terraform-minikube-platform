@@ -19,6 +19,8 @@ import re
 import smtplib
 import ssl
 import sys
+import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -48,6 +50,7 @@ NODE_POOL_LABEL = os.environ.get("NODE_POOL_LABEL", "node-pool")
 # ntfy topic URL (any query string, e.g. ?template=alertmanager, is ignored);
 # empty = e-mail only.
 PUSH_URL = os.environ.get("PUSH_URL", "")
+PUSH_TOPIC = urllib.parse.urlsplit(PUSH_URL).path.strip("/") if PUSH_URL else ""
 SMTP_HOST = os.environ.get("SMTP_HOST", "stalwart-smtp.mail.svc.cluster.local")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "25"))
 SMTP_HELLO = os.environ["SMTP_HELLO"]
@@ -66,9 +69,18 @@ MAX_ALERTS = 8
 # Other alerts older than this are listed as long-standing background.
 FRESH_SECONDS = 2 * 3600
 NOISE_ALERTS = {"Watchdog", "InfoInhibitor"}
+_SEVERITY_RANK = {"none": 0, "info": 1, "warning": 2, "critical": 3}
 # Labels that say nothing about the incident (routing plumbing).
 SKIP_LABELS = {"alertname", "severity", "namespace", "alert_source", "prometheus", "endpoint", "service"}
 PUSH_MAX_BYTES = 3500
+# Webhook bodies are a few KB; anything far larger is not Alertmanager.
+MAX_BODY_BYTES = 1 << 20
+# Groups processed at once; further notifications wait their turn instead of
+# piling up LLM calls and memory.
+_WORKERS = threading.BoundedSemaphore(2)
+# The webhook is acknowledged before processing, so Alertmanager never
+# retries it: retry the SMTP hand-off here (seconds between attempts).
+SMTP_RETRY_DELAYS = (30, 120)
 
 BASE_SYSTEM_PROMPT = """You are the on-call SRE assistant for a Kubernetes cluster. You get a group of alerts \
 that fired together, the log lines and Kubernetes state behind each of them, and the other alerts firing \
@@ -96,20 +108,34 @@ notification, so it must stand on its own.
 # Secrets that leak into log lines must not leave the cluster: the e-mail and
 # the push (ntfy is a third-party service) carry log text and the model's
 # answer, which may quote what it saw. Masked before the prompt is built and
-# again on everything sent out.
+# again on everything sent out. Best effort: recognised shapes only.
+_SECRET_KEYS = (
+    r"pass(?:word|wd|phrase)?|pwd|secret|token|api[_-]?key|apikey|access[_-]?key|private[_-]?key"
+    r"|client[_-]?secret|credentials?|cookie|session[_-]?id"
+)
+
+
+def _mask_value(match: re.Match) -> str:
+    value = match.group(2)
+    if value[:1] in "\"'" and value[-1:] == value[:1] and len(value) > 1:
+        return f"{match.group(1)}{value[0]}***{value[0]}"
+    return f"{match.group(1)}***"
+
+
 _SECRET_PATTERNS = [
     (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.S), "[private key]"),
-    # scheme://user:password@host
-    (re.compile(r"(\b[a-zA-Z][a-zA-Z0-9+.-]*://[^\s:/@]*:)[^\s@/]+@"), r"\1***@"),
+    # scheme://user:password@host — the password may itself hold "/" or "@".
+    (re.compile(r"(\b[a-zA-Z][a-zA-Z0-9+.-]*://[^\s:/@]*:)\S+@(?=[^\s@/]*(?:[/\s?#]|$))"), r"\1***@"),
     (re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}"), r"\1 ***"),
-    # password=..., "api_key": "...", DB_PASSWORD: ..., ?access_token=...
+    # password=..., "api_key": "a b", DB_PASSWORD: ..., ?access_token=..., pass=...
     (
         re.compile(
-            r"(?i)([\"']?\b[\w.-]*?(?:password|passwd|pwd|secret|token|api[_-]?key|apikey|access[_-]?key"
-            r"|private[_-]?key|credentials?|cookie|session[_-]?id)[\"']?\s*[:=]\s*)([\"']?)[^\s\"'&,;}]+"
+            rf"(?i)([\"']?\b[\w.-]*?(?:{_SECRET_KEYS})[\"']?\s*[:=]\s*)(\"[^\"]*\"|'[^']*'|[^\s\"'&;}}]+)"
         ),
-        r"\1\2***",
+        _mask_value,
     ),
+    # --password hunter2, -token abc
+    (re.compile(rf"(?i)(\s--?(?:{_SECRET_KEYS}|auth)\s+)(\S+)"), _mask_value),
     (re.compile(r"\beyJ[\w-]{5,}\.[\w-]{5,}\.[\w-]{5,}"), "***"),
     (
         re.compile(
@@ -119,19 +145,27 @@ _SECRET_PATTERNS = [
         "***",
     ),
 ]
-# Long mixed-case alphanumeric runs (base64 keys, random tokens). Hex digests
-# and Kubernetes names are single-case and stay readable.
+# Long random-looking runs (base64 keys, random tokens): digits plus a real
+# mix of upper- and lower-case letters. Hex digests, Kubernetes names and
+# CamelCase identifiers ("ReplicaSet/app-7f9c6d5b8a") have few or no
+# capitals and stay readable.
 _TOKEN_LIKE = re.compile(r"[A-Za-z0-9+/_-]{32,}={0,2}")
 
 
 def _mask_token_like(match: re.Match) -> str:
     s = match.group(0)
-    if re.search(r"[a-z]", s) and re.search(r"[A-Z]", s) and re.search(r"\d", s):
+    upper = sum(c.isupper() for c in s)
+    lower = sum(c.islower() for c in s)
+    letters = upper + lower
+    if re.search(r"\d", s) and letters and upper >= 0.2 * letters and lower >= 0.2 * letters:
         return "***"
     return s
 
 
 def redact(text: str) -> str:
+    # The push topic works like a password.
+    if len(PUSH_TOPIC) >= 4:
+        text = text.replace(PUSH_TOPIC, "***")
     for pattern, replacement in _SECRET_PATTERNS:
         text = pattern.sub(replacement, text)
     return _TOKEN_LIKE.sub(_mask_token_like, text)
@@ -176,21 +210,44 @@ def query_victorialogs(query: str, limit: int) -> list[dict]:
     return records
 
 
+_VARYING = re.compile(
+    r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?"  # timestamps
+    r"|\b\d{2}:\d{2}:\d{2}(?:[.,]\d+)?\b"
+    r"|\b\d{1,3}(?:\.\d{1,3}){3}\b"  # IPv4
+    r"|\b(?=[0-9a-fA-F-]*\d)[0-9a-fA-F-]{8,}\b"  # hex IDs, UUIDs, hashes
+    r"|\b\d+(?:\.\d+)?(?:ns|us|µs|ms|s|m|h)\b"  # durations
+    r"|\d{5,}"  # counters, long IDs
+)
+
+
 def _normalize(msg: str) -> str:
-    """Key for "the same line again": numbers, hashes and IDs vary between
-    repeats of one error and must not split it into many lines."""
-    return re.sub(r"\b[0-9a-fA-F-]{8,}\b|\d+", "#", msg)
+    """Key for "the same line again": timestamps, addresses, IDs and
+    durations vary between repeats of one error and must not split it into
+    many lines; short numbers (exit codes, ports, status codes) tell errors
+    apart and are kept."""
+    return _VARYING.sub("#", msg)
 
 
 def compress_lines(records: list[dict], max_lines: int) -> list[str]:
     """Log records (oldest first, `---` between stream_context groups) as
-    "HH:MM:SS message" lines; repeats of a line are folded into its first
-    occurrence with a count, and only the newest max_lines survive."""
+    "HH:MM:SS message" lines; repeats of a line are folded into its latest
+    occurrence with a count (so a recurring error stays among the newest
+    lines), and only the newest max_lines survive."""
     entries: list = []
     index: dict[str, dict] = {}
+    in_key = False
     for rec in records:
-        msg = " ".join(redact(str(rec.get("_msg", ""))).split())
+        raw = str(rec.get("_msg", ""))
         t = str(rec.get("_time", ""))[11:19]
+        # A private key logged one line per record: hide everything between
+        # its BEGIN and END lines.
+        if in_key:
+            in_key = not ("-----END" in raw and "PRIVATE KEY" in raw)
+            continue
+        if "-----BEGIN" in raw and "PRIVATE KEY" in raw and "-----END" not in raw:
+            in_key = True
+            raw = "[private key]"
+        msg = " ".join(redact(raw).split())
         if msg == "---":
             if entries and entries[-1] != "---":
                 entries.append("---")
@@ -198,12 +255,12 @@ def compress_lines(records: list[dict], max_lines: int) -> list[str]:
         if len(msg) > MAX_LINE_CHARS:
             msg = msg[:MAX_LINE_CHARS] + "…"
         key = _normalize(msg)
-        if key in index:
-            index[key]["count"] += 1
-            index[key]["last"] = t
-            continue
-        entry = {"time": t, "msg": msg, "count": 1, "last": t}
-        index[key] = entry
+        entry = index.get(key)
+        if entry:
+            entries.remove(entry)
+            entry.update(count=entry["count"] + 1, last=t, msg=msg)
+        else:
+            entry = index[key] = {"first": t, "last": t, "msg": msg, "count": 1}
         entries.append(entry)
 
     lines: list[str] = []
@@ -212,9 +269,9 @@ def compress_lines(records: list[dict], max_lines: int) -> list[str]:
             if lines and lines[-1] != "---":
                 lines.append("---")
             continue
-        line = f"{e['time']} {e['msg']}".strip()
+        line = f"{e['last']} {e['msg']}".strip()
         if e["count"] > 1:
-            line += f"  [x{e['count']}, last {e['last']}]"
+            line += f"  [x{e['count']} since {e['first']}]"
         lines.append(line)
     while lines and lines[-1] == "---":
         lines.pop()
@@ -294,7 +351,10 @@ def node_summary(name: str, nodes: dict) -> str:
         try:
             node = _k8s_get(f"/api/v1/nodes/{name}")
         except urllib.error.HTTPError as e:
-            nodes[name] = f"Node {name}: not registered (HTTP {e.code}) — powered off or removed"
+            if e.code == 404:
+                nodes[name] = f"Node {name}: not registered — powered off or removed from the cluster"
+            else:
+                nodes[name] = f"Node {name}: could not read (HTTP {e.code})"
             return nodes[name]
         except (urllib.error.URLError, OSError, json.JSONDecodeError) as e:
             nodes[name] = f"Node {name}: could not read ({e})"
@@ -321,13 +381,39 @@ def query_pod_events(namespace: str, name: str) -> str:
         )
     except (urllib.error.URLError, OSError, json.JSONDecodeError) as e:
         return f"(could not read events: {e})"
-    events = sorted(data.get("items", []), key=lambda e: e.get("lastTimestamp") or "", reverse=True)
+    warnings = [e for e in data.get("items", []) if e.get("type") == "Warning"]
+    warnings.sort(key=lambda e: e.get("lastTimestamp") or e.get("eventTime") or "", reverse=True)
     lines = [
         f"  {e.get('reason')} x{e.get('count', 1)} ({_age(e.get('lastTimestamp') or '')} ago): {e.get('message')}"
-        for e in events[:10]
-        if e.get("type") == "Warning"
+        for e in warnings[:10]
     ]
     return "Warning events:\n" + "\n".join(lines) if lines else "Warning events: none"
+
+
+def _current_siblings(namespace: str, name: str) -> list[dict]:
+    """Pods that replaced a deleted one, matched by controller rather than by
+    name prefix: the same owner (ReplicaSet, StatefulSet, DaemonSet, Job) —
+    `<owner>-<suffix>` — or, after a Deployment rollout, another ReplicaSet of
+    the same Deployment — `<deployment>-<rs hash>-<suffix>`. Newest first."""
+    items = _k8s_get(f"/api/v1/namespaces/{namespace}/pods").get("items", [])
+    owner = name.rsplit("-", 1)[0]
+    # Only a ReplicaSet name ends in a pod-template-hash (Kubernetes'
+    # consonant/digit alphabet); "api-worker" must not widen to "api".
+    is_replicaset = re.search(r"-[bcdfghjklmnpqrstvwxz2456789]{5,10}$", owner) is not None
+    deployment = owner.rsplit("-", 1)[0] if is_replicaset else ""
+
+    def owned(p: dict, same_deployment: bool) -> bool:
+        for ref in p.get("metadata", {}).get("ownerReferences", []):
+            ref_name = ref.get("name", "")
+            if ref_name == owner:
+                return True
+            if same_deployment and ref.get("kind") == "ReplicaSet" and ref_name.rsplit("-", 1)[0] == deployment:
+                return True
+        return False
+
+    found = [p for p in items if owned(p, bool(deployment))]
+    found = [p for p in found if p.get("metadata", {}).get("name") != name]
+    return sorted(found, key=lambda p: p.get("metadata", {}).get("creationTimestamp", ""), reverse=True)
 
 
 def pod_context(namespace: str, name: str, nodes: dict) -> str:
@@ -346,14 +432,7 @@ def pod_context(namespace: str, name: str, nodes: dict) -> str:
             out.append(f"(could not read pod {namespace}/{name}: HTTP {e.code})")
         else:
             out.append(f"Pod {namespace}/{name} no longer exists (deleted or replaced).")
-            items = _k8s_get(f"/api/v1/namespaces/{namespace}/pods").get("items", [])
-            siblings = []
-            # <deployment>-<rs hash>-<pod hash>, or <statefulset/daemonset>-<suffix>
-            for cut in (1, 2):
-                prefix = name.rsplit("-", cut)[0] + "-"
-                siblings = [p for p in items if p.get("metadata", {}).get("name", "").startswith(prefix)]
-                if siblings:
-                    break
+            siblings = _current_siblings(namespace, name)
             if siblings:
                 out.append("Current pods of the same owner:")
                 for p in siblings[:5]:
@@ -362,7 +441,7 @@ def pod_context(namespace: str, name: str, nodes: dict) -> str:
                     if node:
                         out.append(node_summary(node, nodes))
             else:
-                out.append("No current pods with the same name prefix.")
+                out.append("No current pods of the same owner.")
     out.append(query_pod_events(namespace, name))
     # Siblings often share a node; print each node line once.
     seen, unique = set(), []
@@ -390,18 +469,21 @@ def active_alerts_section(alerts: list[dict], exclude: set[str], now: datetime |
     for a in alerts:
         labels = a.get("labels", {})
         name = labels.get("alertname", "?")
-        if name in NOISE_ALERTS or a.get("fingerprint") in exclude:
+        fingerprint = a.get("fingerprint")
+        if name in NOISE_ALERTS or (fingerprint and fingerprint in exclude):
             continue
         started = _parse_time(a.get("startsAt", ""))
         summary = a.get("annotations", {}).get("summary") or a.get("annotations", {}).get("description", "")
-        if started and (now - started).total_seconds() <= FRESH_SECONDS:
-            fresh.append(
-                f"- {name} [{labels.get('severity', '-')}] {_label_text(labels)} — {summary} "
-                f"(started {_age(a.get('startsAt', ''), now)} ago)"
-            )
+        severity = labels.get("severity", "-")
+        # An unreadable start time is shown, not filed as known background.
+        if started is None or (now - started).total_seconds() <= FRESH_SECONDS:
+            since = f"started {_age(a.get('startsAt', ''), now)} ago" if started else "start time unknown"
+            fresh.append(f"- {name} [{severity}] {_label_text(labels)} — {summary} ({since})")
         else:
-            entry = chronic.setdefault(name, {"count": 0, "severity": labels.get("severity", "-"), "example": summary})
+            entry = chronic.setdefault(name, {"count": 0, "severity": severity, "example": summary})
             entry["count"] += 1
+            if _SEVERITY_RANK.get(severity, 0) > _SEVERITY_RANK.get(entry["severity"], 0):
+                entry["severity"] = severity
     if not fresh and not chronic:
         return "(no other alerts are firing)"
     out = []
@@ -432,8 +514,11 @@ def alert_context(alert: dict, nodes: dict) -> dict:
         query = scope_to_source(strip_aggregation(raw_query), labels)
         if LOG_SURROUNDING_LINES > 0:
             query += f" | stream_context before {LOG_SURROUNDING_LINES} after {LOG_SURROUNDING_LINES}"
+        # Without an explicit order a limited query returns the OLDEST
+        # records; take the newest and put them back in time order.
+        query += f" | sort by (_time desc) | limit {LOG_FETCH_LIMIT}"
         try:
-            logs = compress_lines(query_victorialogs(query, LOG_FETCH_LIMIT), LOG_CONTEXT_LINES)
+            logs = compress_lines(list(reversed(query_victorialogs(query, LOG_FETCH_LIMIT))), LOG_CONTEXT_LINES)
         except Exception as e:  # noqa: BLE001 - missing context must not stop the e-mail
             print(f"victorialogs query failed for {labels.get('alertname')}: {e}", file=sys.stderr)
             logs = [f"(log query failed: {e})"]
@@ -464,11 +549,14 @@ def _render(group: str, total: int, contexts: list[dict], logs: list[list[str]],
     return "\n".join(parts)
 
 
-def build_prompt(group: str, contexts: list[dict], cluster: str, total: int | None = None) -> str:
-    """Fits the prompt into PROMPT_CHAR_BUDGET by dropping, one at a time,
-    the oldest log line of whichever alert has the most log text left, then
-    by cutting the cluster list — the newest lines and the alert headers are
-    what matter most."""
+def build_prompt(
+    group: str, contexts: list[dict], cluster: str, total: int | None = None, system_chars: int = 0
+) -> str:
+    """Fits the prompt into what PROMPT_CHAR_BUDGET leaves after the system
+    prompt (runbook included) by dropping, one at a time, the oldest log line
+    of whichever alert has the most log text left, then by cutting the
+    cluster list — the newest lines and the alert headers matter most."""
+    budget = max(PROMPT_CHAR_BUDGET - system_chars, 1000)
     total = total if total is not None else len(contexts)
     logs = [list(c.get("logs", [])) for c in contexts]
     dropped = [0] * len(logs)
@@ -478,8 +566,8 @@ def build_prompt(group: str, contexts: list[dict], cluster: str, total: int | No
         return _render(group, total, contexts, marked, cluster_text)
 
     prompt = render(cluster)
-    while len(prompt) > PROMPT_CHAR_BUDGET and any(logs):
-        excess = len(prompt) - PROMPT_CHAR_BUDGET
+    while len(prompt) > budget and any(logs):
+        excess = len(prompt) - budget
         while excess > 0 and any(logs):
             i = max(range(len(logs)), key=lambda k: sum(len(x) + 1 for x in logs[k]))
             line = logs[i].pop(0)
@@ -487,10 +575,10 @@ def build_prompt(group: str, contexts: list[dict], cluster: str, total: int | No
             dropped[i] += int(omitted.group(1)) if omitted else 1
             excess -= len(line) + 1
         prompt = render(cluster)
-    if len(prompt) > PROMPT_CHAR_BUDGET:
-        keep = max(len(cluster) - (len(prompt) - PROMPT_CHAR_BUDGET) - 10, 0)
+    if len(prompt) > budget:
+        keep = max(len(cluster) - (len(prompt) - budget) - 10, 0)
         prompt = render(cluster[:keep] + "\n(cut)")
-    return prompt[:PROMPT_CHAR_BUDGET]
+    return prompt[:budget]
 
 
 def system_prompt() -> str:
@@ -612,9 +700,12 @@ def handle_group(payload: dict) -> None:
     except Exception as e:  # noqa: BLE001 - missing context must not stop the e-mail
         cluster = f"(could not read the other active alerts: {e})"
 
-    prompt = build_prompt(group, contexts, cluster, total=len(firing))
+    system = system_prompt()
+    prompt = build_prompt(group, contexts, cluster, total=len(firing), system_chars=len(system))
     try:
-        diagnosis = ask_llm(system_prompt(), prompt)
+        diagnosis = ask_llm(system, prompt)
+        if not diagnosis.strip():
+            raise ValueError("empty answer")
     except Exception as e:  # noqa: BLE001 - any LLM failure still sends the e-mail, with this note
         print(f"llm request failed for {group}: {e}", file=sys.stderr)
         diagnosis = f"(LLM diagnosis unavailable: {e})"
@@ -633,11 +724,19 @@ def handle_group(payload: dict) -> None:
     if len(firing) > len(contexts):
         body.append(f"({len(firing) - len(contexts)} more alerts in this group not shown)\n")
     body.append(f"--- Other alerts firing in the cluster ---\n{cluster}")
-    send_email(redact(subject), redact("\n".join(body)))
+    subject, text = redact(subject), redact("\n".join(body))
+    for attempt, delay in enumerate((*SMTP_RETRY_DELAYS, None), 1):
+        try:
+            send_email(subject, text)
+            break
+        except Exception as e:  # noqa: BLE001 - retried, then logged; the push still goes out
+            print(f"e-mail attempt {attempt} failed for {group}: {e}", file=sys.stderr)
+            if delay is not None:
+                time.sleep(delay)
 
     try:
-        push_notification(f"{group} ({len(firing)})", diagnosis, severity)
-    except Exception as e:  # noqa: BLE001 - the e-mail already went out
+        push_notification(redact(f"{group} ({len(firing)})"), diagnosis, severity)
+    except Exception as e:  # noqa: BLE001 - the push is a second channel
         print(f"push failed for {group}: {e}", file=sys.stderr)
 
 
@@ -656,7 +755,15 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
             return
-        length = int(self.headers.get("Content-Length", 0))
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+        except ValueError:
+            length = -1
+        if not 0 <= length <= MAX_BODY_BYTES:
+            self.send_response(413 if length > MAX_BODY_BYTES else 400)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         body = self.rfile.read(length)
         # Ack immediately: Alertmanager's webhook timeout is short (default
         # 10s) and LLM generation alone can take longer than that — an
@@ -679,7 +786,8 @@ class Handler(BaseHTTPRequestHandler):
             print(f"bad webhook payload: {e}", file=sys.stderr)
             return
         try:
-            handle_group(payload)
+            with _WORKERS:
+                handle_group(payload)
         except Exception as e:  # noqa: BLE001 - one bad notification must not affect the next
             print(f"enrichment failed for {payload.get('groupLabels')}: {e}", file=sys.stderr)
 

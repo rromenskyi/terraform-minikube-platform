@@ -653,7 +653,8 @@ locals {
         prompt_char_budget = 16000
         # Operator runbook (Markdown) appended to the system prompt: the
         # cluster's layout, conventions, known noise. Path relative to the
-        # repository root, e.g. "config/alert-runbook.md"; empty = none.
+        # repository root, e.g. "config/alert-runbook.md"; empty = none. It
+        # lands in a ConfigMap and in Terraform state: no credentials in it.
         runbook_file = ""
         # Also send the diagnosis as an ntfy push to `monitoring.alert_push_url`
         # (when that is set).

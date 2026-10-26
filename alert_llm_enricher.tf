@@ -178,6 +178,9 @@ resource "kubernetes_deployment_v1" "alert_llm_enricher" {
           # ConfigMap update alone doesn't restart the pod to pick it up.
           "checksum/enricher-py" = sha256(file("${path.module}/scripts/alert-llm-enricher.py"))
           "checksum/runbook"     = sha256(local.alert_llm_enricher_runbook)
+          # PUSH_URL is read from the Secret at container start only: a new
+          # topic must roll the pod.
+          "checksum/push-url" = sha256(length(local.alert_llm_enricher_push) > 0 ? local._alert_push_url : "")
         }
       }
 

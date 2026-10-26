@@ -47,7 +47,7 @@ class CompressLinesTest(unittest.TestCase):
     def setUp(self):
         self.m = load()
 
-    def test_repeats_collapse_with_count_and_last_time(self):
+    def test_repeats_fold_into_their_latest_occurrence(self):
         out = self.m.compress_lines(
             [
                 rec("2026-10-25T15:31:14Z", "SETUSER a failed: connect 10.0.0.1:6379"),
@@ -60,10 +60,39 @@ class CompressLinesTest(unittest.TestCase):
         self.assertEqual(
             out,
             [
-                "15:31:14 SETUSER a failed: connect 10.0.0.1:6379  [x3, last 15:33:09]",
                 "15:32:00 other",
+                "15:33:09 SETUSER a failed: connect 10.0.0.3:6379  [x3 since 15:31:14]",
             ],
         )
+
+    def test_distinct_codes_and_ports_are_not_folded(self):
+        out = self.m.compress_lines(
+            [rec("2026-10-25T15:00:00Z", "exited with code 1"), rec("2026-10-25T15:00:01Z", "exited with code 137"),
+             rec("2026-10-25T15:00:02Z", "dial db:5432 refused"), rec("2026-10-25T15:00:03Z", "dial db:6379 refused")],
+            50,
+        )
+        self.assertEqual(len(out), 4)
+
+    def test_recurring_error_survives_the_cut(self):
+        recs = [rec("2026-10-25T15:00:00Z", "BOOM")]
+        recs += [rec(f"2026-10-25T15:01:{i:02d}Z", f"ctx-{chr(97 + i)}") for i in range(10)]
+        recs += [rec("2026-10-25T15:02:00Z", "BOOM")]
+        out = self.m.compress_lines(recs, 3)
+        self.assertEqual(out[-1], "15:02:00 BOOM  [x2 since 15:00:00]")
+
+    def test_private_key_split_over_records_is_masked(self):
+        out = self.m.compress_lines(
+            [rec("2026-10-25T15:00:00Z", "-----BEGIN PRIVATE KEY-----"),
+             rec("2026-10-25T15:00:00Z", "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC"),
+             rec("2026-10-25T15:00:00Z", "abcdefghij0123456789"),
+             rec("2026-10-25T15:00:00Z", "-----END PRIVATE KEY-----"),
+             rec("2026-10-25T15:00:01Z", "after")],
+            50,
+        )
+        joined = "\n".join(out)
+        self.assertNotIn("MIIEvQ", joined)
+        self.assertNotIn("abcdefghij0123456789", joined)
+        self.assertIn("after", joined)
 
     def test_keeps_newest_lines_when_over_limit(self):
         recs = [rec(f"2026-10-25T15:00:{i:02d}Z", f"line-{chr(97 + i)}") for i in range(10)]
@@ -107,6 +136,15 @@ class ActiveAlertsTest(unittest.TestCase):
         self.assertNotIn("Watchdog", out)
         self.assertNotIn("reconciler-error", out)
 
+    def test_unknown_start_is_not_long_standing_and_none_fingerprint_kept(self):
+        m = load()
+        out = m.active_alerts_section(
+            [{"startsAt": "garbage", "labels": {"alertname": "NodeDown"}, "annotations": {"summary": "s"}}],
+            exclude={None},
+        )
+        self.assertIn("NodeDown", out)
+        self.assertNotIn("Long-standing", out)
+
 
 class PromptBudgetTest(unittest.TestCase):
     def test_trims_logs_to_budget_keeping_newest(self):
@@ -121,14 +159,23 @@ class PromptBudgetTest(unittest.TestCase):
         self.assertIn("cluster ok", prompt)
 
 
+class BudgetWithSystemTest(unittest.TestCase):
+    def test_system_prompt_counts_against_budget(self):
+        m = load(PROMPT_CHAR_BUDGET="5000")
+        ctx = [{"header": "a", "k8s": "", "logs": [f"line {j} " + "x" * 50 for j in range(200)]}]
+        prompt = m.build_prompt("grp", ctx, "c", system_chars=3000)
+        self.assertLessEqual(len(prompt), 2000)
+        self.assertIn("line 199 ", prompt)
+
+
 class SystemPromptTest(unittest.TestCase):
     def test_runbook_appended_when_present(self):
         with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as f:
-            f.write("Node km9 is the GPU box.")
+            f.write("Node gpu-a holds the GPUs.")
         try:
             m = load(RUNBOOK_FILE=f.name, DIAGNOSIS_LANGUAGE="Russian")
             s = m.system_prompt()
-            self.assertIn("Node km9 is the GPU box.", s)
+            self.assertIn("Node gpu-a holds the GPUs.", s)
             self.assertIn("Russian", s)
             self.assertIn("read-only", s)
         finally:
@@ -235,6 +282,34 @@ class HandleGroupTest(unittest.TestCase):
         self.m.handle_group({"alerts": [self.alert("a")]})
         self.assertIn("LLM diagnosis unavailable", self.m.sent[0][1])
 
+    def test_empty_answer_is_a_failure(self):
+        self.m.ask_llm = lambda s, p: "   "
+        self.m.handle_group({"alerts": [self.alert("a")]})
+        self.assertIn("LLM diagnosis unavailable", self.m.sent[0][1])
+
+    def test_smtp_failure_retries_and_still_pushes(self):
+        calls, pushes = [], []
+
+        def flaky(subject, body):
+            calls.append(subject)
+            raise OSError("smtp down")
+        self.m.send_email = flaky
+        self.m.SMTP_RETRY_DELAYS = (0, 0)
+        self.m.push_notification = lambda title, msg, sev: pushes.append(title)
+        self.m.ask_llm = lambda s, p: "diag"
+        self.m.handle_group({"alerts": [self.alert("a")]})
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(len(pushes), 1)
+
+    def test_push_title_redacted(self):
+        titles = []
+        self.m.push_notification = lambda title, msg, sev: titles.append(title)
+        self.m.ask_llm = lambda s, p: "diag"
+        a = self.alert("a")
+        a["labels"]["alertname"] = "x password=hunter2xyz"
+        self.m.handle_group({"alerts": [a]})
+        self.assertNotIn("hunter2xyz", titles[0])
+
     def test_context_failures_still_mail(self):
         def fail(*a):
             raise urllib.error.URLError("down")
@@ -294,6 +369,12 @@ SECRETS = {
     "GET /callback?code=xyz&access_token=Zm9vYmFyYmF6cXV4 HTTP/1.1": "Zm9vYmFyYmF6cXV4",
     "secret QmFzZTY0U2VjcmV0VmFsdWVXaXRoTWl4ZWRDYXNlMTIz leaked": "QmFzZTY0U2VjcmV0VmFsdWVXaXRoTWl4ZWRDYXNlMTIz",
     "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA7\n-----END RSA PRIVATE KEY-----": "MIIEowIBAAKCAQEA7",
+    'password="correct horse battery staple"': "horse battery staple",
+    "api_key = 'my secret phrase'": "secret phrase",
+    "postgres://app:pa/ss@word@db:5432/app": "ss@word",
+    "run --password hunter2xyz --verbose": "hunter2xyz",
+    "login user=admin pass=s3cretz": "s3cretz",
+    "password=abc,defghij": "defghij",
 }
 
 
@@ -304,6 +385,11 @@ class RedactTest(unittest.TestCase):
             out = m.redact(text)
             self.assertNotIn(secret, out, text)
 
+    def test_push_topic_masked(self):
+        m = load(PUSH_URL="https://ntfy.example/very-private-topic-123?template=alertmanager")
+        out = m.redact("posting to https://ntfy.example/very-private-topic-123 failed; topic very-private-topic-123")
+        self.assertNotIn("very-private-topic-123", out)
+
     def test_ordinary_lines_untouched(self):
         m = load()
         for text in [
@@ -312,6 +398,8 @@ class RedactTest(unittest.TestCase):
             "SETUSER phost-paseka-co-prod failed: Could not connect to Redis at redis-valkey-node-0:6379",
             "token bucket refilled, 5 tokens left",
             "password authentication failed for user \"app\"",
+            "owner=ReplicaSet/redis-acl-keeper-768485dbfc",
+            "Deployment/MyServiceController-backend-7f9c6d5b8a-x2x9q",
         ]:
             self.assertEqual(m.redact(text), text)
 
@@ -335,14 +423,41 @@ class RedactTest(unittest.TestCase):
             stub.close()
 
 
+class NodeSummaryTest(unittest.TestCase):
+    def test_forbidden_is_not_reported_as_powered_off(self):
+        m = load()
+
+        def get(path):
+            raise urllib.error.HTTPError(path, 403, "Forbidden", {}, None)
+        m._k8s_get = get
+        out = m.node_summary("n1", {})
+        self.assertIn("403", out)
+        self.assertNotIn("powered off", out)
+
+    def test_missing_node_is_reported_as_gone(self):
+        m = load()
+
+        def get(path):
+            raise urllib.error.HTTPError(path, 404, "Not Found", {}, None)
+        m._k8s_get = get
+        self.assertIn("not registered", m.node_summary("n1", {}))
+
+
 class PodContextTest(unittest.TestCase):
     def test_deleted_pod_shows_its_replacements(self):
         m = load()
         pods = {"items": [
-            {"metadata": {"name": "linstor-controller-847c8b9bbb-x9x9x", "creationTimestamp": "2026-10-25T07:08:00Z"},
+            {"metadata": {"name": "linstor-controller-847c8b9bbb-x9x9x", "creationTimestamp": "2026-10-25T07:08:00Z",
+                          "ownerReferences": [{"kind": "ReplicaSet", "name": "linstor-controller-847c8b9bbb"}]},
              "spec": {"nodeName": "n2"},
              "status": {"phase": "Running", "containerStatuses": [{"name": "c", "ready": True, "restartCount": 0, "state": {"running": {}}}]}},
             {"metadata": {"name": "other-1", "creationTimestamp": "2026-10-25T07:08:00Z"}, "spec": {}, "status": {}},
+            {"metadata": {"name": "linstor-controller-847c8b9bbb-canary", "creationTimestamp": "2026-10-25T07:08:00Z",
+                          "ownerReferences": [{"kind": "ReplicaSet", "name": "linstor-controller-847c8b9bbb-canary"}]},
+             "spec": {}, "status": {}},
+            {"metadata": {"name": "linstor-controller-5d4c3b2a19-newpo", "creationTimestamp": "2026-10-25T08:00:00Z",
+                          "ownerReferences": [{"kind": "ReplicaSet", "name": "linstor-controller-5d4c3b2a19"}]},
+             "spec": {"nodeName": "n3"}, "status": {"phase": "Running"}},
         ]}
 
         def get(path):
@@ -362,6 +477,15 @@ class PodContextTest(unittest.TestCase):
         self.assertIn("linstor-controller-847c8b9bbb-x9x9x", out)
         self.assertIn("n2", out)
         self.assertNotIn("other-1", out)
+        self.assertNotIn("canary", out)
+        self.assertIn("linstor-controller-5d4c3b2a19-newpo", out)
+
+    def test_warning_events_filtered_before_the_newest_ten(self):
+        m = load()
+        items = [{"type": "Normal", "reason": "Pulled", "lastTimestamp": f"2026-10-25T10:{i:02d}:00Z"} for i in range(12)]
+        items.append({"type": "Warning", "reason": "FailedMount", "message": "m", "lastTimestamp": "2026-10-25T09:00:00Z"})
+        m._k8s_get = lambda path: {"items": items}
+        self.assertIn("FailedMount", m.query_pod_events("ns", "p"))
 
 
 if __name__ == "__main__":
