@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Alert enricher diagnoses a whole Alertmanager notification at once (one LLM call, one e-mail per group instead of one per alert). The model now also gets: the log lines around each match (VictoriaLogs `stream_context`, repeats folded with counts); the pod's owner, node state and warning events, and the owner's current pods when the alerting pod is gone; every other alert firing in the cluster (recent ones in full, long-standing ones counted); and each rule's new `description`. A fixed system prompt allows only read-only checks and asks for a set answer format. Secrets in log lines and in the answer (passwords, tokens, keys, URL credentials, JWTs) are masked before anything leaves the cluster. New settings under `services.alert_llm_enrichment`: `runbook_file` (an operator runbook appended to the system prompt), `push` (the diagnosis also goes to `monitoring.alert_push_url` as an ntfy push; default on), `max_tokens`, `prompt_char_budget` and `alertmanager_url`. The enricher's ClusterRole gains `get` on nodes.
 - cluster-autoscaler: plugpool 0.2.0, whose node group templates carry the DRA devices (ResourceSlices) of the powered-off machines (stored in the ConfigMap `plugpool-template-slices`); used by cluster-autoscaler 1.37+, ignored by 1.36.
 
 ### Fixed
