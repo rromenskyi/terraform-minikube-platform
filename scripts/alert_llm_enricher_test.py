@@ -562,7 +562,7 @@ class CollectFindingsTest(unittest.TestCase):
         )
         self.assertEqual(list(out), ["quay.io/org/db:v1.2.3"])
         img = out["quay.io/org/db:v1.2.3"]
-        self.assertEqual(set(img["cves"]), {"CVE-1"})
+        self.assertEqual({v["id"] for v in img["vulns"]}, {"CVE-1"})
         self.assertEqual(img["workloads"], {"a/StatefulSet/db", "b/DaemonSet/db2"})
         self.assertEqual((img["registry"], img["repository"], img["tag"]), ("quay.io", "org/db", "v1.2.3"))
 
@@ -573,6 +573,21 @@ class CollectFindingsTest(unittest.TestCase):
             vreport("a", "ReplicaSet", "app-new", "org/app", "v2", [vuln("CVE-1")]),
         ]
         self.assertEqual(list(m.collect_findings(reports, {"a/app-new"})), ["quay.io/org/app:v2"])
+
+    def test_one_cve_in_two_packages_keeps_both(self):
+        m = load()
+        out = m.collect_findings([vreport("a", "StatefulSet", "s", "org/app", "v1",
+                                          [vuln("CVE-1", pkg="openssl"), vuln("CVE-1", pkg="libssl3")])], set())
+        self.assertEqual(sorted(v["package"] for v in out["quay.io/org/app:v1"]["vulns"]), ["libssl3", "openssl"])
+        self.assertEqual(m.pair_keys(out), {"quay.io/org/app|CVE-1"})
+
+    def test_null_fields_do_not_crash(self):
+        m = load()
+        report = {"metadata": {"labels": None}, "report": {"registry": None, "artifact": None,
+                                                           "vulnerabilities": [vuln("CVE-1")]}}
+        m.collect_findings([report], m.active_replicasets([{"metadata": {"ownerReferences": None}}]))
+        m.lookup_versions = lambda r, p, t: ("", "")
+        m.build_inventory([{"metadata": {"ownerReferences": None}, "spec": {"initContainers": None, "containers": None}}], [report])
 
     def test_deployment_replicaset_shown_as_deployment(self):
         m = load()
@@ -645,13 +660,24 @@ class DigestDecisionTest(unittest.TestCase):
     def test_newly_available_tag_is_a_change(self):
         f = self.findings()
         state = self.m.new_state(f, {}, self.NOW - 3600)
-        d = self.m.digest_decision(f, {"quay.io/org/app:v1": "v2"}, state, self.NOW)
+        d = self.m.digest_decision(f, {"quay.io/org/app:v1": ("", "v2")}, state, self.NOW)
         self.assertEqual((d["reason"], d["new_tags"]), ("change", {"quay.io/org/app:v1"}))
-        state = self.m.new_state(f, {"quay.io/org/app:v1": "v2"}, self.NOW - 3600)
-        self.assertIsNone(self.m.digest_decision(f, {"quay.io/org/app:v1": "v2"}, state, self.NOW))
+        state = self.m.new_state(f, {"quay.io/org/app:v1": ("", "v2")}, self.NOW - 3600)
+        self.assertIsNone(self.m.digest_decision(f, {"quay.io/org/app:v1": ("", "v2")}, state, self.NOW))
+
+    def test_known_newer_tag_after_an_intermediate_bump_is_not_new(self):
+        state = self.m.new_state(self.findings("v1"), {"quay.io/org/app:v1": ("", "v2")}, self.NOW - 3600)
+        f = self.findings("v1.5")
+        self.assertIsNone(self.m.digest_decision(f, {"quay.io/org/app:v1.5": ("", "v2")}, state, self.NOW))
+
+    def test_unknown_registry_is_not_a_change(self):
+        f = self.findings()
+        state = self.m.new_state(f, {"quay.io/org/app:v1": ("", "v2")}, self.NOW - 3600)
+        self.assertIsNone(self.m.digest_decision(f, {"quay.io/org/app:v1": None}, state, self.NOW))
+        self.assertEqual(self.m.new_state(f, {"quay.io/org/app:v1": None}, 0, state)["latest"], {"quay.io/org/app": "v2"})
 
     def test_weekly_reminder_only_for_pending_updates(self):
-        f, newer = self.findings(), {"quay.io/org/app:v1": "v2"}
+        f, newer = self.findings(), {"quay.io/org/app:v1": ("", "v2")}
         week_ago = self.NOW - 604800
         self.assertEqual(self.m.digest_decision(f, newer, self.m.new_state(f, newer, week_ago), self.NOW)["reason"], "reminder")
         self.assertIsNone(self.m.digest_decision(f, newer, self.m.new_state(f, newer, week_ago + 60), self.NOW))
@@ -686,7 +712,10 @@ class InventoryTest(unittest.TestCase):
         versions = {"o/web": ("v1.0.3", "v1.2.0"), "o/agent": ("", ""), "o/gone": None}
         self.m.lookup_versions = lambda registry, repository, tag: versions[repository]
         reports = [vreport("a", "ReplicaSet", "web-7f9c6d5b8c", "o/web", "v1.0.0", [vuln("CVE-1"), vuln("CVE-2", "HIGH")])]
-        rows = {r["image"]: r for r in self.m.build_inventory(pods, reports)}
+        done = pod("d", "Job", "once-123", "quay.io/o/finished:v1")
+        done["status"] = {"phase": "Succeeded"}
+        rows = {r["image"]: r for r in self.m.build_inventory(pods + [done], reports)}
+        self.assertNotIn("quay.io/o/finished:v1", rows)
         web = rows["quay.io/o/web:v1.0.0"]
         self.assertEqual(web["status"], "patch available")
         self.assertEqual((web["patch"], web["latest"], web["critical"], web["high"]), ("v1.0.3", "v1.2.0", 1, 1))
@@ -768,6 +797,44 @@ class SecurityDigestRunTest(unittest.TestCase):
         self.m.run_security_digest(1_800_000_000)
         self.assertNotIn("<script>", self.m.sent_extra[0]["html_body"])
 
+    def test_unreadable_registry_is_unknown_not_none_found(self):
+        self.m.lookup_versions = lambda registry, repository, tag: None
+        self.m.run_security_digest(1_800_000_000)
+        self.assertIn("newer tag: unknown", self.prompts[0][1])
+        self.assertIn("could not be read", self.m.sent_extra[0]["html_body"])
+
+    def test_mail_failure_still_pushes_and_saves(self):
+        def fail(subject, body, **kw):
+            raise OSError("smtp down")
+        self.m.send_email = fail
+        self.m.PUSH_URL = "https://push.example/topic"
+        self.m.run_security_digest(1_800_000_000)
+        self.assertEqual(len(self.pushes), 1)
+        self.assertIn("pairs", self.state)
+
+    def test_corrupt_state_counts_as_empty(self):
+        m = load()
+        for raw in ("{not json", "null", "[]", '{"pairs": 3, "latest": [], "sent_at": "x"}'):
+            m._k8s_get = lambda path, raw=raw: {"data": {"state.json": raw}}
+            self.assertEqual(m.read_state(), {}, raw)
+
+    def test_failed_read_retries_soon(self):
+        def fail():
+            raise OSError("forbidden")
+        self.m.fetch_vulnerability_reports = fail
+        self.assertFalse(self.m.run_security_digest(1_800_000_000))
+        self.assertTrue(self.m.run_security_digest(1_800_000_000) is False)
+        self.m.fetch_vulnerability_reports = lambda: self.reports
+        self.assertTrue(self.m.run_security_digest(1_800_000_000))
+
+    def test_subject_names_updates(self):
+        f = {"quay.io/org/app|CVE-1"}
+        self.m.write_state = lambda s: None
+        self.m.read_state = lambda: {"pairs": sorted(f), "latest": {}, "sent_at": 1_799_999_000}
+        self.m.run_security_digest(1_800_000_000)
+        self.assertIn("1 update", self.m.sent[0][0])
+        self.assertNotIn("0 new", self.m.sent[0][0])
+
     def test_llm_failure_still_mails(self):
         def boom(s, p):
             raise OSError("down")
@@ -776,10 +843,11 @@ class SecurityDigestRunTest(unittest.TestCase):
         self.assertIn("unavailable", self.m.sent[0][1])
         self.assertIn("CVE-1", self.m.sent[0][1])
 
-    def test_mail_failure_keeps_the_state_for_a_retry(self):
-        def fail(subject, body, **kw):
-            raise OSError("smtp down")
+    def test_mail_and_push_failure_keep_the_state_for_a_retry(self):
+        def fail(*a, **kw):
+            raise OSError("down")
         self.m.send_email = fail
+        self.m.push_notification = fail
         self.m.run_security_digest(1_800_000_000)
         self.assertEqual(self.state, {})
 
@@ -790,6 +858,35 @@ class SecurityDigestRunTest(unittest.TestCase):
         self.m.run_security_digest(1_800_000_000)
         self.assertEqual(self.m.sent, [])
         self.assertEqual(self.state, {})
+
+
+class RegistryRedirectTest(unittest.TestCase):
+    def test_pagination_to_another_host_is_refused(self):
+        m = load()
+        calls = []
+
+        def fake(url, token=None):
+            calls.append(url)
+            return {"tags": ["v1"]}, '<https://evil.example/v2/x/tags/list?last=v1>; rel="next"'
+        m._registry_json = fake
+        self.assertIsNone(m.list_tags("quay.io", "o/x"))
+        self.assertEqual(len(calls), 1)
+
+    def test_plain_http_token_realm_is_refused(self):
+        m = load()
+
+        def fake(url, token=None):
+            if "token" in url:
+                raise AssertionError("realm fetched")
+            raise urllib.error.HTTPError(url, 401, "Unauthorized",
+                                         {"WWW-Authenticate": 'Bearer realm="http://10.0.0.1/token",service="s"'}, None)
+        m._registry_json = fake
+        self.assertIsNone(m.list_tags("quay.io", "o/x"))
+
+    def test_odd_json_is_unknown(self):
+        m = load()
+        m._registry_json = lambda url, token=None: (None, "")
+        self.assertIsNone(m.list_tags("quay.io", "o/x"))
 
 
 if __name__ == "__main__":

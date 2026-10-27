@@ -332,8 +332,9 @@ resource "kubernetes_deployment_v1" "alert_llm_enricher" {
             value = join(",", local.platform.services.security_scan.alert_severities)
           }
           env {
-            name  = "SECURITY_STATE_CONFIGMAP"
-            value = local.alert_llm_security_state_name
+            name = "SECURITY_STATE_CONFIGMAP"
+            # Through the resource, so the ConfigMap exists before the pod.
+            value = try(kubernetes_config_map_v1.alert_llm_security_state["enabled"].metadata[0].name, "")
           }
           env {
             name  = "POD_NAMESPACE"

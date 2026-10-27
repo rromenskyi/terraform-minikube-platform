@@ -852,6 +852,7 @@ _VERSION_TAG = re.compile(r"^(v?)(\d+(?:\.\d+)*)(.*)$")
 MAX_TAG_PAGES = 50
 # Findings per image shown to the model and in the e-mail; the rest are counted.
 MAX_CVES_PER_IMAGE = 8
+SECURITY_DIGEST_RETRY = 300
 _STATUS_ORDER = ["patch available", "newer available", "unknown", "floating tag", "digest only", "up to date"]
 _tags_cache: dict = {}
 
@@ -888,21 +889,25 @@ def active_replicasets(pods: list[dict]) -> set[str]:
     (scaled to 0) and trivy-operator keeps their reports."""
     out = set()
     for p in pods:
-        meta = p.get("metadata", {})
-        for ref in meta.get("ownerReferences", []):
+        meta = p.get("metadata") or {}
+        for ref in meta.get("ownerReferences") or []:
             if ref.get("kind") == "ReplicaSet":
                 out.add(f"{meta.get('namespace')}/{ref.get('name')}")
     return out
 
 
 def _report_image(report: dict) -> tuple[str, str, str]:
-    rep = report.get("report", {})
-    artifact = rep.get("artifact", {})
-    return rep.get("registry", {}).get("server", ""), artifact.get("repository", ""), artifact.get("tag", "")
+    rep = report.get("report") or {}
+    artifact = rep.get("artifact") or {}
+    return (rep.get("registry") or {}).get("server") or "", artifact.get("repository") or "", artifact.get("tag") or ""
+
+
+def _report_labels(report: dict) -> dict:
+    return (report.get("metadata") or {}).get("labels") or {}
 
 
 def _report_is_current(report: dict, active_rs: set[str]) -> bool:
-    labels = report.get("metadata", {}).get("labels", {})
+    labels = _report_labels(report)
     if labels.get("trivy-operator.resource.kind") != "ReplicaSet":
         return True
     return f"{labels.get('trivy-operator.resource.namespace')}/{labels.get('trivy-operator.resource.name')}" in active_rs
@@ -917,7 +922,7 @@ def workload_label(namespace: str, kind: str, name: str) -> str:
 
 
 def _workload(pod: dict) -> str:
-    meta = pod.get("metadata", {})
+    meta = pod.get("metadata") or {}
     owners = meta.get("ownerReferences") or [{"kind": "Pod", "name": meta.get("name", "?")}]
     return workload_label(meta.get("namespace", "?"), owners[0].get("kind", "?"), owners[0].get("name", "?"))
 
@@ -929,21 +934,25 @@ def _some(items, limit: int = 6) -> str:
 
 def collect_findings(reports: list[dict], active_rs: set[str]) -> dict[str, dict]:
     """Images with vulnerabilities at SECURITY_SEVERITIES, keyed by image
-    reference: their findings (by vulnerability ID) and the workloads running them."""
+    reference: their findings (one per vulnerability and package) and the
+    workloads running them."""
     out: dict[str, dict] = {}
     for report in reports:
         if not _report_is_current(report, active_rs):
             continue
-        vulns = [v for v in report.get("report", {}).get("vulnerabilities") or [] if v.get("severity") in SECURITY_SEVERITIES]
+        vulns = [
+            v for v in (report.get("report") or {}).get("vulnerabilities") or []
+            if isinstance(v, dict) and v.get("severity") in SECURITY_SEVERITIES
+        ]
         if not vulns:
             continue
         registry, repository, tag = _report_image(report)
         registry = "docker.io" if registry in _DOCKER_HUB else registry
         entry = out.setdefault(
             image_key(registry, repository, tag),
-            {"registry": registry, "repository": repository, "tag": tag, "cves": {}, "workloads": set()},
+            {"registry": registry, "repository": repository, "tag": tag, "vulns": [], "workloads": set()},
         )
-        labels = report.get("metadata", {}).get("labels", {})
+        labels = _report_labels(report)
         entry["workloads"].add(
             workload_label(
                 labels.get("trivy-operator.resource.namespace", "?"),
@@ -951,15 +960,20 @@ def collect_findings(reports: list[dict], active_rs: set[str]) -> dict[str, dict
                 labels.get("trivy-operator.resource.name", "?"),
             )
         )
+        seen = {(v["id"], v["package"], v["installed"]) for v in entry["vulns"]}
         for v in vulns:
-            entry["cves"][v.get("vulnerabilityID", "?")] = {
-                "package": v.get("resource", ""),
-                "installed": v.get("installedVersion", ""),
-                "fixed": v.get("fixedVersion", ""),
+            finding = {
+                "id": v.get("vulnerabilityID") or "?",
+                "package": v.get("resource") or "",
+                "installed": v.get("installedVersion") or "",
+                "fixed": v.get("fixedVersion") or "",
                 "score": v.get("score"),
-                "title": v.get("title", ""),
-                "severity": v.get("severity", ""),
+                "title": v.get("title") or "",
+                "severity": v.get("severity") or "",
             }
+            if (finding["id"], finding["package"], finding["installed"]) not in seen:
+                seen.add((finding["id"], finding["package"], finding["installed"]))
+                entry["vulns"].append(finding)
     return out
 
 
@@ -1009,36 +1023,39 @@ def _registry_json(url: str, token: str | None = None) -> tuple[dict, str]:
 def list_tags(registry: str, repository: str) -> list[str] | None:
     """Every tag of a public repository through the registry v2 API, with the
     anonymous token most registries hand out on a 401; None when the
-    repository is private, unreachable or has too many pages."""
+    repository is private, unreachable, answers oddly or has too many pages.
+    The registry steers where the token comes from and where the next page
+    is: only an https token realm is fetched, and pages are followed only on
+    the registry's own host, so the bearer token never goes elsewhere."""
     host = "registry-1.docker.io" if registry in _DOCKER_HUB else registry
     base = f"https://{host}"
     url, token, tags = f"{base}/v2/{repository}/tags/list?n=1000", None, []
-    for _ in range(MAX_TAG_PAGES):
-        try:
-            data, link = _registry_json(url, token)
-        except urllib.error.HTTPError as e:
-            if e.code != 401 or token is not None:
-                return None
-            params = dict(re.findall(r'(\w+)="([^"]*)"', e.headers.get("WWW-Authenticate", "")))
-            if "realm" not in params:
-                return None
-            query = {"service": params.get("service", ""), "scope": params.get("scope") or f"repository:{repository}:pull"}
+    try:
+        for _ in range(MAX_TAG_PAGES):
             try:
+                data, link = _registry_json(url, token)
+            except urllib.error.HTTPError as e:
+                if e.code != 401 or token is not None:
+                    return None
+                params = dict(re.findall(r'(\w+)="([^"]*)"', e.headers.get("WWW-Authenticate", "")))
+                if not params.get("realm", "").startswith("https://"):
+                    return None
+                query = {"service": params.get("service", ""), "scope": params.get("scope") or f"repository:{repository}:pull"}
                 answer, _ = _registry_json(params["realm"] + "?" + urllib.parse.urlencode(query))
-            except (urllib.error.URLError, OSError, ValueError):
+                token = answer.get("token") or answer.get("access_token")
+                if not token:
+                    return None
+                continue
+            tags += [t for t in data.get("tags") or [] if isinstance(t, str)]
+            next_page = re.search(r"<([^>]+)>", link or "")
+            if not next_page:
+                return tags
+            url = urllib.parse.urljoin(base, next_page.group(1))
+            if urllib.parse.urlsplit(url).netloc != host:
                 return None
-            token = answer.get("token") or answer.get("access_token")
-            if not token:
-                return None
-            continue
-        except (urllib.error.URLError, OSError, ValueError):
-            return None
-        tags += data.get("tags") or []
-        next_page = re.search(r"<([^>]+)>", link or "")
-        if not next_page:
-            return tags
-        url = urllib.parse.urljoin(base, next_page.group(1))
-    return None
+        return None
+    except (urllib.error.URLError, OSError, ValueError, AttributeError, TypeError):
+        return None
 
 
 def lookup_versions(registry: str, repository: str, tag: str) -> tuple[str, str] | None:
@@ -1054,30 +1071,54 @@ def lookup_versions(registry: str, repository: str, tag: str) -> tuple[str, str]
 def pair_keys(findings: dict[str, dict]) -> set[str]:
     """One key per (repository, vulnerability), without the tag: bumping an
     image that still carries the same vulnerability is nothing new."""
-    return {f"{f['registry']}/{f['repository']}|{cve}" for f in findings.values() for cve in f["cves"]}
+    return {f"{f['registry']}/{f['repository']}|{v['id']}" for f in findings.values() for v in f["vulns"]}
 
 
-def new_state(findings: dict[str, dict], newer: dict[str, str], sent_at: int) -> dict:
-    return {"pairs": sorted(pair_keys(findings)), "newer": {k: v for k, v in newer.items() if v}, "sent_at": sent_at}
+def _repo(f: dict) -> str:
+    return f"{f['registry']}/{f['repository']}"
 
 
-def digest_decision(findings: dict[str, dict], newer: dict[str, str], state: dict, now: int) -> dict | None:
+def _newest(findings: dict[str, dict], newer: dict) -> dict[str, str]:
+    """Newest tag per affected repository, where the registry answered."""
+    return {_repo(findings[ref]): v[1] for ref, v in newer.items() if v and v[1]}
+
+
+def new_state(findings: dict[str, dict], newer: dict, sent_at: int, old: dict | None = None) -> dict:
+    """`newer` maps an image reference to (patch, latest), or None when its
+    registry could not be read: that repository keeps the newest tag known
+    before, so a registry outage can't make it look new again later."""
+    latest = {}
+    old_latest = (old or {}).get("latest", {})
+    for ref, v in newer.items():
+        repo = _repo(findings[ref])
+        if v is None and repo in old_latest:
+            latest[repo] = old_latest[repo]
+    latest.update(_newest(findings, newer))
+    return {"pairs": sorted(pair_keys(findings)), "latest": latest, "sent_at": sent_at}
+
+
+def digest_decision(findings: dict[str, dict], newer: dict, state: dict, now: int) -> dict | None:
     """Whether a digest goes out now and why: "change" (a vulnerability or a
-    newer tag not reported before) or "reminder" (updates available but not
+    newest tag not reported before, per repository so a bump within the same
+    vulnerable line repeats nothing) or "reminder" (updates available but not
     applied, last digest older than SECURITY_DIGEST_REMINDER); None = stay quiet."""
     pairs, old = pair_keys(findings), set(state.get("pairs", []))
-    old_newer = state.get("newer", {})
+    old_latest = state.get("latest", {})
     new = pairs - old
-    new_tags = {ref for ref, tag in newer.items() if tag and old_newer.get(ref) != tag}
+    new_tags = {ref for ref, v in newer.items() if v and v[1] and old_latest.get(_repo(findings[ref])) != v[1]}
     if new or new_tags:
         reason = "change"
-    elif any(newer.get(ref) for ref in findings) and now - state.get("sent_at", 0) >= SECURITY_DIGEST_REMINDER:
+    elif any(v and v[1] for v in newer.values()) and now - state.get("sent_at", 0) >= SECURITY_DIGEST_REMINDER:
         reason = "reminder"
     else:
         return None
     return {"reason": reason, "new": new, "new_tags": new_tags, "fixed": sorted(old - pairs)}
 
 
+def _newer_text(v) -> str:
+    if v is None:
+        return "unknown (registry could not be read)"
+    return format_newer(*v) or "none found"
 
 
 def build_inventory(pods: list[dict], reports: list[dict]) -> list[dict]:
@@ -1086,9 +1127,11 @@ def build_inventory(pods: list[dict], reports: list[dict]) -> list[dict]:
     registry has something newer. Rows with critical findings first."""
     images: dict[str, dict] = {}
     for pod in pods:
-        spec = pod.get("spec", {})
-        for c in spec.get("initContainers", []) + spec.get("containers", []):
-            ref = c.get("image", "")
+        if (pod.get("status") or {}).get("phase") in ("Succeeded", "Failed"):
+            continue
+        spec = pod.get("spec") or {}
+        for c in (spec.get("initContainers") or []) + (spec.get("containers") or []):
+            ref = (c or {}).get("image") or ""
             if not ref:
                 continue
             registry, repository, tag = parse_image(ref)
@@ -1105,7 +1148,7 @@ def build_inventory(pods: list[dict], reports: list[dict]) -> list[dict]:
         if not _report_is_current(report, active_rs):
             continue
         key = image_key(*_report_image(report))
-        vulns = report.get("report", {}).get("vulnerabilities") or []
+        vulns = [v for v in (report.get("report") or {}).get("vulnerabilities") or [] if isinstance(v, dict)]
         critical = len({v.get("vulnerabilityID") for v in vulns if v.get("severity") == "CRITICAL"})
         high = len({v.get("vulnerabilityID") for v in vulns if v.get("severity") == "HIGH"})
         old = counts.get(key, (0, 0))
@@ -1270,10 +1313,9 @@ def inventory_xlsx(rows: list[dict], findings: dict[str, dict], decision: dict) 
     image_fills = ["red" if r["critical"] else _STATUS_FILL[r["status"]] for r in rows]
     vulns, vuln_fills = [], []
     for ref, f in sorted(findings.items()):
-        for cve, v in sorted(f["cves"].items()):
-            is_new = f"{f['registry']}/{f['repository']}|{cve}" in decision["new"]
-            vulns.append([ref, cve, v["severity"], v["score"] if v["score"] is not None else "", v["package"],
-                          v["installed"], v["fixed"], "yes" if is_new else "", v["title"], _advisory_url(cve),
+        for v, is_new in _ordered_vulns(f, decision["new"]):
+            vulns.append([ref, v["id"], v["severity"], v["score"] if v["score"] is not None else "", v["package"],
+                          v["installed"], v["fixed"], "yes" if is_new else "", v["title"], _advisory_url(v["id"]),
                           ", ".join(sorted(f["workloads"]))])
             vuln_fills.append("red" if is_new else None)
     return xlsx_bytes([
@@ -1292,17 +1334,23 @@ def _advisory_url(vuln_id: str) -> str:
     return ""
 
 
-def _ordered_cves(f: dict, new: set[str]) -> list[tuple[str, dict, bool]]:
-    repo = f"{f['registry']}/{f['repository']}"
-    items = [(cve, v, f"{repo}|{cve}" in new) for cve, v in f["cves"].items()]
-    return sorted(items, key=lambda x: (not x[2], -(x[1]["score"] or 0), x[0]))
+def _score(v: dict) -> float:
+    return v["score"] if isinstance(v["score"], (int, float)) else 0
 
 
-def _ordered_images(findings: dict[str, dict], newer: dict[str, str], decision: dict) -> list[str]:
+def _ordered_vulns(f: dict, new: set[str]) -> list[tuple[dict, bool]]:
+    items = [(v, f"{_repo(f)}|{v['id']}" in new) for v in f["vulns"]]
+    return sorted(items, key=lambda x: (not x[1], -_score(x[0]), x[0]["id"], x[0]["package"]))
+
+
+def _has_update(v) -> bool:
+    return bool(v and (v[0] or v[1]))
+
+
+def _ordered_images(findings: dict[str, dict], newer: dict, decision: dict) -> list[str]:
     def rank(ref: str):
-        f = findings[ref]
-        has_new = any(is_new for *_, is_new in _ordered_cves(f, decision["new"]))
-        return (not newer.get(ref), not has_new, ref)
+        has_new = any(is_new for _, is_new in _ordered_vulns(findings[ref], decision["new"]))
+        return (not _has_update(newer.get(ref)), not has_new, ref)
 
     return sorted(findings, key=rank)
 
@@ -1318,7 +1366,7 @@ def _security_final_instruction() -> str:
     )
 
 
-def security_prompt(findings: dict[str, dict], newer: dict[str, str], decision: dict, system_chars: int = 0) -> str:
+def security_prompt(findings: dict[str, dict], newer: dict, decision: dict, system_chars: int = 0) -> str:
     budget = max(PROMPT_CHAR_BUDGET - system_chars, 1000)
     tail = "\n" + _security_final_instruction()
     head = f"{len(findings)} image(s) with fixable vulnerabilities ({', '.join(sorted(SECURITY_SEVERITIES))}).\n"
@@ -1326,13 +1374,13 @@ def security_prompt(findings: dict[str, dict], newer: dict[str, str], decision: 
     for ref in _ordered_images(findings, newer, decision):
         f = findings[ref]
         mark = " [UPDATE AVAILABLE]" if ref in decision["new_tags"] else ""
-        lines = [f"### Image {ref}{mark} — newer tag: {newer.get(ref) or 'none found'}"]
+        lines = [f"### Image {ref}{mark} — newer tag: {_newer_text(newer.get(ref))}"]
         lines.append("Runs in: " + _some(f["workloads"], 5))
-        cves = _ordered_cves(f, decision["new"])
-        for cve, v, is_new in cves[:MAX_CVES_PER_IMAGE]:
+        cves = _ordered_vulns(f, decision["new"])
+        for v, is_new in cves[:MAX_CVES_PER_IMAGE]:
             score = f", score {v['score']}" if v["score"] is not None else ""
             lines.append(
-                f"  {'[NEW] ' if is_new else ''}{cve} {v['package']} {v['installed']} -> {v['fixed']}{score}: {v['title'][:160]}"
+                f"  {'[NEW] ' if is_new else ''}{v['id']} {v['package']} {v['installed']} -> {v['fixed']}{score}: {v['title'][:160]}"
             )
         if len(cves) > MAX_CVES_PER_IMAGE:
             lines.append(f"  ({len(cves) - MAX_CVES_PER_IMAGE} more)")
@@ -1346,7 +1394,7 @@ def security_prompt(findings: dict[str, dict], newer: dict[str, str], decision: 
 
 
 def _summary_line(findings: dict, newer: dict, decision: dict, rows: list[dict]) -> str:
-    updates = sum(1 for ref in findings if newer.get(ref))
+    updates = sum(1 for ref in findings if _has_update(newer.get(ref)))
     return (
         f"{len(rows)} images running, {len(findings)} with fixable {'/'.join(sorted(SECURITY_SEVERITIES)).lower()} "
         f"vulnerabilities, {updates} with a newer tag; {len(decision['new'])} new, {len(decision['fixed'])} fixed "
@@ -1358,10 +1406,10 @@ def digest_text(advice: str, findings: dict, newer: dict, decision: dict, rows: 
     out = [_summary_line(findings, newer, decision, rows), "", f"--- Advice by the local LLM ({LLM_MODEL}) ---", advice, ""]
     for ref in _ordered_images(findings, newer, decision):
         f = findings[ref]
-        out.append(f"=== {ref} — newer tag: {newer.get(ref) or 'none found'} ===")
+        out.append(f"=== {ref} — newer tag: {_newer_text(newer.get(ref))} ===")
         out.append("Runs in: " + ", ".join(sorted(f["workloads"])))
-        for cve, v, is_new in _ordered_cves(f, decision["new"]):
-            out.append(f"  {'[NEW] ' if is_new else ''}{cve} {v['package']} {v['installed']} -> {v['fixed']}: {v['title']}")
+        for v, is_new in _ordered_vulns(f, decision["new"]):
+            out.append(f"  {'[NEW] ' if is_new else ''}{v['id']} {v['package']} {v['installed']} -> {v['fixed']}: {v['title']}")
         out.append("")
     if decision["fixed"]:
         out.append("--- Fixed since the last digest ---")
@@ -1382,7 +1430,7 @@ def _badge(text: str, bg: str, fg: str = "#ffffff") -> str:
 
 def digest_html(advice: str, findings: dict, newer: dict, decision: dict, rows: list[dict], now: int) -> str:
     e = html.escape
-    updates = sum(1 for ref in findings if newer.get(ref))
+    updates = sum(1 for ref in findings if _has_update(newer.get(ref)))
     stats = [
         (len(rows), "images running", "#2c3e50"),
         (len(findings), "with " + "/".join(sorted(SECURITY_SEVERITIES)).lower(), "#c0392b"),
@@ -1413,14 +1461,17 @@ def digest_html(advice: str, findings: dict, newer: dict, decision: dict, rows: 
         badges = ""
         if ref in decision["new_tags"]:
             badges += _badge("UPDATE AVAILABLE", "#d68910")
-        if newer.get(ref):
-            update = f'newer tag <b style="font-family:monospace">{e(newer[ref])}</b>'
+        versions = newer.get(ref)
+        if versions is None:
+            update = '<span style="color:#b9770e">registry could not be read: newer tags unknown</span>'
+        elif _has_update(versions):
+            update = f'newer tag <b style="font-family:monospace">{e(format_newer(*versions))}</b>'
         else:
             update = '<span style="color:#85929e">no newer tag yet</span>'
         cve_rows = []
-        for cve, v, is_new in _ordered_cves(f, decision["new"]):
-            link = _advisory_url(cve)
-            name = f'<a href="{e(link)}" style="color:#2e86c1;text-decoration:none">{e(cve)}</a>' if link else e(cve)
+        for v, is_new in _ordered_vulns(f, decision["new"]):
+            link = _advisory_url(v["id"])
+            name = f'<a href="{e(link)}" style="color:#2e86c1;text-decoration:none">{e(v["id"])}</a>' if link else e(v["id"])
             score = "" if v["score"] is None else f"{v['score']:.1f}" if isinstance(v["score"], (int, float)) else e(str(v["score"]))
             cve_rows.append(
                 '<tr style="border-top:1px solid #eef0f2">'
@@ -1463,8 +1514,21 @@ def _state_path() -> str:
 
 
 def read_state() -> dict:
+    """The last digest's state; anything unreadable counts as none (one
+    digest repeats everything) rather than silencing digests for good."""
     raw = (_k8s_get(_state_path()).get("data") or {}).get("state.json", "")
-    return json.loads(raw) if raw else {}
+    try:
+        state = json.loads(raw) if raw else {}
+    except ValueError:
+        return {}
+    if not (
+        isinstance(state, dict)
+        and isinstance(state.get("pairs", []), list)
+        and isinstance(state.get("latest", {}), dict)
+        and isinstance(state.get("sent_at", 0), int)
+    ):
+        return {}
+    return state
 
 
 def write_state(state: dict) -> None:
@@ -1481,24 +1545,24 @@ def write_state(state: dict) -> None:
         pass
 
 
-def run_security_digest(now: int | None = None) -> None:
+def run_security_digest(now: int | None = None) -> bool:
+    """One check; False when the reports, pods or state could not be read
+    (the loop then retries soon instead of a whole interval later)."""
     now = int(now if now is not None else time.time())
     _tags_cache.clear()
     try:
         reports, pods, state = fetch_vulnerability_reports(), fetch_pods(), read_state()
-    except Exception as e:  # noqa: BLE001 - try again next interval; SecurityScanNoData covers a dead scanner
+    except Exception as e:  # noqa: BLE001 - retried soon; SecurityScanNoData covers a dead scanner
         print(f"security digest: could not read reports, pods or state: {e}", file=sys.stderr)
-        return
+        return False
     findings = collect_findings(reports, active_replicasets(pods))
-    newer = {}
-    for ref, f in findings.items():
-        versions = lookup_versions(f["registry"], f["repository"], f["tag"]) if f["tag"] else ("", "")
-        # A registry that didn't answer keeps what it said last time, so it
-        # can't make a known tag look new again.
-        newer[ref] = format_newer(*versions) if versions is not None else state.get("newer", {}).get(ref, "")
+    newer = {
+        ref: lookup_versions(f["registry"], f["repository"], f["tag"]) if f["tag"] else ("", "")
+        for ref, f in findings.items()
+    }
     decision = digest_decision(findings, newer, state, now)
     if decision is None:
-        return
+        return True
 
     system = security_system_prompt()
     prompt = security_prompt(findings, newer, decision, system_chars=len(system))
@@ -1519,29 +1583,42 @@ def run_security_digest(now: int | None = None) -> None:
     except Exception as e:  # noqa: BLE001 - the digest is worth more than its attachment
         print(f"security digest: inventory failed: {e}", file=sys.stderr)
         attachments = ()
-    label = "reminder" if decision["reason"] == "reminder" else f"{len(decision['new'])} new"
-    subject = redact(f"[Security digest] {len(findings)} images with fixable findings ({label})")
+    label = []
+    if decision["new"]:
+        label.append(f"{len(decision['new'])} new")
+    if decision["new_tags"]:
+        label.append(f"{len(decision['new_tags'])} update{'s' if len(decision['new_tags']) > 1 else ''}")
+    if decision["reason"] == "reminder":
+        label.append("reminder")
+    subject = redact(f"[Security digest] {len(findings)} images with fixable findings ({', '.join(label)})")
     text = redact(digest_text(advice, findings, newer, decision, rows))
     page = redact(digest_html(advice, findings, newer, decision, rows, now))
-    if not send_email_with_retries("security digest", subject, text, html_body=page, attachments=attachments):
-        return
-    try:
-        write_state(new_state(findings, newer, now))
-    except Exception as e:  # noqa: BLE001 - the next run resends; logged so a loop is visible
-        print(f"security digest: could not save state: {e}", file=sys.stderr)
+    mailed = send_email_with_retries("security digest", subject, text, html_body=page, attachments=attachments)
+    pushed = False
     try:
         push_notification("Security digest", advice, "critical" if decision["new"] else "warning")
+        pushed = bool(PUSH_URL)
     except Exception as e:  # noqa: BLE001 - the push is a second channel
         print(f"security digest: push failed: {e}", file=sys.stderr)
+    # Delivered on either channel: don't repeat it. Neither: the next run does.
+    if mailed or pushed:
+        try:
+            write_state(new_state(findings, newer, now, state))
+        except Exception as e:  # noqa: BLE001 - the next run resends; logged so a loop is visible
+            print(f"security digest: could not save state: {e}", file=sys.stderr)
+    return True
 
 
 def security_digest_loop() -> None:
     while True:
+        ok = False
         try:
-            run_security_digest()
+            ok = run_security_digest()
         except Exception as e:  # noqa: BLE001 - one bad run must not end the loop
             print(f"security digest failed: {e}", file=sys.stderr)
-        time.sleep(SECURITY_DIGEST_INTERVAL)
+        # A failed read (API blip, RBAC not applied yet on a fresh rollout)
+        # is retried in minutes, not a whole interval later.
+        time.sleep(SECURITY_DIGEST_INTERVAL if ok else min(SECURITY_DIGEST_RETRY, SECURITY_DIGEST_INTERVAL))
 
 
 class Handler(BaseHTTPRequestHandler):
