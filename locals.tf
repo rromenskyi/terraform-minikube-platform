@@ -92,7 +92,7 @@ locals {
         enabled                             = false
         hostname                            = ""
         storage_class                       = ""
-        vault_config_operator_chart_version = "1.0.3"
+        vault_config_operator_chart_version = "v1.0.5"
       }
       argocd = {
         enabled       = false
@@ -312,7 +312,7 @@ locals {
       }
       security_scan = {
         enabled                      = false
-        trivy_operator_chart_version = "0.36.0"
+        trivy_operator_chart_version = "0.37.0"
         node_selector                = {}
         extra_target_namespaces      = []
         service_monitor_enabled      = false
@@ -440,7 +440,7 @@ locals {
         # Defaults below are the values that survived a real ARC
         # build cycle on this cluster.
         enabled   = false
-        image_tag = "v0.33.1"
+        image_tag = "v0.34.1"
         host_path = "/data/vol/buildkit-cache"
         # Non-empty = the cache on a PVC of this class (`storage_size`)
         # instead of `host_path`, so it follows the Pod across nodes.

@@ -83,7 +83,7 @@ resource "kubernetes_job_v1" "zitadel_branding_assets" {
 
         container {
           name    = "upload"
-          image   = "curlimages/curl:8.22.0"
+          image   = "curlimages/curl:8.23.0"
           command = ["sh", "-c"]
           args = [<<-EOT
             set -eu

@@ -19,7 +19,7 @@ variable "namespace" {
 variable "victorialogs_image" {
   description = "VictoriaLogs container image. Single static binary; HTTP ingest + query API on :9428, data on a local path."
   type        = string
-  default     = "victoriametrics/victoria-logs:v1.52.0"
+  default     = "victoriametrics/victoria-logs:v1.53.0"
 }
 
 variable "vector_image" {
