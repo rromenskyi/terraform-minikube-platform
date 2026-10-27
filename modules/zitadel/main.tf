@@ -921,10 +921,39 @@ resource "kubernetes_service_v1" "zitadel_login" {
 # Host-only rule for any URL under /ui/v2/login/*, so login traffic
 # lands on the sidecar and everything else stays on the main API.
 
+# Next.js's image optimizer (`/_next/image`) has had unauthenticated
+# remote code execution bugs (e.g. GHSA-2464-fhr4-w9xw, fixed only in
+# Next.js 16.4.1). The login UI does not use it: its logos come from
+# Zitadel's own `/assets/` API. So the path is refused at the edge,
+# whatever Next.js version the login image ships. An allow-list that
+# admits only loopback answers 403 to every real client.
+resource "kubectl_manifest" "login_deny_middleware" {
+  for_each = local.instances
+
+  yaml_body = yamlencode({
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "zitadel-login-deny"
+      namespace = var.namespace
+      labels    = local.tags
+    }
+    spec = {
+      ipAllowList = {
+        sourceRange = ["127.0.0.1/32"]
+      }
+    }
+  })
+}
+
 resource "kubectl_manifest" "login_ingress_route" {
   for_each = local.instances
 
-  depends_on = [kubernetes_deployment_v1.zitadel, kubernetes_service_v1.zitadel_login]
+  depends_on = [
+    kubernetes_deployment_v1.zitadel,
+    kubernetes_service_v1.zitadel_login,
+    kubectl_manifest.login_deny_middleware,
+  ]
 
   yaml_body = yamlencode({
     apiVersion = "traefik.io/v1alpha1"
@@ -936,15 +965,31 @@ resource "kubectl_manifest" "login_ingress_route" {
     }
     spec = {
       entryPoints = ["web"]
-      routes = [{
-        match = "Host(`${var.external_domain}`) && PathPrefix(`/ui/v2/login`)"
-        kind  = "Rule"
-        services = [{
-          name      = "zitadel-login"
-          namespace = var.namespace
-          port      = 3000
-        }]
-      }]
+      routes = [
+        {
+          match = "Host(`${var.external_domain}`) && PathPrefix(`/ui/v2/login`)"
+          kind  = "Rule"
+          services = [{
+            name      = "zitadel-login"
+            namespace = var.namespace
+            port      = 3000
+          }]
+        },
+        # Longer rule, so it outranks the route above. The service is a
+        # placeholder the CRD requires; the middleware answers first.
+        {
+          match = "Host(`${var.external_domain}`) && PathPrefix(`/ui/v2/login/_next/image`)"
+          kind  = "Rule"
+          services = [{
+            name = "noop@internal"
+            kind = "TraefikService"
+          }]
+          middlewares = [{
+            name      = "zitadel-login-deny"
+            namespace = var.namespace
+          }]
+        },
+      ]
     }
   })
 }
