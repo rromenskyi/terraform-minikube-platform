@@ -1012,12 +1012,35 @@ def newer_tag(tag: str, tags: list[str]) -> str:
     return format_newer(*newer_versions(tag, tags))
 
 
+class _SafeRedirect(urllib.request.HTTPRedirectHandler):
+    """Registries may redirect (registry.k8s.io sends tag lists to another
+    host): follow https only, and never carry the bearer token along."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not newurl.startswith("https://"):
+            return None
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None:
+            new.remove_header("Authorization")
+        return new
+
+
+_REGISTRY_OPENER = urllib.request.build_opener(_SafeRedirect)
+
+
 def _registry_json(url: str, token: str | None = None) -> tuple[dict, str]:
     headers = {"Accept": "application/json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
-    with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=20) as resp:
+    with _REGISTRY_OPENER.open(urllib.request.Request(url, headers=headers), timeout=20) as resp:
         return json.loads(resp.read()), resp.headers.get("Link", "")
+
+
+def _same_domain(host: str, other: str) -> bool:
+    """Whether `other` is `host` or shares its parent domain (Docker Hub's
+    registry-1.docker.io hands out tokens from auth.docker.io)."""
+    parent = ".".join(host.split(".")[-2:])
+    return other == host or other == parent or other.endswith("." + parent)
 
 
 def list_tags(registry: str, repository: str) -> list[str] | None:
@@ -1025,8 +1048,9 @@ def list_tags(registry: str, repository: str) -> list[str] | None:
     anonymous token most registries hand out on a 401; None when the
     repository is private, unreachable, answers oddly or has too many pages.
     The registry steers where the token comes from and where the next page
-    is: only an https token realm is fetched, and pages are followed only on
-    the registry's own host, so the bearer token never goes elsewhere."""
+    is: a token realm is fetched only over https on the registry's own
+    domain, and pages are followed only over https on the registry's host,
+    so neither request nor bearer token goes anywhere else."""
     host = "registry-1.docker.io" if registry in _DOCKER_HUB else registry
     base = f"https://{host}"
     url, token, tags = f"{base}/v2/{repository}/tags/list?n=1000", None, []
@@ -1038,7 +1062,8 @@ def list_tags(registry: str, repository: str) -> list[str] | None:
                 if e.code != 401 or token is not None:
                     return None
                 params = dict(re.findall(r'(\w+)="([^"]*)"', e.headers.get("WWW-Authenticate", "")))
-                if not params.get("realm", "").startswith("https://"):
+                realm = urllib.parse.urlsplit(params.get("realm", ""))
+                if realm.scheme != "https" or not _same_domain(host, realm.hostname or ""):
                     return None
                 query = {"service": params.get("service", ""), "scope": params.get("scope") or f"repository:{repository}:pull"}
                 answer, _ = _registry_json(params["realm"] + "?" + urllib.parse.urlencode(query))
@@ -1051,7 +1076,7 @@ def list_tags(registry: str, repository: str) -> list[str] | None:
             if not next_page:
                 return tags
             url = urllib.parse.urljoin(base, next_page.group(1))
-            if urllib.parse.urlsplit(url).netloc != host:
+            if not url.startswith(f"{base}/"):
                 return None
         return None
     except (urllib.error.URLError, OSError, ValueError, AttributeError, TypeError):
@@ -1078,37 +1103,46 @@ def _repo(f: dict) -> str:
     return f"{f['registry']}/{f['repository']}"
 
 
-def _newest(findings: dict[str, dict], newer: dict) -> dict[str, str]:
-    """Newest tag per affected repository, where the registry answered."""
-    return {_repo(findings[ref]): v[1] for ref, v in newer.items() if v and v[1]}
+def _line(f: dict) -> str:
+    """The repository plus the tag's flavour ("v" prefix, suffix such as
+    -alpine): one repository can run several flavours with their own newer tags."""
+    m = _VERSION_TAG.match(f["tag"])
+    return f"{_repo(f)}:{m.group(1)}*{m.group(3)}" if m else _repo(f)
 
 
 def new_state(findings: dict[str, dict], newer: dict, sent_at: int, old: dict | None = None) -> dict:
     """`newer` maps an image reference to (patch, latest), or None when its
-    registry could not be read: that repository keeps the newest tag known
-    before, so a registry outage can't make it look new again later."""
-    latest = {}
-    old_latest = (old or {}).get("latest", {})
+    registry could not be read: that line keeps the tags known before, so a
+    registry outage can't make them look new again later."""
+    old_known = (old or {}).get("known", {})
+    known: dict[str, set] = {}
     for ref, v in newer.items():
-        repo = _repo(findings[ref])
-        if v is None and repo in old_latest:
-            latest[repo] = old_latest[repo]
-    latest.update(_newest(findings, newer))
-    return {"pairs": sorted(pair_keys(findings)), "latest": latest, "sent_at": sent_at}
+        line = _line(findings[ref])
+        tags = known.setdefault(line, set())
+        tags.update(old_known.get(line, []) if v is None else (t for t in v if t))
+    return {
+        "pairs": sorted(pair_keys(findings)),
+        "known": {line: sorted(tags) for line, tags in known.items() if tags},
+        "sent_at": sent_at,
+    }
 
 
 def digest_decision(findings: dict[str, dict], newer: dict, state: dict, now: int) -> dict | None:
-    """Whether a digest goes out now and why: "change" (a vulnerability or a
-    newest tag not reported before, per repository so a bump within the same
-    vulnerable line repeats nothing) or "reminder" (updates available but not
-    applied, last digest older than SECURITY_DIGEST_REMINDER); None = stay quiet."""
+    """Whether a digest goes out now and why: "change" (a vulnerability, or a
+    newer patch or latest tag, not reported before; tags per repository and
+    flavour, so a bump within the same vulnerable line repeats nothing) or
+    "reminder" (updates available but not applied, last digest older than
+    SECURITY_DIGEST_REMINDER); None = stay quiet."""
     pairs, old = pair_keys(findings), set(state.get("pairs", []))
-    old_latest = state.get("latest", {})
+    known = state.get("known", {})
     new = pairs - old
-    new_tags = {ref for ref, v in newer.items() if v and v[1] and old_latest.get(_repo(findings[ref])) != v[1]}
+    new_tags = {
+        ref for ref, v in newer.items()
+        if v and any(t and t not in known.get(_line(findings[ref]), []) for t in v)
+    }
     if new or new_tags:
         reason = "change"
-    elif any(v and v[1] for v in newer.values()) and now - state.get("sent_at", 0) >= SECURITY_DIGEST_REMINDER:
+    elif any(_has_update(v) for v in newer.values()) and now - state.get("sent_at", 0) >= SECURITY_DIGEST_REMINDER:
         reason = "reminder"
     else:
         return None
@@ -1521,11 +1555,15 @@ def read_state() -> dict:
         state = json.loads(raw) if raw else {}
     except ValueError:
         return {}
+    if not isinstance(state, dict):
+        return {}
+    pairs, known, sent_at = state.get("pairs", []), state.get("known", {}), state.get("sent_at", 0)
     if not (
-        isinstance(state, dict)
-        and isinstance(state.get("pairs", []), list)
-        and isinstance(state.get("latest", {}), dict)
-        and isinstance(state.get("sent_at", 0), int)
+        isinstance(pairs, list)
+        and all(isinstance(p, str) for p in pairs)
+        and isinstance(known, dict)
+        and all(isinstance(v, list) and all(isinstance(t, str) for t in v) for v in known.values())
+        and isinstance(sent_at, int)
     ):
         return {}
     return state
@@ -1546,8 +1584,9 @@ def write_state(state: dict) -> None:
 
 
 def run_security_digest(now: int | None = None) -> bool:
-    """One check; False when the reports, pods or state could not be read
-    (the loop then retries soon instead of a whole interval later)."""
+    """One check; False when the reports, pods or state could not be read or
+    a digest reached no channel (the loop then retries soon instead of a
+    whole interval later)."""
     now = int(now if now is not None else time.time())
     _tags_cache.clear()
     try:
@@ -1600,12 +1639,16 @@ def run_security_digest(now: int | None = None) -> bool:
         pushed = bool(PUSH_URL)
     except Exception as e:  # noqa: BLE001 - the push is a second channel
         print(f"security digest: push failed: {e}", file=sys.stderr)
-    # Delivered on either channel: don't repeat it. Neither: the next run does.
-    if mailed or pushed:
-        try:
-            write_state(new_state(findings, newer, now, state))
-        except Exception as e:  # noqa: BLE001 - the next run resends; logged so a loop is visible
-            print(f"security digest: could not save state: {e}", file=sys.stderr)
+    # Only the mail carries the findings and the inventory: until it is
+    # delivered the state stays, so the next interval sends it again (the
+    # push then repeats every interval, not every retry). Neither channel
+    # delivered: retried soon.
+    if not mailed:
+        return pushed
+    try:
+        write_state(new_state(findings, newer, now, state))
+    except Exception as e:  # noqa: BLE001 - the next run resends; logged so a loop is visible
+        print(f"security digest: could not save state: {e}", file=sys.stderr)
     return True
 
 

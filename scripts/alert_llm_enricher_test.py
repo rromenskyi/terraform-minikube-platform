@@ -674,7 +674,27 @@ class DigestDecisionTest(unittest.TestCase):
         f = self.findings()
         state = self.m.new_state(f, {"quay.io/org/app:v1": ("", "v2")}, self.NOW - 3600)
         self.assertIsNone(self.m.digest_decision(f, {"quay.io/org/app:v1": None}, state, self.NOW))
-        self.assertEqual(self.m.new_state(f, {"quay.io/org/app:v1": None}, 0, state)["latest"], {"quay.io/org/app": "v2"})
+        self.assertEqual(self.m.new_state(f, {"quay.io/org/app:v1": None}, 0, state)["known"], {"quay.io/org/app:v*": ["v2"]})
+
+    def test_new_patch_with_the_same_latest_is_a_change(self):
+        f = self.findings("v1.0.0")
+        state = self.m.new_state(f, {"quay.io/org/app:v1.0.0": ("v1.0.1", "v2.0.0")}, self.NOW - 3600)
+        d = self.m.digest_decision(f, {"quay.io/org/app:v1.0.0": ("v1.0.2", "v2.0.0")}, state, self.NOW)
+        self.assertEqual(d["new_tags"], {"quay.io/org/app:v1.0.0"})
+
+    def test_patch_only_update_is_reminded(self):
+        f, newer = self.findings("v1.0.0"), {"quay.io/org/app:v1.0.0": ("v1.0.1", "")}
+        state = self.m.new_state(f, newer, self.NOW - 604800)
+        self.assertEqual(self.m.digest_decision(f, newer, state, self.NOW)["reason"], "reminder")
+
+    def test_two_tag_flavours_of_one_repository_do_not_flap(self):
+        f = self.m.collect_findings([
+            vreport("a", "StatefulSet", "s", "org/app", "1.0-alpine", [vuln("CVE-1")]),
+            vreport("a", "StatefulSet", "t", "org/app", "1.0-bookworm", [vuln("CVE-1")]),
+        ], set())
+        newer = {"quay.io/org/app:1.0-alpine": ("", "2.0-alpine"), "quay.io/org/app:1.0-bookworm": ("", "2.0-bookworm")}
+        state = self.m.new_state(f, newer, self.NOW - 3600)
+        self.assertIsNone(self.m.digest_decision(f, newer, state, self.NOW))
 
     def test_weekly_reminder_only_for_pending_updates(self):
         f, newer = self.findings(), {"quay.io/org/app:v1": ("", "v2")}
@@ -803,18 +823,19 @@ class SecurityDigestRunTest(unittest.TestCase):
         self.assertIn("newer tag: unknown", self.prompts[0][1])
         self.assertIn("could not be read", self.m.sent_extra[0]["html_body"])
 
-    def test_mail_failure_still_pushes_and_saves(self):
+    def test_mail_failure_still_pushes_and_retries_the_mail_next_interval(self):
         def fail(subject, body, **kw):
             raise OSError("smtp down")
         self.m.send_email = fail
         self.m.PUSH_URL = "https://push.example/topic"
-        self.m.run_security_digest(1_800_000_000)
+        self.assertTrue(self.m.run_security_digest(1_800_000_000))
         self.assertEqual(len(self.pushes), 1)
-        self.assertIn("pairs", self.state)
+        self.assertEqual(self.state, {})
 
     def test_corrupt_state_counts_as_empty(self):
         m = load()
-        for raw in ("{not json", "null", "[]", '{"pairs": 3, "latest": [], "sent_at": "x"}'):
+        for raw in ("{not json", "null", "[]", '{"pairs": 3, "known": [], "sent_at": "x"}', '{"pairs": [{}]}',
+                    '{"known": {"r": "v2"}}', '{"known": {"r": [1]}}'):
             m._k8s_get = lambda path, raw=raw: {"data": {"state.json": raw}}
             self.assertEqual(m.read_state(), {}, raw)
 
@@ -830,7 +851,7 @@ class SecurityDigestRunTest(unittest.TestCase):
     def test_subject_names_updates(self):
         f = {"quay.io/org/app|CVE-1"}
         self.m.write_state = lambda s: None
-        self.m.read_state = lambda: {"pairs": sorted(f), "latest": {}, "sent_at": 1_799_999_000}
+        self.m.read_state = lambda: {"pairs": sorted(f), "known": {}, "sent_at": 1_799_999_000}
         self.m.run_security_digest(1_800_000_000)
         self.assertIn("1 update", self.m.sent[0][0])
         self.assertNotIn("0 new", self.m.sent[0][0])
@@ -848,7 +869,7 @@ class SecurityDigestRunTest(unittest.TestCase):
             raise OSError("down")
         self.m.send_email = fail
         self.m.push_notification = fail
-        self.m.run_security_digest(1_800_000_000)
+        self.assertFalse(self.m.run_security_digest(1_800_000_000))
         self.assertEqual(self.state, {})
 
     def test_unreadable_reports_send_nothing(self):
@@ -881,6 +902,45 @@ class RegistryRedirectTest(unittest.TestCase):
             raise urllib.error.HTTPError(url, 401, "Unauthorized",
                                          {"WWW-Authenticate": 'Bearer realm="http://10.0.0.1/token",service="s"'}, None)
         m._registry_json = fake
+        self.assertIsNone(m.list_tags("quay.io", "o/x"))
+
+    def test_realm_on_another_domain_is_refused(self):
+        m = load()
+
+        def fake(url, token=None):
+            if "token" in url:
+                raise AssertionError("realm fetched")
+            raise urllib.error.HTTPError(url, 401, "Unauthorized",
+                                         {"WWW-Authenticate": 'Bearer realm="https://internal.example/token"'}, None)
+        m._registry_json = fake
+        self.assertIsNone(m.list_tags("quay.io", "o/x"))
+
+    def test_realm_on_the_registry_domain_is_used(self):
+        m = load()
+        seen = []
+
+        def fake(url, token=None):
+            seen.append(url)
+            if url.startswith("https://auth.docker.io/"):
+                return {"token": "t"}, ""
+            if token is None:
+                raise urllib.error.HTTPError(url, 401, "Unauthorized",
+                                             {"WWW-Authenticate": 'Bearer realm="https://auth.docker.io/token",service="s"'}, None)
+            return {"tags": ["1.0"]}, ""
+        m._registry_json = fake
+        self.assertEqual(m.list_tags("docker.io", "library/x"), ["1.0"])
+
+    def test_redirect_drops_the_token_and_needs_https(self):
+        m = load()
+        handler = m._SafeRedirect()
+        req = urllib.request.Request("https://registry.example/v2/x/tags/list", headers={"Authorization": "Bearer t"})
+        new = handler.redirect_request(req, None, 307, "redirect", {}, "https://mirror.example/v2/x/tags/list")
+        self.assertIsNone(new.get_header("Authorization"))
+        self.assertIsNone(handler.redirect_request(req, None, 307, "redirect", {}, "http://mirror.example/x"))
+
+    def test_plain_http_next_page_is_refused(self):
+        m = load()
+        m._registry_json = lambda url, token=None: ({"tags": ["v1"]}, '<http://quay.io/v2/x/tags/list?last=v1>; rel="next"')
         self.assertIsNone(m.list_tags("quay.io", "o/x"))
 
     def test_odd_json_is_unknown(self):
