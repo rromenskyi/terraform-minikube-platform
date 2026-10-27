@@ -9,8 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 - Image and chart bumps that trivy shows lowering the findings: VictoriaLogs v1.53.0, cloudflared 2026.10.5, curl 8.23.0 (Zitadel branding Job), BuildKit v0.34.1, vault-config-operator chart v1.0.5 (its ServiceMonitor kept: the chart's `enableMonitoring` default became false), trivy-operator chart 0.37.0 (trivy 0.75, operator 0.35).
-
-### Security
 - Zitadel and its login UI v4.19.5. The login route also refuses Next.js's image optimizer path (`/ui/v2/login/_next/image`), which the login UI does not use and which had unauthenticated RCE bugs.
 - Argo CD chart 10.11.6 (v3.5.6), fixing CVE-2026-77459 (AppProject restrictions bypassed by PreDelete/PostDelete hooks).
 
