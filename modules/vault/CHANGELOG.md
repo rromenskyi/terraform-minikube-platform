@@ -7,6 +7,9 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- vault-config-operator chart v1.0.5; `enableMonitoring` set explicitly, since the chart's default became false.
+
 ### Added
 - `vso_platform_readers`: narrow VSO identities (policy + kubernetes-auth role `vso-platform-<name>`) reading only listed `platform/...` secrets.
 

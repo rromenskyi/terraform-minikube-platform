@@ -7,6 +7,9 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- VictoriaLogs v1.53.0.
+
 ### Added
 - `alert_rules.<name>.description` (optional): what the alert means and its
   known false positives, rendered as the rule's `description` annotation so

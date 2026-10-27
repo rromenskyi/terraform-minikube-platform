@@ -8,6 +8,7 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- trivy-operator chart 0.37.0 (operator 0.35, trivy 0.75).
 - CRD manifests are `apply_only`: disabling the module or dropping a CRD no
   longer deletes it (and every object of that kind cluster-wide).
 

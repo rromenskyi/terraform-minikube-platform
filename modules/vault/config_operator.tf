@@ -75,6 +75,10 @@ resource "helm_release" "vault_config_operator" {
     # so this just lights up the chart's built-in cert-manager
     # Certificate templates.
     enableCertManager = true
+
+    # Chart v1.0.5 flipped the default to false; keep the ServiceMonitor
+    # the operator's metrics have been scraped through.
+    enableMonitoring = true
   })]
 
   # Helm Ready-wait — without this the apply returns before the operator
