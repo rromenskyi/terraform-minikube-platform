@@ -7,6 +7,10 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- `image_alert_enabled` (default `true`): `false` leaves `ImageVulnerabilities`
+  out of the PrometheusRule, for when another consumer reports the findings.
+
 ### Changed
 - trivy-operator chart 0.37.0 (operator 0.35, trivy 0.75).
 - CRD manifests are `apply_only`: disabling the module or dropping a CRD no

@@ -229,7 +229,9 @@ resource "kubectl_manifest" "alerts" {
     spec = {
       groups = [{
         name = "security-scan"
-        rules = [
+        # ImageVulnerabilities is left out when something else reports the
+        # findings (image_alert_enabled); the no-data rule always stays.
+        rules = [for rule in [
           {
             alert = "ImageVulnerabilities"
             # One report per container: `max` counts an image once however
@@ -257,10 +259,10 @@ resource "kubectl_manifest" "alerts" {
             })
             annotations = {
               summary     = "trivy-operator exports no vulnerability metrics"
-              description = "No trivy_image_vulnerabilities series for 6h: the operator is down, not scraped, or scans keep failing. Until fixed, the absence of ImageVulnerabilities alerts means nothing."
+              description = "No trivy_image_vulnerabilities series for 6h: the operator is down, not scraped, or scans keep failing. Until fixed, the absence of vulnerability findings means nothing."
             }
           },
-        ]
+        ] : rule if var.image_alert_enabled || rule.alert != "ImageVulnerabilities"]
       }]
     }
   })

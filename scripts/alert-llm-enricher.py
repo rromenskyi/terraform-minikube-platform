@@ -13,6 +13,8 @@ Stdlib only, deliberately: this runs on a generic python image with the
 script mounted from a ConfigMap, no image build/registry needed.
 """
 
+import html
+import io
 import json
 import os
 import re
@@ -24,7 +26,10 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import zipfile
 from datetime import datetime, timezone
+from email.mime.application import MIMEApplication
+from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -61,6 +66,17 @@ ALERT_EMAIL_TO = os.environ["ALERT_EMAIL_TO"]
 LOG_CONTEXT_LINES = int(os.environ.get("LOG_CONTEXT_LINES", "80"))
 LOG_SURROUNDING_LINES = int(os.environ.get("LOG_SURROUNDING_LINES", "5"))
 PORT = int(os.environ.get("PORT", "8080"))
+# Security digest (trivy-operator VulnerabilityReports): seconds between
+# checks, 0 = off. A digest goes out only when something changed; images that
+# could be updated but weren't are reminded of after SECURITY_DIGEST_REMINDER_SECONDS.
+SECURITY_DIGEST_INTERVAL = int(os.environ.get("SECURITY_DIGEST_INTERVAL_SECONDS", "0"))
+SECURITY_DIGEST_REMINDER = int(os.environ.get("SECURITY_DIGEST_REMINDER_SECONDS", str(7 * 86400)))
+SECURITY_SEVERITIES = {
+    s.strip().upper() for s in os.environ.get("SECURITY_DIGEST_SEVERITIES", "Critical").split(",") if s.strip()
+}
+# ConfigMap (in POD_NAMESPACE) holding what the last digest reported.
+SECURITY_STATE_CONFIGMAP = os.environ.get("SECURITY_STATE_CONFIGMAP", "")
+POD_NAMESPACE = os.environ.get("POD_NAMESPACE", "")
 
 LOG_FETCH_LIMIT = 500
 MAX_LINE_CHARS = 500
@@ -600,7 +616,10 @@ def build_prompt(
 
 
 def system_prompt() -> str:
-    prompt = BASE_SYSTEM_PROMPT.format(language=DIAGNOSIS_LANGUAGE)
+    return _with_runbook(BASE_SYSTEM_PROMPT.format(language=DIAGNOSIS_LANGUAGE))
+
+
+def _with_runbook(prompt: str) -> str:
     try:
         with open(RUNBOOK_FILE, encoding="utf-8") as f:
             runbook = f.read().strip()
@@ -668,8 +687,22 @@ def ask_openai(system: str, prompt: str) -> str:
     return (data["choices"][0]["message"].get("content") or "").strip()
 
 
-def send_email(subject: str, body: str) -> None:
-    msg = MIMEText(body, "plain", "utf-8")
+def send_email(subject: str, body: str, html_body: str = "", attachments: tuple = ()) -> None:
+    """Plain text, or text + HTML alternatives with (filename, MIME type,
+    bytes) attachments."""
+    if not html_body and not attachments:
+        msg = MIMEText(body, "plain", "utf-8")
+    else:
+        msg = MIMEMultipart("mixed")
+        alternative = MIMEMultipart("alternative")
+        alternative.attach(MIMEText(body, "plain", "utf-8"))
+        if html_body:
+            alternative.attach(MIMEText(html_body, "html", "utf-8"))
+        msg.attach(alternative)
+        for filename, mime_type, data in attachments:
+            part = MIMEApplication(data, _subtype=mime_type.split("/", 1)[1])
+            part.add_header("Content-Disposition", "attachment", filename=filename)
+            msg.attach(part)
     msg["Subject"] = subject
     msg["From"] = SMTP_FROM
     msg["To"] = ALERT_EMAIL_TO
@@ -716,6 +749,18 @@ def push_notification(title: str, message: str, severity: str) -> None:
     return None
 
 
+def send_email_with_retries(what: str, subject: str, body: str, **extra) -> bool:
+    for attempt, delay in enumerate((*SMTP_RETRY_DELAYS, None), 1):
+        try:
+            send_email(subject, body, **extra)
+            return True
+        except Exception as e:  # noqa: BLE001 - retried, then logged; the push still goes out
+            print(f"e-mail attempt {attempt} failed for {what}: {e}", file=sys.stderr)
+            if delay is not None:
+                time.sleep(delay)
+    return False
+
+
 def handle_group(payload: dict) -> None:
     """One Alertmanager notification = one group of alerts = one diagnosis,
     one e-mail and one push."""
@@ -757,19 +802,746 @@ def handle_group(payload: dict) -> None:
         body.append(f"({len(firing) - len(contexts)} more alerts in this group not shown)\n")
     body.append(f"--- Other alerts firing in the cluster ---\n{cluster}")
     subject, text = redact(subject), redact("\n".join(body))
-    for attempt, delay in enumerate((*SMTP_RETRY_DELAYS, None), 1):
-        try:
-            send_email(subject, text)
-            break
-        except Exception as e:  # noqa: BLE001 - retried, then logged; the push still goes out
-            print(f"e-mail attempt {attempt} failed for {group}: {e}", file=sys.stderr)
-            if delay is not None:
-                time.sleep(delay)
+    send_email_with_retries(group, subject, text)
 
     try:
         push_notification(redact(f"{group} ({len(firing)})"), diagnosis, severity)
     except Exception as e:  # noqa: BLE001 - the push is a second channel
         print(f"push failed for {group}: {e}", file=sys.stderr)
+
+
+# ── Security digest ─────────────────────────────────────────────────────────
+#
+# trivy-operator's VulnerabilityReports say which running images carry
+# fixable vulnerabilities; the registries say whether a newer tag exists. A
+# digest (LLM advice, an HTML e-mail with the inventory of every running image
+# as an .xlsx attachment, and a push) goes out only when something changed
+# since the last one: a vulnerability not reported before, or a newer tag for
+# an affected image. Vulnerabilities that went away don't trigger one; the
+# next digest lists them as fixed. What the last digest reported lives in a
+# ConfigMap, so a restart doesn't resend it.
+
+SECURITY_SYSTEM_PROMPT = """You are the security assistant for a Kubernetes cluster. You get the container images \
+running in the cluster that have fixable vulnerabilities (from trivy-operator), the workloads that run them, and \
+for each image whether its registry has a newer tag. Findings marked [NEW] appeared since the last digest; images \
+marked [UPDATE AVAILABLE] got a newer tag since then.
+
+Rules:
+- Base every claim on the data given. A newer tag is not proof that it fixes the vulnerability: say to check its \
+release notes or scan it before rolling it out.
+- Order by what to do first: images with a newer tag, most exposed and most severe first; then images with no \
+newer tag yet.
+- For an image with no newer tag, say it waits for upstream; name a mitigation only when the data supports one.
+- Recommend switching a service off only when all of these hold: the runbook marks it as non-critical, the runbook \
+or the data shows it is reachable from outside the cluster, and a finding is remotely exploitable with no newer \
+image. Otherwise never suggest switching anything off.
+- Changes go through infrastructure-as-code: say what to bump and where (image tag, Helm chart version). Never \
+suggest commands that change the cluster.
+- Be specific and short. No filler, no generic advice.
+
+Write the whole answer in {language}, as plain text with these sections, each heading written in {language}:
+1. Summary: one or two sentences on the state as a whole. This part is also sent as a push notification, so it \
+must stand on its own.
+2. Update now: per image with a newer tag, what to bump, where, and why it comes first.
+3. Wait for upstream: images with no newer tag, and a mitigation only where justified."""
+
+_DOCKER_HUB = {"docker.io", "index.docker.io", "registry-1.docker.io"}
+_VERSION_TAG = re.compile(r"^(v?)(\d+(?:\.\d+)*)(.*)$")
+# Pages of a registry's tag list read at most; past this the list is treated
+# as unknown rather than wrongly "nothing newer" (pages come in name order).
+MAX_TAG_PAGES = 50
+# Findings per image shown to the model and in the e-mail; the rest are counted.
+MAX_CVES_PER_IMAGE = 8
+_STATUS_ORDER = ["patch available", "newer available", "unknown", "floating tag", "digest only", "up to date"]
+_tags_cache: dict = {}
+
+
+def parse_image(ref: str) -> tuple[str, str, str]:
+    """(registry, repository, tag) of an image reference, Docker Hub spelled
+    one way (docker.io, library/ for official images); tag "" when the image
+    is referenced by digest only."""
+    name, _, digest = ref.partition("@")
+    tag = ""
+    if ":" in name.rsplit("/", 1)[-1]:
+        name, tag = name.rsplit(":", 1)
+    elif not digest:
+        tag = "latest"
+    first, _, rest = name.partition("/")
+    if rest and ("." in first or ":" in first or first == "localhost"):
+        registry, repository = first, rest
+    else:
+        registry, repository = "docker.io", name
+    if registry in _DOCKER_HUB:
+        registry = "docker.io"
+        if "/" not in repository:
+            repository = f"library/{repository}"
+    return registry, repository, tag
+
+
+def image_key(registry: str, repository: str, tag: str) -> str:
+    registry = "docker.io" if registry in _DOCKER_HUB else registry
+    return f"{registry}/{repository}:{tag}" if tag else f"{registry}/{repository}"
+
+
+def active_replicasets(pods: list[dict]) -> set[str]:
+    """ReplicaSets that still own pods: a Deployment keeps old ReplicaSets
+    (scaled to 0) and trivy-operator keeps their reports."""
+    out = set()
+    for p in pods:
+        meta = p.get("metadata", {})
+        for ref in meta.get("ownerReferences", []):
+            if ref.get("kind") == "ReplicaSet":
+                out.add(f"{meta.get('namespace')}/{ref.get('name')}")
+    return out
+
+
+def _report_image(report: dict) -> tuple[str, str, str]:
+    rep = report.get("report", {})
+    artifact = rep.get("artifact", {})
+    return rep.get("registry", {}).get("server", ""), artifact.get("repository", ""), artifact.get("tag", "")
+
+
+def _report_is_current(report: dict, active_rs: set[str]) -> bool:
+    labels = report.get("metadata", {}).get("labels", {})
+    if labels.get("trivy-operator.resource.kind") != "ReplicaSet":
+        return True
+    return f"{labels.get('trivy-operator.resource.namespace')}/{labels.get('trivy-operator.resource.name')}" in active_rs
+
+
+def workload_label(namespace: str, kind: str, name: str) -> str:
+    """namespace/kind/name, a Deployment's ReplicaSet shown as the Deployment."""
+    # Same pod-template-hash alphabet as _current_siblings.
+    if kind == "ReplicaSet" and re.search(r"-[bcdfghjklmnpqrstvwxz2456789]{5,10}$", name):
+        kind, name = "Deployment", name.rsplit("-", 1)[0]
+    return f"{namespace}/{kind}/{name}"
+
+
+def _workload(pod: dict) -> str:
+    meta = pod.get("metadata", {})
+    owners = meta.get("ownerReferences") or [{"kind": "Pod", "name": meta.get("name", "?")}]
+    return workload_label(meta.get("namespace", "?"), owners[0].get("kind", "?"), owners[0].get("name", "?"))
+
+
+def _some(items, limit: int = 6) -> str:
+    items = sorted(items)
+    return ", ".join(items[:limit]) + (f" (+{len(items) - limit} more)" if len(items) > limit else "")
+
+
+def collect_findings(reports: list[dict], active_rs: set[str]) -> dict[str, dict]:
+    """Images with vulnerabilities at SECURITY_SEVERITIES, keyed by image
+    reference: their findings (by vulnerability ID) and the workloads running them."""
+    out: dict[str, dict] = {}
+    for report in reports:
+        if not _report_is_current(report, active_rs):
+            continue
+        vulns = [v for v in report.get("report", {}).get("vulnerabilities") or [] if v.get("severity") in SECURITY_SEVERITIES]
+        if not vulns:
+            continue
+        registry, repository, tag = _report_image(report)
+        registry = "docker.io" if registry in _DOCKER_HUB else registry
+        entry = out.setdefault(
+            image_key(registry, repository, tag),
+            {"registry": registry, "repository": repository, "tag": tag, "cves": {}, "workloads": set()},
+        )
+        labels = report.get("metadata", {}).get("labels", {})
+        entry["workloads"].add(
+            workload_label(
+                labels.get("trivy-operator.resource.namespace", "?"),
+                labels.get("trivy-operator.resource.kind", "?"),
+                labels.get("trivy-operator.resource.name", "?"),
+            )
+        )
+        for v in vulns:
+            entry["cves"][v.get("vulnerabilityID", "?")] = {
+                "package": v.get("resource", ""),
+                "installed": v.get("installedVersion", ""),
+                "fixed": v.get("fixedVersion", ""),
+                "score": v.get("score"),
+                "title": v.get("title", ""),
+                "severity": v.get("severity", ""),
+            }
+    return out
+
+
+def newer_versions(tag: str, tags: list[str]) -> tuple[str, str]:
+    """(newest patch, newest overall) among tags of the same flavour as `tag`
+    (same "v" prefix, same suffix such as -alpine, same number of version
+    parts) — each "" when nothing newer exists. Pre-releases differ in suffix
+    and never count. Only x.y.z tags have patches: in a two-part tag (3.20,
+    18.6) the last part is a minor for some projects and a patch for others."""
+    m = _VERSION_TAG.match(tag)
+    if not m:
+        return "", ""
+    prefix, suffix = m.group(1), m.group(3)
+    current = tuple(int(x) for x in m.group(2).split("."))
+    candidates = []
+    for t in tags:
+        mm = _VERSION_TAG.match(t)
+        if not mm or mm.group(1) != prefix or mm.group(3) != suffix:
+            continue
+        version = tuple(int(x) for x in mm.group(2).split("."))
+        if len(version) == len(current) and version > current:
+            candidates.append((version, t))
+    if not candidates:
+        return "", ""
+    patches = [c for c in candidates if len(current) >= 3 and c[0][:-1] == current[:-1]]
+    return (max(patches)[1] if patches else ""), max(candidates)[1]
+
+
+def format_newer(patch: str, latest: str) -> str:
+    if patch and latest and patch != latest:
+        return f"{patch} (latest {latest})"
+    return patch or latest
+
+
+def newer_tag(tag: str, tags: list[str]) -> str:
+    return format_newer(*newer_versions(tag, tags))
+
+
+def _registry_json(url: str, token: str | None = None) -> tuple[dict, str]:
+    headers = {"Accept": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=20) as resp:
+        return json.loads(resp.read()), resp.headers.get("Link", "")
+
+
+def list_tags(registry: str, repository: str) -> list[str] | None:
+    """Every tag of a public repository through the registry v2 API, with the
+    anonymous token most registries hand out on a 401; None when the
+    repository is private, unreachable or has too many pages."""
+    host = "registry-1.docker.io" if registry in _DOCKER_HUB else registry
+    base = f"https://{host}"
+    url, token, tags = f"{base}/v2/{repository}/tags/list?n=1000", None, []
+    for _ in range(MAX_TAG_PAGES):
+        try:
+            data, link = _registry_json(url, token)
+        except urllib.error.HTTPError as e:
+            if e.code != 401 or token is not None:
+                return None
+            params = dict(re.findall(r'(\w+)="([^"]*)"', e.headers.get("WWW-Authenticate", "")))
+            if "realm" not in params:
+                return None
+            query = {"service": params.get("service", ""), "scope": params.get("scope") or f"repository:{repository}:pull"}
+            try:
+                answer, _ = _registry_json(params["realm"] + "?" + urllib.parse.urlencode(query))
+            except (urllib.error.URLError, OSError, ValueError):
+                return None
+            token = answer.get("token") or answer.get("access_token")
+            if not token:
+                return None
+            continue
+        except (urllib.error.URLError, OSError, ValueError):
+            return None
+        tags += data.get("tags") or []
+        next_page = re.search(r"<([^>]+)>", link or "")
+        if not next_page:
+            return tags
+        url = urllib.parse.urljoin(base, next_page.group(1))
+    return None
+
+
+def lookup_versions(registry: str, repository: str, tag: str) -> tuple[str, str] | None:
+    """newer_versions() against the registry; None when its tags can't be
+    read. Cached for one digest run."""
+    key = (registry, repository)
+    if key not in _tags_cache:
+        _tags_cache[key] = list_tags(registry, repository)
+    tags = _tags_cache[key]
+    return None if tags is None else newer_versions(tag, tags)
+
+
+def pair_keys(findings: dict[str, dict]) -> set[str]:
+    """One key per (repository, vulnerability), without the tag: bumping an
+    image that still carries the same vulnerability is nothing new."""
+    return {f"{f['registry']}/{f['repository']}|{cve}" for f in findings.values() for cve in f["cves"]}
+
+
+def new_state(findings: dict[str, dict], newer: dict[str, str], sent_at: int) -> dict:
+    return {"pairs": sorted(pair_keys(findings)), "newer": {k: v for k, v in newer.items() if v}, "sent_at": sent_at}
+
+
+def digest_decision(findings: dict[str, dict], newer: dict[str, str], state: dict, now: int) -> dict | None:
+    """Whether a digest goes out now and why: "change" (a vulnerability or a
+    newer tag not reported before) or "reminder" (updates available but not
+    applied, last digest older than SECURITY_DIGEST_REMINDER); None = stay quiet."""
+    pairs, old = pair_keys(findings), set(state.get("pairs", []))
+    old_newer = state.get("newer", {})
+    new = pairs - old
+    new_tags = {ref for ref, tag in newer.items() if tag and old_newer.get(ref) != tag}
+    if new or new_tags:
+        reason = "change"
+    elif any(newer.get(ref) for ref in findings) and now - state.get("sent_at", 0) >= SECURITY_DIGEST_REMINDER:
+        reason = "reminder"
+    else:
+        return None
+    return {"reason": reason, "new": new, "new_tags": new_tags, "fixed": sorted(old - pairs)}
+
+
+
+
+def build_inventory(pods: list[dict], reports: list[dict]) -> list[dict]:
+    """One row per image running in the cluster: where it runs, whether it is
+    pinned by digest, its fixable critical/high counts and whether the
+    registry has something newer. Rows with critical findings first."""
+    images: dict[str, dict] = {}
+    for pod in pods:
+        spec = pod.get("spec", {})
+        for c in spec.get("initContainers", []) + spec.get("containers", []):
+            ref = c.get("image", "")
+            if not ref:
+                continue
+            registry, repository, tag = parse_image(ref)
+            row = images.setdefault(
+                image_key(registry, repository, tag),
+                {"registry": registry, "repository": repository, "tag": tag, "workloads": set(), "digests": []},
+            )
+            row["workloads"].add(_workload(pod))
+            row["digests"].append("@" in ref)
+
+    counts: dict[str, tuple[int, int]] = {}
+    active_rs = active_replicasets(pods)
+    for report in reports:
+        if not _report_is_current(report, active_rs):
+            continue
+        key = image_key(*_report_image(report))
+        vulns = report.get("report", {}).get("vulnerabilities") or []
+        critical = len({v.get("vulnerabilityID") for v in vulns if v.get("severity") == "CRITICAL"})
+        high = len({v.get("vulnerabilityID") for v in vulns if v.get("severity") == "HIGH"})
+        old = counts.get(key, (0, 0))
+        counts[key] = (max(old[0], critical), max(old[1], high))
+
+    rows = []
+    for key, row in images.items():
+        patch = latest = ""
+        if not row["tag"]:
+            status = "digest only"
+        elif not _VERSION_TAG.match(row["tag"]):
+            status = "floating tag"
+        else:
+            versions = lookup_versions(row["registry"], row["repository"], row["tag"])
+            if versions is None:
+                status = "unknown"
+            else:
+                patch, latest = versions
+                status = "patch available" if patch else "newer available" if latest else "up to date"
+        critical, high = counts.get(key, (0, 0))
+        workloads = sorted(row["workloads"])
+        rows.append({
+            "image": key, "registry": row["registry"], "repository": row["repository"], "tag": row["tag"],
+            "status": status, "patch": patch, "latest": latest, "critical": critical, "high": high,
+            "pinned": "yes" if all(row["digests"]) else "partly" if any(row["digests"]) else "no",
+            "namespaces": sorted({w.split("/", 1)[0] for w in workloads}), "workloads": workloads,
+        })
+    rows.sort(key=lambda r: (-r["critical"], _STATUS_ORDER.index(r["status"]), -r["high"], r["image"]))
+    return rows
+
+
+# ── .xlsx without a library ──
+# An .xlsx is a zip of a few XML parts; this writes the smallest set Excel,
+# LibreOffice and Numbers open: inline strings, a bold header row frozen with
+# an autofilter, column widths, and an optional fill per row.
+
+_XLSX_FILLS = {None: 0, "red": 2, "amber": 3, "green": 4, "grey": 5}
+_XML_ILLEGAL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+
+def _xml(text) -> str:
+    return html.escape(_XML_ILLEGAL.sub("", str(text)), quote=True)
+
+
+def _col(n: int) -> str:
+    name = ""
+    while n:
+        n, r = divmod(n - 1, 26)
+        name = chr(65 + r) + name
+    return name
+
+
+def _sheet_xml(header: list[str], rows: list[list], fills: list) -> str:
+    widths = [len(str(h)) for h in header]
+    for row in rows:
+        for i, v in enumerate(row):
+            widths[i] = max(widths[i], min(len(str(v)), 80))
+    cols = "".join(f'<col min="{i}" max="{i}" width="{w + 2}" customWidth="1"/>' for i, w in enumerate(widths, 1))
+
+    def cell(ref: str, value, style: int) -> str:
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return f'<c r="{ref}" s="{style}"><v>{value}</v></c>'
+        return f'<c r="{ref}" s="{style}" t="inlineStr"><is><t xml:space="preserve">{_xml(value)}</t></is></c>'
+
+    lines = ['<row r="1">' + "".join(cell(f"{_col(i)}1", h, 1) for i, h in enumerate(header, 1)) + "</row>"]
+    for r, (row, fill) in enumerate(zip(rows, fills), 2):
+        style = _XLSX_FILLS[fill]
+        lines.append(f'<row r="{r}">' + "".join(cell(f"{_col(i)}{r}", v, style) for i, v in enumerate(row, 1)) + "</row>")
+    last = f"{_col(len(header))}{len(rows) + 1}"
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        '<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" '
+        'state="frozen"/></sheetView></sheetViews>'
+        f"<cols>{cols}</cols><sheetData>{''.join(lines)}</sheetData>"
+        f'<autoFilter ref="A1:{last}"/></worksheet>'
+    )
+
+
+def xlsx_bytes(sheets: list[tuple[str, list[str], list[list], list]]) -> bytes:
+    """Workbook from (name, header, rows, per-row fill) sheets; a fill is a
+    key of _XLSX_FILLS."""
+    ns = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    names = "".join(
+        f'<sheet name="{_xml(name[:31])}" sheetId="{i}" r:id="rId{i}"/>' for i, (name, *_) in enumerate(sheets, 1)
+    )
+    rels = "".join(
+        f'<Relationship Id="rId{i}" Type="{ns}/worksheet" Target="worksheets/sheet{i}.xml"/>'
+        for i in range(1, len(sheets) + 1)
+    )
+    overrides = "".join(
+        f'<Override PartName="/xl/worksheets/sheet{i}.xml" '
+        'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+        for i in range(1, len(sheets) + 1)
+    )
+    fills = "".join(
+        f'<fill><patternFill patternType="solid"><fgColor rgb="{rgb}"/></patternFill></fill>'
+        for rgb in ("FFFADBD8", "FFFCF3CF", "FFD5F5E3", "FFEAECEE")
+    )
+    # cellXfs: 0 plain, 1 bold header, then one per fill (index = _XLSX_FILLS value).
+    xfs = '<xf numFmtId="0" fontId="0" fillId="0" borderId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" applyFont="1"/>'
+    xfs += "".join(f'<xf numFmtId="0" fontId="0" fillId="{f}" borderId="0" applyFill="1"/>' for f in range(2, 6))
+    parts = {
+        "[Content_Types].xml": (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+            '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+            '<Default Extension="xml" ContentType="application/xml"/>'
+            '<Override PartName="/xl/workbook.xml" '
+            'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+            '<Override PartName="/xl/styles.xml" '
+            'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
+            f"{overrides}</Types>"
+        ),
+        "_rels/.rels": (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            f'<Relationship Id="rId1" Type="{ns}/officeDocument" Target="xl/workbook.xml"/></Relationships>'
+        ),
+        "xl/workbook.xml": (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+            f'xmlns:r="{ns}"><sheets>{names}</sheets></workbook>'
+        ),
+        "xl/_rels/workbook.xml.rels": (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            f'{rels}<Relationship Id="rId{len(sheets) + 1}" Type="{ns}/styles" Target="styles.xml"/></Relationships>'
+        ),
+        "xl/styles.xml": (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+            '<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font>'
+            '<font><b/><sz val="11"/><name val="Calibri"/></font></fonts>'
+            '<fills count="6"><fill><patternFill patternType="none"/></fill>'
+            f'<fill><patternFill patternType="gray125"/></fill>{fills}</fills>'
+            '<borders count="1"><border/></borders>'
+            '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
+            f'<cellXfs count="6">{xfs}</cellXfs>'
+            '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>'
+        ),
+    }
+    for i, (_, header, rows, row_fills) in enumerate(sheets, 1):
+        parts[f"xl/worksheets/sheet{i}.xml"] = _sheet_xml(header, rows, row_fills)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for name, content in parts.items():
+            z.writestr(name, content)
+    return buf.getvalue()
+
+
+_STATUS_FILL = {"patch available": "amber", "newer available": "amber", "up to date": "green", "unknown": "grey",
+                "floating tag": "grey", "digest only": "grey"}
+
+
+def inventory_xlsx(rows: list[dict], findings: dict[str, dict], decision: dict) -> bytes:
+    images = [
+        [r["image"], r["tag"], r["status"], r["patch"], r["latest"], r["critical"], r["high"], r["pinned"],
+         ", ".join(r["namespaces"]), ", ".join(r["workloads"])]
+        for r in rows
+    ]
+    image_fills = ["red" if r["critical"] else _STATUS_FILL[r["status"]] for r in rows]
+    vulns, vuln_fills = [], []
+    for ref, f in sorted(findings.items()):
+        for cve, v in sorted(f["cves"].items()):
+            is_new = f"{f['registry']}/{f['repository']}|{cve}" in decision["new"]
+            vulns.append([ref, cve, v["severity"], v["score"] if v["score"] is not None else "", v["package"],
+                          v["installed"], v["fixed"], "yes" if is_new else "", v["title"], _advisory_url(cve),
+                          ", ".join(sorted(f["workloads"]))])
+            vuln_fills.append("red" if is_new else None)
+    return xlsx_bytes([
+        ("Images", ["Image", "Tag", "Status", "Newer patch", "Latest", "Fixable critical", "Fixable high",
+                    "Pinned by digest", "Namespaces", "Workloads"], images, image_fills),
+        ("Findings", ["Image", "Vulnerability", "Severity", "Score", "Package", "Installed", "Fixed in", "New",
+                      "Title", "Advisory", "Workloads"], vulns, vuln_fills),
+    ])
+
+
+def _advisory_url(vuln_id: str) -> str:
+    if vuln_id.startswith("GHSA-"):
+        return f"https://github.com/advisories/{vuln_id}"
+    if vuln_id.startswith("CVE-"):
+        return f"https://nvd.nist.gov/vuln/detail/{vuln_id}"
+    return ""
+
+
+def _ordered_cves(f: dict, new: set[str]) -> list[tuple[str, dict, bool]]:
+    repo = f"{f['registry']}/{f['repository']}"
+    items = [(cve, v, f"{repo}|{cve}" in new) for cve, v in f["cves"].items()]
+    return sorted(items, key=lambda x: (not x[2], -(x[1]["score"] or 0), x[0]))
+
+
+def _ordered_images(findings: dict[str, dict], newer: dict[str, str], decision: dict) -> list[str]:
+    def rank(ref: str):
+        f = findings[ref]
+        has_new = any(is_new for *_, is_new in _ordered_cves(f, decision["new"]))
+        return (not newer.get(ref), not has_new, ref)
+
+    return sorted(findings, key=rank)
+
+
+def security_system_prompt() -> str:
+    return _with_runbook(SECURITY_SYSTEM_PROMPT.format(language=DIAGNOSIS_LANGUAGE))
+
+
+def _security_final_instruction() -> str:
+    return (
+        f"Write the security digest in the required format. Write the entire answer in {DIAGNOSIS_LANGUAGE}, "
+        "section headings included; keep image names, tags and vulnerability IDs as they are."
+    )
+
+
+def security_prompt(findings: dict[str, dict], newer: dict[str, str], decision: dict, system_chars: int = 0) -> str:
+    budget = max(PROMPT_CHAR_BUDGET - system_chars, 1000)
+    tail = "\n" + _security_final_instruction()
+    head = f"{len(findings)} image(s) with fixable vulnerabilities ({', '.join(sorted(SECURITY_SEVERITIES))}).\n"
+    blocks = []
+    for ref in _ordered_images(findings, newer, decision):
+        f = findings[ref]
+        mark = " [UPDATE AVAILABLE]" if ref in decision["new_tags"] else ""
+        lines = [f"### Image {ref}{mark} — newer tag: {newer.get(ref) or 'none found'}"]
+        lines.append("Runs in: " + _some(f["workloads"], 5))
+        cves = _ordered_cves(f, decision["new"])
+        for cve, v, is_new in cves[:MAX_CVES_PER_IMAGE]:
+            score = f", score {v['score']}" if v["score"] is not None else ""
+            lines.append(
+                f"  {'[NEW] ' if is_new else ''}{cve} {v['package']} {v['installed']} -> {v['fixed']}{score}: {v['title'][:160]}"
+            )
+        if len(cves) > MAX_CVES_PER_IMAGE:
+            lines.append(f"  ({len(cves) - MAX_CVES_PER_IMAGE} more)")
+        blocks.append("\n".join(lines))
+    if decision["fixed"]:
+        blocks.append("### Gone since the last digest\n" + "\n".join(f"- {p.replace('|', ' ')}" for p in decision["fixed"]))
+    prompt = head + "\n\n".join(blocks)
+    if len(prompt) + len(tail) > budget:
+        prompt = prompt[: budget - len(tail) - 6] + "\n(cut)"
+    return redact(prompt) + tail
+
+
+def _summary_line(findings: dict, newer: dict, decision: dict, rows: list[dict]) -> str:
+    updates = sum(1 for ref in findings if newer.get(ref))
+    return (
+        f"{len(rows)} images running, {len(findings)} with fixable {'/'.join(sorted(SECURITY_SEVERITIES)).lower()} "
+        f"vulnerabilities, {updates} with a newer tag; {len(decision['new'])} new, {len(decision['fixed'])} fixed "
+        "since the last digest."
+    )
+
+
+def digest_text(advice: str, findings: dict, newer: dict, decision: dict, rows: list[dict]) -> str:
+    out = [_summary_line(findings, newer, decision, rows), "", f"--- Advice by the local LLM ({LLM_MODEL}) ---", advice, ""]
+    for ref in _ordered_images(findings, newer, decision):
+        f = findings[ref]
+        out.append(f"=== {ref} — newer tag: {newer.get(ref) or 'none found'} ===")
+        out.append("Runs in: " + ", ".join(sorted(f["workloads"])))
+        for cve, v, is_new in _ordered_cves(f, decision["new"]):
+            out.append(f"  {'[NEW] ' if is_new else ''}{cve} {v['package']} {v['installed']} -> {v['fixed']}: {v['title']}")
+        out.append("")
+    if decision["fixed"]:
+        out.append("--- Fixed since the last digest ---")
+        out += [f"  {p.replace('|', ' ')}" for p in decision["fixed"]]
+    out.append("\nInventory of every running image: attached .xlsx.")
+    return "\n".join(out)
+
+
+_CARD = "border:1px solid #e3e6ea;border-radius:10px;padding:14px 16px;margin:0 0 14px;background:#ffffff"
+
+
+def _badge(text: str, bg: str, fg: str = "#ffffff") -> str:
+    return (
+        f'<span style="display:inline-block;padding:1px 7px;border-radius:9px;font-size:11px;font-weight:600;'
+        f'background:{bg};color:{fg};margin-right:6px">{html.escape(text)}</span>'
+    )
+
+
+def digest_html(advice: str, findings: dict, newer: dict, decision: dict, rows: list[dict], now: int) -> str:
+    e = html.escape
+    updates = sum(1 for ref in findings if newer.get(ref))
+    stats = [
+        (len(rows), "images running", "#2c3e50"),
+        (len(findings), "with " + "/".join(sorted(SECURITY_SEVERITIES)).lower(), "#c0392b"),
+        (updates, "can be updated", "#d68910"),
+        (len(decision["new"]), "new findings", "#8e44ad"),
+        (len(decision["fixed"]), "fixed", "#1e8449"),
+    ]
+    tiles = "".join(
+        f'<td style="padding:4px"><div style="{_CARD};margin:0;text-align:center;min-width:92px">'
+        f'<div style="font-size:26px;font-weight:700;color:{color}">{n}</div>'
+        f'<div style="font-size:12px;color:#5d6d7e">{e(label)}</div></div></td>'
+        for n, label, color in stats
+    )
+    when = datetime.fromtimestamp(now, timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    title = "Weekly reminder: updates waiting" if decision["reason"] == "reminder" else "Security digest"
+    parts = [
+        '<div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1c2833;'
+        'background:#f4f6f8;padding:20px;max-width:900px">',
+        f'<div style="font-size:22px;font-weight:700;margin-bottom:2px">{e(title)}</div>',
+        f'<div style="font-size:13px;color:#5d6d7e;margin-bottom:14px">{e(when)}</div>',
+        f'<table style="border-collapse:collapse;margin:0 0 14px"><tr>{tiles}</tr></table>',
+        f'<div style="{_CARD};border-left:4px solid #2e86c1"><div style="font-size:15px;font-weight:700;'
+        f'margin-bottom:8px">Advice <span style="font-weight:400;color:#85929e;font-size:12px">({e(LLM_MODEL)})</span></div>'
+        f'<div style="white-space:pre-wrap;font-size:14px;line-height:1.5">{e(advice)}</div></div>',
+    ]
+    for ref in _ordered_images(findings, newer, decision):
+        f = findings[ref]
+        badges = ""
+        if ref in decision["new_tags"]:
+            badges += _badge("UPDATE AVAILABLE", "#d68910")
+        if newer.get(ref):
+            update = f'newer tag <b style="font-family:monospace">{e(newer[ref])}</b>'
+        else:
+            update = '<span style="color:#85929e">no newer tag yet</span>'
+        cve_rows = []
+        for cve, v, is_new in _ordered_cves(f, decision["new"]):
+            link = _advisory_url(cve)
+            name = f'<a href="{e(link)}" style="color:#2e86c1;text-decoration:none">{e(cve)}</a>' if link else e(cve)
+            score = "" if v["score"] is None else f"{v['score']:.1f}" if isinstance(v["score"], (int, float)) else e(str(v["score"]))
+            cve_rows.append(
+                '<tr style="border-top:1px solid #eef0f2">'
+                f'<td style="padding:6px 8px;white-space:nowrap">{_badge("NEW", "#8e44ad") if is_new else ""}{name}</td>'
+                f'<td style="padding:6px 8px;font-family:monospace;font-size:12px">{e(v["package"])} '
+                f'{e(v["installed"])} &rarr; <b>{e(v["fixed"])}</b></td>'
+                f'<td style="padding:6px 8px;text-align:right;color:#c0392b;font-weight:600">{score}</td>'
+                f'<td style="padding:6px 8px;font-size:12px;color:#34495e">{e(v["title"][:200])}</td></tr>'
+            )
+        parts.append(
+            f'<div style="{_CARD}">'
+            f'<div style="font-family:monospace;font-size:14px;font-weight:700;word-break:break-all">{badges}{e(ref)}</div>'
+            f'<div style="font-size:13px;margin:4px 0 2px">{update}</div>'
+            f'<div style="font-size:12px;color:#5d6d7e;margin-bottom:8px">runs in {e(_some(f["workloads"]))}</div>'
+            f'<table style="border-collapse:collapse;width:100%;font-size:13px">{"".join(cve_rows)}</table></div>'
+        )
+    if decision["fixed"]:
+        items = "".join(f'<li style="font-family:monospace;font-size:12px">{e(p.replace("|", "  "))}</li>' for p in decision["fixed"])
+        parts.append(
+            f'<div style="{_CARD};border-left:4px solid #1e8449"><div style="font-size:15px;font-weight:700">'
+            f'Fixed since the last digest</div><ul style="margin:8px 0 0;padding-left:20px">{items}</ul></div>'
+        )
+    parts.append(
+        '<div style="font-size:12px;color:#85929e">The attached workbook lists every running image (Images) and every '
+        "finding (Findings). A newer tag is not proof of a fix: check its release notes or scan it first.</div></div>"
+    )
+    return "".join(parts)
+
+
+def fetch_vulnerability_reports() -> list[dict]:
+    return _k8s_get("/apis/aquasecurity.github.io/v1alpha1/vulnerabilityreports").get("items", [])
+
+
+def fetch_pods() -> list[dict]:
+    return _k8s_get("/api/v1/pods").get("items", [])
+
+
+def _state_path() -> str:
+    return f"/api/v1/namespaces/{POD_NAMESPACE}/configmaps/{SECURITY_STATE_CONFIGMAP}"
+
+
+def read_state() -> dict:
+    raw = (_k8s_get(_state_path()).get("data") or {}).get("state.json", "")
+    return json.loads(raw) if raw else {}
+
+
+def write_state(state: dict) -> None:
+    with open(K8S_TOKEN_FILE) as f:
+        token = f.read().strip()
+    body = json.dumps({"data": {"state.json": json.dumps(state)}}).encode()
+    req = urllib.request.Request(
+        f"{K8S_API_URL}{_state_path()}",
+        data=body,
+        method="PATCH",
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/merge-patch+json"},
+    )
+    with urllib.request.urlopen(req, timeout=10, context=ssl.create_default_context(cafile=K8S_CA_FILE)):
+        pass
+
+
+def run_security_digest(now: int | None = None) -> None:
+    now = int(now if now is not None else time.time())
+    _tags_cache.clear()
+    try:
+        reports, pods, state = fetch_vulnerability_reports(), fetch_pods(), read_state()
+    except Exception as e:  # noqa: BLE001 - try again next interval; SecurityScanNoData covers a dead scanner
+        print(f"security digest: could not read reports, pods or state: {e}", file=sys.stderr)
+        return
+    findings = collect_findings(reports, active_replicasets(pods))
+    newer = {}
+    for ref, f in findings.items():
+        versions = lookup_versions(f["registry"], f["repository"], f["tag"]) if f["tag"] else ("", "")
+        # A registry that didn't answer keeps what it said last time, so it
+        # can't make a known tag look new again.
+        newer[ref] = format_newer(*versions) if versions is not None else state.get("newer", {}).get(ref, "")
+    decision = digest_decision(findings, newer, state, now)
+    if decision is None:
+        return
+
+    system = security_system_prompt()
+    prompt = security_prompt(findings, newer, decision, system_chars=len(system))
+    try:
+        with _WORKERS:
+            advice = ask_llm(system, prompt)
+        if not advice.strip():
+            raise ValueError("empty answer")
+    except Exception as e:  # noqa: BLE001 - the digest goes out without advice
+        print(f"security digest: llm request failed: {e}", file=sys.stderr)
+        advice = f"(LLM advice unavailable: {e})"
+    advice = redact(advice)
+
+    rows = build_inventory(pods, reports)
+    try:
+        attachments = (("image-inventory.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        inventory_xlsx(rows, findings, decision)),)
+    except Exception as e:  # noqa: BLE001 - the digest is worth more than its attachment
+        print(f"security digest: inventory failed: {e}", file=sys.stderr)
+        attachments = ()
+    label = "reminder" if decision["reason"] == "reminder" else f"{len(decision['new'])} new"
+    subject = redact(f"[Security digest] {len(findings)} images with fixable findings ({label})")
+    text = redact(digest_text(advice, findings, newer, decision, rows))
+    page = redact(digest_html(advice, findings, newer, decision, rows, now))
+    if not send_email_with_retries("security digest", subject, text, html_body=page, attachments=attachments):
+        return
+    try:
+        write_state(new_state(findings, newer, now))
+    except Exception as e:  # noqa: BLE001 - the next run resends; logged so a loop is visible
+        print(f"security digest: could not save state: {e}", file=sys.stderr)
+    try:
+        push_notification("Security digest", advice, "critical" if decision["new"] else "warning")
+    except Exception as e:  # noqa: BLE001 - the push is a second channel
+        print(f"security digest: push failed: {e}", file=sys.stderr)
+
+
+def security_digest_loop() -> None:
+    while True:
+        try:
+            run_security_digest()
+        except Exception as e:  # noqa: BLE001 - one bad run must not end the loop
+            print(f"security digest failed: {e}", file=sys.stderr)
+        time.sleep(SECURITY_DIGEST_INTERVAL)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -828,6 +1600,8 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    if SECURITY_DIGEST_INTERVAL > 0 and SECURITY_STATE_CONFIGMAP and POD_NAMESPACE:
+        threading.Thread(target=security_digest_loop, daemon=True).start()
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     print(f"alert-llm-enricher listening on :{PORT}", file=sys.stderr)
     server.serve_forever()

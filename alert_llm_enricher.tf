@@ -37,6 +37,16 @@ locals {
     )
   )
 
+  # Security digest: a loop inside the same pod (scripts/alert-llm-enricher.py,
+  # run_security_digest) that reads trivy-operator's VulnerabilityReports.
+  alert_llm_security_digest = (
+    length(local.alert_llm_enrichment_instances) > 0
+    && local.platform.services.security_scan.enabled
+    && local.alert_llm_enrichment.security_digest_interval_hours > 0
+    ? toset(["enabled"]) : toset([])
+  )
+  alert_llm_security_state_name = "${local.alert_llm_enricher_name}-security-state"
+
   # The push topic URL works like a password (anyone holding it can read and
   # post), so it reaches the pod through a Secret, not a plain env value.
   alert_llm_enricher_push = (
@@ -109,6 +119,14 @@ resource "kubernetes_cluster_role_v1" "alert_llm_enricher" {
     resources  = ["nodes"]
     verbs      = ["get"]
   }
+  dynamic "rule" {
+    for_each = local.alert_llm_security_digest
+    content {
+      api_groups = ["aquasecurity.github.io"]
+      resources  = ["vulnerabilityreports"]
+      verbs      = ["list"]
+    }
+  }
 }
 
 resource "kubernetes_cluster_role_binding_v1" "alert_llm_enricher" {
@@ -121,6 +139,64 @@ resource "kubernetes_cluster_role_binding_v1" "alert_llm_enricher" {
     api_group = "rbac.authorization.k8s.io"
     kind      = "ClusterRole"
     name      = kubernetes_cluster_role_v1.alert_llm_enricher["enabled"].metadata[0].name
+  }
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account_v1.alert_llm_enricher["enabled"].metadata[0].name
+    namespace = local.platform.services.logging.namespace
+  }
+}
+
+# ── Security digest state ───────────────────────────────────────────────────
+# What the last digest reported, so a pod restart doesn't resend it and only
+# changes trigger the next one. The enricher owns the content (it patches
+# `state.json` after each digest), hence ignore_changes on data; the Role lets
+# it read and patch this one ConfigMap and nothing else.
+
+resource "kubernetes_config_map_v1" "alert_llm_security_state" {
+  for_each = local.alert_llm_security_digest
+
+  metadata {
+    name      = local.alert_llm_security_state_name
+    namespace = local.platform.services.logging.namespace
+    labels    = merge(module.platform_label.tags, { "app.kubernetes.io/component" = "alert-llm-enricher" })
+  }
+
+  data = {}
+
+  lifecycle {
+    ignore_changes = [data]
+  }
+}
+
+resource "kubernetes_role_v1" "alert_llm_security_state" {
+  for_each = local.alert_llm_security_digest
+
+  metadata {
+    name      = local.alert_llm_security_state_name
+    namespace = local.platform.services.logging.namespace
+    labels    = module.platform_label.tags
+  }
+  rule {
+    api_groups     = [""]
+    resources      = ["configmaps"]
+    resource_names = [kubernetes_config_map_v1.alert_llm_security_state["enabled"].metadata[0].name]
+    verbs          = ["get", "patch"]
+  }
+}
+
+resource "kubernetes_role_binding_v1" "alert_llm_security_state" {
+  for_each = local.alert_llm_security_digest
+
+  metadata {
+    name      = local.alert_llm_security_state_name
+    namespace = local.platform.services.logging.namespace
+    labels    = module.platform_label.tags
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "Role"
+    name      = kubernetes_role_v1.alert_llm_security_state["enabled"].metadata[0].name
   }
   subject {
     kind      = "ServiceAccount"
@@ -241,6 +317,27 @@ resource "kubernetes_deployment_v1" "alert_llm_enricher" {
           env {
             name  = "NODE_POOL_LABEL"
             value = local.platform.node_pool_label
+          }
+          # 0 = the digest loop doesn't start.
+          env {
+            name  = "SECURITY_DIGEST_INTERVAL_SECONDS"
+            value = length(local.alert_llm_security_digest) > 0 ? tostring(local.alert_llm_enrichment.security_digest_interval_hours * 3600) : "0"
+          }
+          env {
+            name  = "SECURITY_DIGEST_REMINDER_SECONDS"
+            value = tostring(local.alert_llm_enrichment.security_digest_reminder_days * 86400)
+          }
+          env {
+            name  = "SECURITY_DIGEST_SEVERITIES"
+            value = join(",", local.platform.services.security_scan.alert_severities)
+          }
+          env {
+            name  = "SECURITY_STATE_CONFIGMAP"
+            value = local.alert_llm_security_state_name
+          }
+          env {
+            name  = "POD_NAMESPACE"
+            value = local.platform.services.logging.namespace
           }
           dynamic "env" {
             for_each = kubernetes_secret_v1.alert_llm_enricher_push

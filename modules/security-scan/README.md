@@ -20,7 +20,9 @@ Continuous CVE scanning of platform-system container images with
   `alert_severities`, and `SecurityScanNoData` when the scanner exports
   nothing for 6h — so silence can't also mean "broken". Alerts carry
   `namespace=<this namespace>` plus `alert_labels`, so one Alertmanager
-  route delivers them.
+  route delivers them. `image_alert_enabled = false` drops
+  `ImageVulnerabilities` when something else reports the findings (the
+  no-data rule stays).
 
 Scans run as clients of the chart's built-in trivy server, which keeps
 the vulnerability DB on a PVC (`builtin_trivy_server`).
