@@ -99,6 +99,12 @@ variable "alerts_enabled" {
   }
 }
 
+variable "image_alert_enabled" {
+  description = "Whether the PrometheusRule includes `ImageVulnerabilities` (one alert per image with fixable findings). Turn off when another consumer reports the findings, e.g. a digest that reads the VulnerabilityReports; `SecurityScanNoData` stays either way."
+  type        = bool
+  default     = true
+}
+
 variable "alert_severities" {
   description = "Vulnerability severities (as in the `trivy_image_vulnerabilities` `severity` label) that raise an alert."
   type        = list(string)

@@ -18,7 +18,10 @@ module "security_scan" {
   service_monitor_enabled      = local.platform.services.security_scan.service_monitor_enabled
   alerts_enabled               = local.platform.services.security_scan.alerts_enabled
   alert_severities             = local.platform.services.security_scan.alert_severities
-  grafana_dashboard_enabled    = local.platform.services.security_scan.service_monitor_enabled
+  # The enricher's security digest reports the same findings with context
+  # and only when something changed (alert_llm_enricher.tf).
+  image_alert_enabled       = length(local.alert_llm_security_digest) == 0
+  grafana_dashboard_enabled = local.platform.services.security_scan.service_monitor_enabled
   # Metric alerts reach email through alertmanager_metric_email.tf, which
   # matches this label (list the scanner namespace there).
   alert_labels = { alert_source = "metric" }

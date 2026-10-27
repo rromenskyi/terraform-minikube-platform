@@ -668,6 +668,16 @@ locals {
         # From address and EHLO FQDN for the enriched alert mail.
         smtp_from  = ""
         smtp_hello = ""
+        # Security digest (needs services.security_scan): every this many
+        # hours, read trivy-operator's VulnerabilityReports and the registries'
+        # tags; when a finding or a newer tag appeared since the last digest,
+        # mail LLM advice with the inventory of every running image (.xlsx)
+        # and push the advice. Replaces the per-image ImageVulnerabilities
+        # alert. 0 = off.
+        security_digest_interval_hours = 0
+        # Remind of images that could be updated but weren't after this many
+        # days without a digest.
+        security_digest_reminder_days = 7
       }
     }
   }
