@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- Zitadel and its login UI v4.19.5. The login route also refuses Next.js's image optimizer path (`/ui/v2/login/_next/image`), which the login UI does not use and which had unauthenticated RCE bugs.
+- Argo CD chart 10.11.6 (v3.5.6), fixing CVE-2026-77459 (AppProject restrictions bypassed by PreDelete/PostDelete hooks).
+
 ### Changed
 - Alert enricher: the answer, headings included, is asked for in `language`, with commands, resource names and quoted log text kept as they are (the instruction is now also the last line of the prompt, kept even when the prompt is cut; models drifted back to English mid-answer); `apply`, `run`, `debug` and `cp` join the forbidden suggestions; temperature 0.2 for both backends.
 - Alert enricher diagnoses a whole Alertmanager notification at once (one LLM call, one e-mail per group instead of one per alert). The model now also gets: the log lines around each match (VictoriaLogs `stream_context`, repeats folded with counts); the pod's owner, node state and warning events, and the owner's current pods when the alerting pod is gone; every other alert firing in the cluster (recent ones in full, long-standing ones counted); and each rule's new `description`. A fixed system prompt allows only read-only checks and asks for a set answer format. Secrets of recognised shapes (password/token/key fields and flags, Bearer, URL credentials, JWTs, private keys, known token prefixes, long random tokens, the push topic) are masked in the log text and in the answer before the e-mail and the push leave the cluster — best effort, not a guarantee. The e-mail hand-off is retried, and a failed e-mail no longer suppresses the push. New settings under `services.alert_llm_enrichment`: `runbook_file` (an operator runbook appended to the system prompt), `push` (when `monitoring.alert_push_url` is set, the diagnosis also goes there as an ntfy push; default on), `max_tokens`, `prompt_char_budget` and `alertmanager_url`. The enricher's ClusterRole gains `get` on nodes.

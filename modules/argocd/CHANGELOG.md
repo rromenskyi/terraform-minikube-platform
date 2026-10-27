@@ -7,6 +7,9 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Security
+- Chart 10.11.6 (Argo CD v3.5.6). Fixes CVE-2026-77459: PreDelete/PostDelete hooks bypassing AppProject restrictions.
+
 ### Added
 - `preferred_node_affinity` (label => values): soft node preference (`preferredDuringScheduling`, weight 100).
 

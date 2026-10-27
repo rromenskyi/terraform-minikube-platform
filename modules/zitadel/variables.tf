@@ -19,13 +19,13 @@ variable "namespace" {
 variable "image" {
   description = "Zitadel main container image. v4 dropped the embedded Angular login form — the login UI now lives in the separate Next.js sidecar (`login_image`). Together with the FirstInstance machine-user PAT we bootstrap to disk, the chicken-and-egg of provisioning login-v2's service account vanishes."
   type        = string
-  default     = "ghcr.io/zitadel/zitadel:v4.19.3"
+  default     = "ghcr.io/zitadel/zitadel:v4.19.5"
 }
 
 variable "login_image" {
   description = "Zitadel Login UI v2 sidecar image. Pinned to the last tagged release — the rolling `:main` tag has been observed to ship a SPA race that double-submits `createCallback` and trips `Auth Request has already been handled (COMMAND-Sx208nt)` on every OIDC flow, breaking forward-auth-style gates. The wait-for-token-file behaviour we used to need from `:main` is now done in this module's own container `command` override, so the tagged release is fine."
   type        = string
-  default     = "ghcr.io/zitadel/zitadel-login:v4.19.3"
+  default     = "ghcr.io/zitadel/zitadel-login:v4.19.5"
 }
 
 variable "pat_broker_image" {
