@@ -156,6 +156,7 @@ the project itself follows [Semantic Versioning](https://semver.org/).
   domains are also emitted from root using the same iteration.
 
 ### Changed
+- Stalwart v0.16.27; helper containers on alpine 3.24. Since 0.16.26 the default (glibc) image needs an x86-64-v2 CPU and refuses to start on older CPUs or VMs with a generic CPU model; set `image` to the `-alpine` tag for such nodes.
 - File layout split into `main.tf` / `variables.tf` / `outputs.tf` per AGENT.md
   module conventions. Pure file reorganisation — no resource, input, output, or
   default value changed; `terraform plan` is identical before and after.

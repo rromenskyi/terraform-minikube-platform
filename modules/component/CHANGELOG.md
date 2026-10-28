@@ -40,6 +40,7 @@ the project itself follows [Semantic Versioning](https://semver.org/).
   either `cluster_role_rules` non-empty OR WIF opt-in.
 
 ### Changed
+- git-sync default image v4.4.3.
 - File layout split into `main.tf` / `variables.tf` / `outputs.tf` per AGENT.md
   module conventions. Pure file reorganisation — no resource, input, output, or
   default value changed; `terraform plan` is identical before and after.

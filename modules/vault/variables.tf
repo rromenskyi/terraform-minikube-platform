@@ -25,7 +25,7 @@ variable "hostname" {
 variable "image" {
   description = "Vault container image. Pin a specific tag — `:latest` would silently pull schema changes between restarts. `hashicorp/vault` is the upstream repo (community edition)."
   type        = string
-  default     = "hashicorp/vault:2.1.1"
+  default     = "hashicorp/vault:2.1.2"
 }
 
 variable "volume_base_path" {
@@ -159,7 +159,7 @@ variable "vso_enabled" {
 variable "vso_chart_version" {
   description = "Chart version for hashicorp/vault-secrets-operator. Pinned so apply-time is deterministic; bump deliberately."
   type        = string
-  default     = "1.6.0"
+  default     = "1.6.2"
 }
 
 variable "vso_namespace" {
@@ -200,7 +200,7 @@ variable "snapshot_backup" {
 variable "vso_kube_rbac_proxy_image" {
   description = "kube-rbac-proxy image for the VSO controller's metrics endpoint (`repo:tag`, `@sha256:` digest allowed). The chart's default (v0.18.1) carries critical Go stdlib / grpc CVEs."
   type        = string
-  default     = "quay.io/brancz/kube-rbac-proxy:v0.23.0@sha256:a6075902738eaf1780390561ea998a53a056ef1d2b312bcbf0e2e81fec084b3c"
+  default     = "quay.io/brancz/kube-rbac-proxy:v0.23.1@sha256:c280684dd23793fb2f287d1f4efc84b7800b3e01205d770b98694827bfe514cb"
 }
 
 variable "init_image" {

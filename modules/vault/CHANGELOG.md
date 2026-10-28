@@ -8,6 +8,7 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- Vault 2.1.2, vault-secrets-operator chart 1.6.2, kube-rbac-proxy v0.23.1.
 - vault-config-operator chart v1.0.5; `enableMonitoring` set explicitly, since the chart's default became false.
 
 ### Added

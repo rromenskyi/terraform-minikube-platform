@@ -1,4 +1,4 @@
-image: ghcr.io/open-webui/open-webui:v0.11.0
+image: ghcr.io/open-webui/open-webui:v0.11.4
 port: 8080
 replicas: 1
 

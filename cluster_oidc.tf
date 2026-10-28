@@ -217,7 +217,7 @@ resource "kubernetes_deployment_v1" "cluster_oidc_proxy" {
 
         container {
           name              = "nginx"
-          image             = "nginx:1.27-alpine"
+          image             = "nginx:1.31-alpine"
           image_pull_policy = "IfNotPresent"
 
           port {

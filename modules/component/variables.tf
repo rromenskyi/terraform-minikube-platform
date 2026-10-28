@@ -79,7 +79,7 @@ variable "git_sync" {
     period_seconds      = optional(number, 60)
     ssh_key_secret_name = string
     mount               = string
-    image               = optional(string, "registry.k8s.io/git-sync/git-sync:v4.4.0")
+    image               = optional(string, "registry.k8s.io/git-sync/git-sync:v4.4.3")
   })
   default = null
 }

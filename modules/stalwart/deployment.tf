@@ -126,7 +126,7 @@ resource "kubernetes_deployment_v1" "stalwart" {
         #    wait then starts anyway, so a down Zitadel never blocks SMTP.
         init_container {
           name  = "bootstrap"
-          image = "alpine:3.22"
+          image = "alpine:3.24"
 
           security_context {
             run_as_user = 0
@@ -231,7 +231,7 @@ resource "kubernetes_deployment_v1" "stalwart" {
           for_each = local.oidc_set
           content {
             name  = "wait-zitadel"
-            image = "alpine:3.22"
+            image = "alpine:3.24"
 
             security_context {
               run_as_user = 0
