@@ -270,7 +270,7 @@ resource "kubernetes_deployment_v1" "alert_llm_enricher" {
 
         container {
           name              = "enricher"
-          image             = "python:3.13-alpine"
+          image             = "python:3.14-alpine"
           image_pull_policy = "IfNotPresent"
           command           = ["python3", "/app/enricher.py"]
 

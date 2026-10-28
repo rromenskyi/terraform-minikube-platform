@@ -15,7 +15,7 @@ locals {
   speaches           = local.platform.services.speaches
   speaches_instances = local.speaches.enabled ? toset(["enabled"]) : toset([])
   # Shell image for the ownership fix and the voice preload Job.
-  speaches_busybox_image = "busybox:1.36@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662"
+  speaches_busybox_image = "busybox:1.38@sha256:fd7dc98638c8e305f4dc34e979f1c0fdfdcaeb0fbf8fcff77ae834b6da3d7e6e"
 
   speaches_python_hooks_dir = "/opt/speaches-hooks"
   speaches_sitecustomize    = file("${path.module}/scripts/speaches/sitecustomize.py")

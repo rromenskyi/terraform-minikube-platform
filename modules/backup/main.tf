@@ -705,7 +705,7 @@ resource "kubernetes_cron_job_v1" "vault" {
             # init container and uploaded by a restic container.
             init_container {
               name  = "snapshot"
-              image = "hashicorp/vault:2.1.1"
+              image = "hashicorp/vault:2.1.2"
 
               env {
                 name  = "VAULT_ADDR"

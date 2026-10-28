@@ -52,6 +52,7 @@ the project itself follows [Semantic Versioning](https://semver.org/).
   used to upload an empty archive and report success.
 
 ### Changed
+- Vault backup image hashicorp/vault:2.1.2.
 - `image_alpine` default `alpine:3.22` -> `alpine:3.24`; the Postgres dump
   installs `postgresql18-client` (a 16 client cannot dump an 18 server).
 - File layout split into `main.tf` / `variables.tf` / `outputs.tf` per AGENT.md

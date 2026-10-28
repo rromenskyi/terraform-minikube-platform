@@ -19,6 +19,7 @@ the project itself follows [Semantic Versioning](https://semver.org/).
   (offboarded projects) are deleted (`default` excepted).
 
 ### Changed
+- ACL keeper image redis 8.10.3-alpine.
 - Sentinel mode rejects `storage_class`: it runs as a cache with AOF/RDB
   off, so the PVC only suggested durability it doesn't have.
 

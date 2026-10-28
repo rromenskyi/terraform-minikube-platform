@@ -65,7 +65,7 @@ resource "terraform_data" "kubeconfig_checks" {
 # Layer 2: Platform add-ons (Traefik, cert-manager, monitoring, namespaces).
 # -----------------------------------------------------------------------------
 module "addons" {
-  source = "git::https://github.com/rromenskyi/terraform-k8s-addons.git?ref=v2.14.0"
+  source = "git::https://github.com/rromenskyi/terraform-k8s-addons.git?ref=v2.14.1"
 
   kubeconfig_path      = local.kubeconfig_path
   cluster_name         = var.cluster_name
