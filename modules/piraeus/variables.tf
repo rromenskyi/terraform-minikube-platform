@@ -144,8 +144,11 @@ variable "storage_classes" {
         (CSI parameters `property.linstor.csi.linbit.com/<key>`), e.g.
         { "DrbdOptions/Net/protocol" = "A" } for asynchronous replication of
         volumes whose last writes may be lost. Like x_replicas_on_different
-        they reach the group when a volume is created; changing them
-        replaces the class.
+        they reach the group when a volume is created, and only as additions:
+        the CSI driver refuses to provision when the group already holds a
+        different value, and keeps a property removed from the class. Change
+        or remove one on the group itself (README). Changing them replaces
+        the class.
   EOT
   type = list(object({
     name                    = string

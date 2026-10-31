@@ -106,9 +106,13 @@ e.g. asynchronous DRBD replication for caches whose last writes may be lost:
     storage_classes:
       - { name: ..., resource_group: cache, properties: { DrbdOptions/Net/protocol: A } }
 
-They too reach the group when a volume is created; for an existing group set
-them once with `linstor rg set-property <group> <key> <value>`. LINSTOR
-applies a group property to the group's existing resources.
+They too reach the group when a volume is created, and only as additions:
+the CSI driver sets a missing property but refuses to provision when the
+group holds a different value, and never removes one. For an existing group,
+and to change or remove a value, use `linstor rg set-property <group> <key>
+[<value>]` (no value removes it), then align the class. Existing resources of
+the group pick the property up unless they set it themselves (a resource
+definition property wins over its group's).
 
 Removing a node from the list deletes its Satellite: first move the pods
 that use Piraeus volumes there and, if it holds replicas, evacuate them
