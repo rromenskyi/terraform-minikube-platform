@@ -184,7 +184,7 @@ locals {
       samba = {
         enabled          = false
         namespace        = "nas"
-        image            = "ghcr.io/servercontainers/samba:a3.24.2-s4.23.8-r0"
+        image            = "ghcr.io/servercontainers/samba:a3.24.3-s4.23.8-r0"
         storage_class    = ""
         size             = "100Gi"
         node_hostnames   = []
@@ -312,7 +312,7 @@ locals {
       }
       security_scan = {
         enabled                      = false
-        trivy_operator_chart_version = "0.37.0"
+        trivy_operator_chart_version = "0.38.1"
         node_selector                = {}
         extra_target_namespaces      = []
         service_monitor_enabled      = false

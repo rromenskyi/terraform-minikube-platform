@@ -19,7 +19,7 @@ variable "namespace" {
 variable "chart_version" {
   description = "Version of the upstream `prometheus-smartctl-exporter` Helm chart (https://github.com/prometheus-community/helm-charts). Chart repo: https://prometheus-community.github.io/helm-charts ."
   type        = string
-  default     = "0.17.1"
+  default     = "0.19.0"
 }
 
 variable "image_repository" {

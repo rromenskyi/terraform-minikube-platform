@@ -15,6 +15,7 @@ the project itself follows [Semantic Versioning](https://semver.org/).
   on the first start (modules/volume-seed).
 
 ### Changed
+- Seafile database MySQL 8.4.13.
 - Default image `seafileltd/seafile-mc:14.0.9` (was 13.0.21). The 13 → 14
   Docker upgrade steps need nothing from this module: cache is already Redis,
   and it sets none of the settings 14.0 removed (`DISABLE_ADFS_USER_PWD_LOGIN`,

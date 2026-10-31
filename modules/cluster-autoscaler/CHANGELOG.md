@@ -8,6 +8,7 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- Poweroff pod image busybox 1.38.0.
 - plugpool 0.2.0: node group templates carry the DRA devices
   (ResourceSlices) the machines published while powered on, kept in the
   ConfigMap `plugpool-template-slices`, so a cluster-autoscaler that reads

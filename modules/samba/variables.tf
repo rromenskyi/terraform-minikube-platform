@@ -19,7 +19,7 @@ variable "namespace" {
 variable "image" {
   description = "Samba image (ServerContainers, configured by environment variables; macOS `fruit` defaults built in). Pin a tag or digest."
   type        = string
-  default     = "ghcr.io/servercontainers/samba:a3.24.2-s4.23.8-r0"
+  default     = "ghcr.io/servercontainers/samba:a3.24.3-s4.23.8-r0"
 }
 
 variable "storage_class" {

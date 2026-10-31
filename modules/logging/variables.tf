@@ -123,7 +123,7 @@ variable "smtp_hello" {
 variable "vmalert_image" {
   description = "vmalert container image (VictoriaMetrics' alerting evaluator). Runs the LogsQL rule groups against VictoriaLogs and fires to Alertmanager."
   type        = string
-  default     = "victoriametrics/vmalert:v1.153.0"
+  default     = "victoriametrics/vmalert:v1.155.0"
 }
 
 variable "alertmanager_url" {

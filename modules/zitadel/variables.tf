@@ -19,19 +19,19 @@ variable "namespace" {
 variable "image" {
   description = "Zitadel main container image. v4 dropped the embedded Angular login form — the login UI now lives in the separate Next.js sidecar (`login_image`). Together with the FirstInstance machine-user PAT we bootstrap to disk, the chicken-and-egg of provisioning login-v2's service account vanishes."
   type        = string
-  default     = "ghcr.io/zitadel/zitadel:v4.19.5"
+  default     = "ghcr.io/zitadel/zitadel:v4.20.0"
 }
 
 variable "login_image" {
   description = "Zitadel Login UI v2 sidecar image. Pinned to the last tagged release — the rolling `:main` tag has been observed to ship a SPA race that double-submits `createCallback` and trips `Auth Request has already been handled (COMMAND-Sx208nt)` on every OIDC flow, breaking forward-auth-style gates. The wait-for-token-file behaviour we used to need from `:main` is now done in this module's own container `command` override, so the tagged release is fine."
   type        = string
-  default     = "ghcr.io/zitadel/zitadel-login:v4.19.5"
+  default     = "ghcr.io/zitadel/zitadel-login:v4.20.0"
 }
 
 variable "pat_broker_image" {
   description = "kubectl image for the PAT-broker sidecar, which only runs `kubectl create/patch secret`. Free Docker Hub `bitnami/*` images ship only `:latest` since August 2025 (versioned tags return 404), so the default pins `:latest` by digest; bump the digest deliberately. See `modules/redis/variables.tf` for the Bitnami notes."
   type        = string
-  default     = "bitnami/kubectl:latest@sha256:f7f9e4f64d9e114650c115a4ac6fd383394b3d494061a8f17b1a0f6c8d55bc25"
+  default     = "bitnami/kubectl:latest@sha256:bedd34c910e2a5ce9836813d16444af449d7fe07a29136d59f34e861e8e660c5"
 }
 
 variable "postgres_host" {

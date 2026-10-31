@@ -312,7 +312,7 @@ resource "kubernetes_job_v1" "mysql_setup" {
 
         container {
           name  = "mysql-setup"
-          image = "mysql:8.4.11"
+          image = "mysql:8.4.13"
 
           resources {
             requests = { cpu = "50m", memory = "64Mi" }

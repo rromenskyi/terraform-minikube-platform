@@ -53,7 +53,7 @@ resource "kubernetes_job_v1" "mysql_setup" {
 
         container {
           name  = "mysql-setup"
-          image = "mysql:8.4.11"
+          image = "mysql:8.4.13"
 
           # Password from a Secret, not the command line: Job specs are
           # readable far more widely than Secrets.

@@ -30,6 +30,7 @@ the project itself follows [Semantic Versioning](https://semver.org/).
   instead of embedding it in the command line.
 
 ### Changed
+- Per-project MySQL 8.4.13.
 - **BREAKING (behaviour):** the tenant AppProject no longer allows Argo CD's
   namespace. Bootstrap Applications move to a new `<ns>-bootstrap` project
   that may create only `Application` objects there. Child Applications keep

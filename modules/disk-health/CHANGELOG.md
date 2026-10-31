@@ -7,6 +7,9 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- prometheus-smartctl-exporter chart 0.19.0 (exporter image unchanged, v0.15.0).
+
 ### Added
 - Initial module: `prometheus-smartctl-exporter` DaemonSet (exporter
   v0.15.0, digest-pinned) with a ServiceMonitor that labels series with
