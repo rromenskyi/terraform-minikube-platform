@@ -196,5 +196,6 @@ resource "kubernetes_storage_class_v1" "this" {
     },
     each.value.resource_group != "" ? { "linstor.csi.linbit.com/resourceGroup" = each.value.resource_group } : {},
     length(each.value.x_replicas_on_different) > 0 ? { "linstor.csi.linbit.com/xReplicasOnDifferent" = jsonencode(each.value.x_replicas_on_different) } : {},
+    { for k, v in each.value.properties : "property.linstor.csi.linbit.com/${k}" => v },
   )
 }

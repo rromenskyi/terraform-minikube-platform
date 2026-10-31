@@ -140,6 +140,18 @@ variable "storage_classes" {
         complete, so only for data that may be lost or verified. Changing
         the options replaces the class; existing mounts keep theirs until
         their pods restart.
+      - properties: LINSTOR properties set on the class's resource group
+        (CSI parameters `property.linstor.csi.linbit.com/<key>`), e.g.
+        { "DrbdOptions/Net/protocol" = "A" } for asynchronous replication of
+        volumes whose last writes may be lost. Like x_replicas_on_different
+        they reach the group when a volume is created, and only as additions:
+        the CSI driver refuses to provision when the group already holds a
+        different value, and keeps a property removed from the class. Change
+        or remove one on the group itself (README). Properties belong to the
+        group, so give such a class its own named resource_group (it outlives
+        the class, and every volume of the group inherits them). They are
+        readable by anyone who can read StorageClasses: no secrets. Changing
+        them replaces the class.
   EOT
   type = list(object({
     name                    = string
@@ -151,12 +163,31 @@ variable "storage_classes" {
     resource_group          = optional(string, "")
     mount_options           = optional(list(string), [])
     x_replicas_on_different = optional(map(number), {})
+    properties              = optional(map(string), {})
   }))
   default = []
 
   validation {
     condition     = alltrue(flatten([for sc in var.storage_classes : [for v in values(sc.x_replicas_on_different) : v >= 1 && floor(v) == v]]))
     error_message = "storage_classes[].x_replicas_on_different: values must be whole numbers >= 1."
+  }
+
+  validation {
+    condition     = alltrue(flatten([for sc in var.storage_classes : [for k, v in sc.properties : can(regex("^[^/]+(/[^/]+)+$", k)) && v != ""]]))
+    error_message = "storage_classes[].properties: keys are full LINSTOR property names (e.g. DrbdOptions/Net/protocol), values non-empty."
+  }
+
+  validation {
+    condition     = alltrue([for sc in var.storage_classes : length(sc.properties) == 0 || sc.resource_group != ""])
+    error_message = "storage_classes[].properties need a named resource_group: without one the CSI driver derives the group name from them."
+  }
+
+  validation {
+    condition = alltrue([for sc in var.storage_classes : alltrue([
+      for other in var.storage_classes : other.properties == sc.properties
+      if sc.resource_group != "" && other.resource_group == sc.resource_group
+    ])])
+    error_message = "storage_classes[].properties: classes sharing a resource_group must declare the same properties (they are the group's)."
   }
 }
 
