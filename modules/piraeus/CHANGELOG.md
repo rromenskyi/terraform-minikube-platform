@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- `storage_classes[].properties` (optional): LINSTOR properties for the class's resource group (CSI parameters `property.linstor.csi.linbit.com/<key>`), e.g. `DrbdOptions/Net/protocol: A`.
+
 ### Changed
 - `LinstorSatelliteNotOnline` only for nodes registered in Kubernetes (`and on (node) kube_node_info`).
 

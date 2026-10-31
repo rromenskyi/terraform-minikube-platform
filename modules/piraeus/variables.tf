@@ -140,6 +140,12 @@ variable "storage_classes" {
         complete, so only for data that may be lost or verified. Changing
         the options replaces the class; existing mounts keep theirs until
         their pods restart.
+      - properties: LINSTOR properties set on the class's resource group
+        (CSI parameters `property.linstor.csi.linbit.com/<key>`), e.g.
+        { "DrbdOptions/Net/protocol" = "A" } for asynchronous replication of
+        volumes whose last writes may be lost. Like x_replicas_on_different
+        they reach the group when a volume is created; changing them
+        replaces the class.
   EOT
   type = list(object({
     name                    = string
@@ -151,6 +157,7 @@ variable "storage_classes" {
     resource_group          = optional(string, "")
     mount_options           = optional(list(string), [])
     x_replicas_on_different = optional(map(number), {})
+    properties              = optional(map(string), {})
   }))
   default = []
 
