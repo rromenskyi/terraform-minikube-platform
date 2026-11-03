@@ -65,7 +65,7 @@ resource "terraform_data" "kubeconfig_checks" {
 # Layer 2: Platform add-ons (Traefik, cert-manager, monitoring, namespaces).
 # -----------------------------------------------------------------------------
 module "addons" {
-  source = "git::https://github.com/rromenskyi/terraform-k8s-addons.git?ref=v2.14.1"
+  source = "git::https://github.com/rromenskyi/terraform-k8s-addons.git?ref=v2.15.1"
 
   kubeconfig_path      = local.kubeconfig_path
   cluster_name         = var.cluster_name
@@ -110,6 +110,11 @@ module "addons" {
   # tolerate (e.g. a custom `node-role.kubernetes.io/edge`) exempts that
   # node from drain + lock coordinated reboots entirely.
   kured_tolerations = [{ operator = "Exists" }]
+  # Reboots wait while one of `services.kured.blocking_alerts` fires (kured
+  # asks the in-cluster Prometheus), so the next node is not rebooted
+  # before the cluster has recovered from the previous one. Empty list = off.
+  kured_prometheus_url  = length(local.platform.services.kured.blocking_alerts) > 0 ? "http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090" : ""
+  kured_blocking_alerts = local.platform.services.kured.blocking_alerts
 
   # Traefik's chart-side dashboard IngressRoute at `traefik.<base_domain>`
   # stays off — this platform owns dashboard routing through the tenant
