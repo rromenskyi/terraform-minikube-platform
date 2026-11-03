@@ -414,11 +414,39 @@ release_state_lock() {
     STATE_LOCK_RENEW_PID=""
   fi
   [[ -n "${STATE_LOCK_ID}" ]] || return 0
-  if read_state_lock && [[ "${STATE_LOCK_SEEN_HOLDER}" == "${STATE_LOCK_ID}" ]]; then
-    state_lock_s3 DELETE /dev/null >/dev/null
-    echo "tf: state lock released" >&2
-  fi
+  # The store answers an occasional request with a 5xx. Giving up on the
+  # first one left a finished run's lock in place and blocked the next run
+  # until the lock went stale, so retry, check the DELETE, and say so when
+  # the lock stays.
+  local attempt rc code
+  for attempt in 1 2 3; do
+    rc=0
+    read_state_lock || rc=$?
+    if [[ "${rc}" == "1" ]]; then
+      STATE_LOCK_ID=""
+      return 0
+    fi
+    if [[ "${rc}" == "0" ]]; then
+      if [[ "${STATE_LOCK_SEEN_HOLDER}" != "${STATE_LOCK_ID}" ]]; then
+        echo "tf: the state lock is no longer ours (now: $(describe_seen_lock)); leaving it." >&2
+        STATE_LOCK_ID=""
+        return 0
+      fi
+      code="$(state_lock_s3 DELETE /dev/null)"
+      if [[ "${code}" == "204" || "${code}" == "200" ]]; then
+        echo "tf: state lock released" >&2
+        STATE_LOCK_ID=""
+        return 0
+      fi
+      STATE_LOCK_SEEN_ERROR="HTTP ${code}"
+    fi
+    if (( attempt < 3 )); then
+      sleep $(( attempt * 2 ))
+    fi
+  done
+  echo "tf: ERROR: could not release the state lock ${STATE_LOCK_ID} (${STATE_LOCK_SEEN_ERROR}). The next run is blocked until it goes stale (${STATE_LOCK_STALE_SECONDS}s); run './tf unlock' to clear it now." >&2
   STATE_LOCK_ID=""
+  return 1
 }
 
 # Commands that read the state to change it (or plan against it) take the
@@ -461,9 +489,15 @@ lock_state_for() {
   esac
 }
 
+# A lock left behind blocks the next run, so a run that could not release
+# it fails even when Terraform itself succeeded.
 cleanup() {
-  release_state_lock
+  local rc=$?
+  if ! release_state_lock && [[ "${rc}" == "0" ]]; then
+    rc=1
+  fi
   stop_zitadel_port_forward
+  exit "${rc}"
 }
 
 trap cleanup EXIT

@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - cluster-autoscaler: plugpool 0.2.0, whose node group templates carry the DRA devices (ResourceSlices) of the powered-off machines (stored in the ConfigMap `plugpool-template-slices`); used by cluster-autoscaler 1.37+, ignored by 1.36.
 
 ### Fixed
+- `./tf` state lock: releasing it retries a failed read or DELETE (the S3-compatible store returns an occasional 5xx) instead of silently leaving a finished run's lock behind, which blocked the next run until the lock went stale. If the lock still cannot be released, the wrapper says so and exits non-zero.
 - Zitadel provider sends the instance domain as `x-zitadel-instance-host` instead of `Host`. Zitadel v4.20 (Go 1.26) resets gRPC streams whose `host` header differs from `:authority` (`RST_STREAM ... PROTOCOL_ERROR`), which broke every plan in `port_forward` mode.
 - Zitadel login UI probes use its `/ui/v2/login/ready` and `/ui/v2/login/healthy` endpoints instead of the login page, which made Zitadel log `Instance.NotFound` for the pod IP on every probe.
 - Alert enricher: a long non-English diagnosis no longer fails the ntfy push with 413. The JSON body is sent as UTF-8 instead of `\uXXXX` escapes (which tripled Cyrillic text), and the message is shortened until the whole body fits ntfy's JSON body limit (twice its 4 KiB message limit); the push title is capped at 200 bytes.
