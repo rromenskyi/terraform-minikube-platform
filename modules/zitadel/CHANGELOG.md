@@ -17,6 +17,9 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ### Security
 - Postgres setup Job reads the password from a Secret instead of the command.
 
+### Fixed
+- Login UI probes use `/ui/v2/login/ready` (startup, readiness) and `/ui/v2/login/healthy` (liveness), as the upstream chart does. Probing the login page made Zitadel log `unable to set instance ... Instance.NotFound` for the pod IP several times per probe.
+
 ### Changed
 - Zitadel and its login UI v4.20.0; `bitnami/kubectl` digest of 2026-10-31 (kubectl 1.37.2). v4.20 is built with Go 1.26.10: outbound TLS (SMTP, IdPs, webhooks) rejects chains through the compromised eMudhra intermediate CAs, so endpoints behind them need new certificates; URLs with invalid colons in the host are rejected; post-quantum hybrid key exchange is on by default (`GODEBUG=urlstrictcolons=0` / `tlssecpmlkem=0` restore the old behavior). Users in the middle of a device authorization must re-enter the code.
 - File layout split into `main.tf` / `variables.tf` / `outputs.tf` per AGENT.md
