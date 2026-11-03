@@ -66,7 +66,7 @@ resource "kubernetes_deployment_v1" "cloudflared" {
       spec {
         container {
           name  = "cloudflared"
-          image = "cloudflare/cloudflared:2026.10.5"
+          image = "cloudflare/cloudflared:2026.10.7"
 
           command = [
             "cloudflared",

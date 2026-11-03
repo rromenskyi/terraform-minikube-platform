@@ -5,8 +5,9 @@
 # (WP_AUTO_UPDATE_CORE below). The `7.1` tag follows 7.1.x patch releases.
 # Pinned by digest: the tag is rebuilt in place (PHP security fixes), and a
 # node that already has the tag would keep the old build.
-# 2026-10-21: PHP 8.3.36 (CVE-2026-109618 / CVE-2026-109619).
-image: wordpress:7.1-php8.3-apache@sha256:f3e6835fa7d4a5b786615c24b67ec70816e06ebd517d31276bef423e49dfd126
+# 2026-10-31: current build of the tag, PHP 8.3.36 (fixes CVE-2026-109618 /
+# CVE-2026-109619, first pinned 2026-10-21).
+image: wordpress:7.1-php8.3-apache@sha256:848b03bb7b4b160e3a670454e8e928e309c9aaeb1c2584e917f42ab5197662e2
 port: 80
 replicas: 1
 

@@ -281,7 +281,7 @@ resource "kubernetes_stateful_set_v1" "mysql" {
 
         container {
           name  = "mysql"
-          image = "mysql:8.4.11"
+          image = "mysql:8.4.13"
           args  = ["mysqld", "--init-file=/etc/mysql-init/init.sql"]
 
           port {

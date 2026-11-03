@@ -8,6 +8,7 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- vmalert v1.155.0.
 - VictoriaLogs v1.53.0.
 
 ### Added

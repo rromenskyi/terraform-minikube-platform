@@ -70,7 +70,7 @@ variable "sentinel" {
     enabled       = optional(bool, false)
     replica_count = optional(number, 3)
     quorum        = optional(number, 2)
-    chart_version = optional(string, "5.6.1")
+    chart_version = optional(string, "5.6.5")
     # `image_tag` and `sentinel_image_tag` default to `latest` because
     # Bitnami / Broadcom moved every versioned `bitnami/<X>:<ver>` tag
     # to the paid Bitnami Secure Images registry in August 2025. The
@@ -91,9 +91,9 @@ variable "sentinel" {
     image_tag           = optional(string, "latest")
     sentinel_image_repo = optional(string, "bitnami/valkey-sentinel")
     sentinel_image_tag  = optional(string, "latest")
-    # `latest` as of 2026-09-30. A digest overrides the tag in the chart.
-    image_digest          = optional(string, "sha256:3ab4091a7e3cb5f12184a3009cad1aefef50f424c0860d580a41675e38392ba5")
-    sentinel_image_digest = optional(string, "sha256:a8f552cf341f908baeff807a02c72cc73097be3c3951ef110c14c27cb072e773")
+    # `latest` as of 2026-10-31 (Valkey 9.1.2, Sentinel 9.1.3). A digest overrides the tag in the chart.
+    image_digest          = optional(string, "sha256:4dc6511a8a9d4d4cbf3ccf1270ddcc6929819a1e0f4005462cf782cc96d1c3b6")
+    sentinel_image_digest = optional(string, "sha256:f3e4e5d7496abb72b4af312e25b606c53d59373818d6959d006a9d7b3e1c4fe4")
     haproxy_image         = optional(string, "haproxytech/haproxy-alpine:3.0")
     haproxy_replicas      = optional(number, 2)
     # Nodes whose Valkey pod may hold a copy and vote in the Sentinel

@@ -19,6 +19,7 @@ the project itself follows [Semantic Versioning](https://semver.org/).
   (offboarded projects) are deleted (`default` excepted).
 
 ### Changed
+- Valkey chart 5.6.5; Valkey and Sentinel `latest` digests of 2026-10-31 (Valkey 9.1.2, Sentinel 9.1.3).
 - ACL keeper image redis 8.10.3-alpine.
 - Sentinel mode rejects `storage_class`: it runs as a cache with AOF/RDB
   off, so the PVC only suggested durability it doesn't have.

@@ -206,7 +206,7 @@ variable "vso_kube_rbac_proxy_image" {
 variable "init_image" {
   description = "Image for the one-shot vault-init Job (needs sh, curl, sed, base64, kubectl). Bitnami ships only `:latest`, so pin the digest."
   type        = string
-  default     = "bitnami/kubectl:latest@sha256:f7f9e4f64d9e114650c115a4ac6fd383394b3d494061a8f17b1a0f6c8d55bc25"
+  default     = "bitnami/kubectl:latest@sha256:bedd34c910e2a5ce9836813d16444af449d7fe07a29136d59f34e861e8e660c5"
 }
 
 variable "vso_platform_readers" {

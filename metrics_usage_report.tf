@@ -141,7 +141,7 @@ resource "kubernetes_cron_job_v1" "metrics_usage_report" {
 
             container {
               name    = "report"
-              image   = "python:3.14-slim@sha256:82abc9f53600280b0757126f83c5a7d47088592d2acb6b4c0b9e97f76865508c"
+              image   = "python:3.14-slim@sha256:cd89c30eda26ee911a4611b18680086e0ea42e6f5f8cbe653d07fa7958c9cec8"
               command = ["python3", "/app/report.py"]
 
               env {

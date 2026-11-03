@@ -239,7 +239,7 @@ resource "kubernetes_job_v1" "mysql_dashboard_ro_setup" {
 
         container {
           name  = "mysql-dashboard-ro-setup"
-          image = "mysql:8.4.11"
+          image = "mysql:8.4.13"
 
           env_from {
             secret_ref {
