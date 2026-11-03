@@ -440,12 +440,13 @@ release_state_lock() {
       fi
       STATE_LOCK_SEEN_ERROR="HTTP ${code}"
     fi
-    (( attempt < 3 )) && sleep $(( attempt * 2 ))
+    if (( attempt < 3 )); then
+      sleep $(( attempt * 2 ))
+    fi
   done
   echo "tf: ERROR: could not release the state lock ${STATE_LOCK_ID} (${STATE_LOCK_SEEN_ERROR}). The next run is blocked until it goes stale (${STATE_LOCK_STALE_SECONDS}s); run './tf unlock' to clear it now." >&2
   STATE_LOCK_ID=""
   return 1
-  STATE_LOCK_ID=""
 }
 
 # Commands that read the state to change it (or plan against it) take the
@@ -492,7 +493,9 @@ lock_state_for() {
 # it fails even when Terraform itself succeeded.
 cleanup() {
   local rc=$?
-  release_state_lock || { [[ "${rc}" == "0" ]] && rc=1; }
+  if ! release_state_lock && [[ "${rc}" == "0" ]]; then
+    rc=1
+  fi
   stop_zitadel_port_forward
   exit "${rc}"
 }
