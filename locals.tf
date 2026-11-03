@@ -117,6 +117,10 @@ locals {
         start_time  = "00:00"
         end_time    = "23:59"
         reboot_days = ["su", "mo", "tu", "we", "th", "fr", "sa"]
+        # Alert names that hold reboots while firing (see main.tf). Empty = no
+        # check. Pick alerts that mean "not recovered yet" (storage resync,
+        # database replica down, node NotReady), not ones that fire for days.
+        blocking_alerts = []
       }
       # Cluster log aggregation — VictoriaLogs store + Vector collector +
       # Grafana datasource (see modules/logging). Time-retained, searchable
