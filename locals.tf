@@ -376,7 +376,7 @@ locals {
         # strips gRPC trailers (Cloudflare pure-proxy mode is the
         # known offender) — `./tf` wrapper detects the mode and runs
         # `kubectl port-forward svc/zitadel 8080:8080` for the apply
-        # window. Both modes set `transport_headers.Host =
+        # window. Both modes send `x-zitadel-instance-host:
         # external_domain` so Zitadel multi-tenant routing matches.
         provider = {
           mode     = "public"

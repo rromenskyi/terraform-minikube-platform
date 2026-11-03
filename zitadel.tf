@@ -69,9 +69,12 @@ data "kubernetes_resources" "zitadel_tf_pat_output" {
 #     `grpc-status: 2` trailer; through CF the response has no
 #     trailers at all.
 #
-# `transport_headers.Host` is set to the ExternalDomain in both modes
-# so Zitadel's multi-tenant instance lookup matches even when the
-# transport host is `localhost`.
+# `transport_headers` sets `x-zitadel-instance-host` to the ExternalDomain
+# in both modes so Zitadel's multi-tenant instance lookup matches even
+# when the transport host is `localhost`. Not `Host`: grpc-go sends it as
+# a `host` header next to `:authority`, and Zitadel built with Go 1.26
+# rejects that mismatch as a malformed HTTP/2 request (RST_STREAM
+# PROTOCOL_ERROR).
 locals {
   # Empty `provider.host` falls back to the external_domain — saves
   # operators duplicating "id.example.com" in two places when running
@@ -96,7 +99,7 @@ provider "zitadel" {
   access_token = var.zitadel_pat != "" ? var.zitadel_pat : "PLACEHOLDER_BOOTSTRAP"
 
   transport_headers = {
-    Host = local.platform.services.zitadel.external_domain
+    "x-zitadel-instance-host" = local.platform.services.zitadel.external_domain
   }
 }
 
