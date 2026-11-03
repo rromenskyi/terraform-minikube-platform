@@ -9,9 +9,10 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ### Changed
 - cluster-autoscaler v1.37.0. Its externalgrpc provider reads the
-  ResourceSlices in plugpool's node group templates, so a pending pod that
-  claims a DRA device (a GPU) now powers a machine on. Flags and RBAC are
-  unchanged.
+  ResourceSlices in plugpool's node group templates, so a pending pod whose
+  DRA claim (a GPU) fits the devices in a template can now trigger a scale-up
+  of that group. The module's flags and RBAC are unchanged; the RBAC matches
+  the upstream 1.37 core's own e2e role for `resource.k8s.io`.
 - Poweroff pod image busybox 1.38.0.
 - plugpool 0.2.0: node group templates carry the DRA devices
   (ResourceSlices) the machines published while powered on, kept in the
