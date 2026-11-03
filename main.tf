@@ -113,7 +113,7 @@ module "addons" {
   # Reboots wait while one of `services.kured.blocking_alerts` fires (kured
   # asks the in-cluster Prometheus), so the next node is not rebooted
   # before the cluster has recovered from the previous one. Empty list = off.
-  kured_prometheus_url  = "http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090"
+  kured_prometheus_url  = length(local.platform.services.kured.blocking_alerts) > 0 ? "http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090" : ""
   kured_blocking_alerts = local.platform.services.kured.blocking_alerts
 
   # Traefik's chart-side dashboard IngressRoute at `traefik.<base_domain>`
