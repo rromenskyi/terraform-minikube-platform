@@ -18,7 +18,7 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 - Postgres setup Job reads the password from a Secret instead of the command.
 
 ### Changed
-- Zitadel and its login UI v4.20.0; `bitnami/kubectl` digest of 2026-10-31 (kubectl 1.37.2). v4.20 is built with Go 1.26, which rejects eMudhra intermediate certificates on outbound TLS (SMTP, IdPs, webhooks).
+- Zitadel and its login UI v4.20.0; `bitnami/kubectl` digest of 2026-10-31 (kubectl 1.37.2). v4.20 is built with Go 1.26.10: outbound TLS (SMTP, IdPs, webhooks) rejects chains through the compromised eMudhra intermediate CAs, so endpoints behind them need new certificates; URLs with invalid colons in the host are rejected; post-quantum hybrid key exchange is on by default (`GODEBUG=urlstrictcolons=0` / `tlssecpmlkem=0` restore the old behavior). Users in the middle of a device authorization must re-enter the code.
 - File layout split into `main.tf` / `variables.tf` / `outputs.tf` per AGENT.md
   module conventions. Pure file reorganisation — no resource, input, output, or
   default value changed; `terraform plan` is identical before and after.
