@@ -21,7 +21,7 @@ variable "namespace" {
 variable "ca_image" {
   description = "cluster-autoscaler image (externalgrpc cloud provider)."
   type        = string
-  default     = "registry.k8s.io/autoscaling/cluster-autoscaler:v1.36.1@sha256:461388d03eb5b55db58941ee7a81d9a619dd15302b01cbab9f5a9946715994b4"
+  default     = "registry.k8s.io/autoscaling/cluster-autoscaler:v1.37.0@sha256:bad6629616b9544dc5e358ee030f6d1d4047192e484d2e15bffb0c9fcd90b949"
   nullable    = false
 }
 
