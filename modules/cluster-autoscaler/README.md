@@ -66,7 +66,7 @@ switched off); see its README.
 
 | Name | Description | Type | Default | Required |
 | ---- | ----------- | ---- | ------- | :------: |
-| <a name="input_ca_image"></a> [ca\_image](#input\_ca\_image) | cluster-autoscaler image (externalgrpc cloud provider). | `string` | `"registry.k8s.io/autoscaling/cluster-autoscaler:v1.36.1@sha256:461388d03eb5b55db58941ee7a81d9a619dd15302b01cbab9f5a9946715994b4"` | no |
+| <a name="input_ca_image"></a> [ca\_image](#input\_ca\_image) | cluster-autoscaler image (externalgrpc cloud provider). | `string` | `"registry.k8s.io/autoscaling/cluster-autoscaler:v1.37.0@sha256:bad6629616b9544dc5e358ee030f6d1d4047192e484d2e15bffb0c9fcd90b949"` | no |
 | <a name="input_context"></a> [context](#input\_context) | Serialised parent context from `terraform-null-label` (root passes `module.platform_label.context`). Null = a label with no inherited context. | `string` | `null` | no |
 | <a name="input_enabled"></a> [enabled](#input\_enabled) | Whether to run cluster-autoscaler with the plugpool sidecar. False creates nothing. Turning it off later leaves the machines as they are: one that is powered off stays off until it is switched on by hand. | `bool` | `false` | no |
 | <a name="input_max_node_provision_time"></a> [max\_node\_provision\_time](#input\_max\_node\_provision\_time) | cluster-autoscaler `--max-node-provision-time`: a machine that has not registered this long after its power-on counts as failed; its plug is switched off again. | `string` | `"10m"` | no |
