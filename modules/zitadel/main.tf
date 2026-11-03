@@ -670,9 +670,13 @@ resource "kubernetes_deployment_v1" "zitadel" {
             limits   = { cpu = "500m", memory = "512Mi" }
           }
 
+          # The login app's own health endpoints (same paths as the upstream
+          # Zitadel chart). The login page itself calls the Zitadel API with
+          # the probe's Host (the pod IP), which logs Instance.NotFound on
+          # every probe.
           startup_probe {
             http_get {
-              path = "/ui/v2/login"
+              path = "/ui/v2/login/ready"
               port = 3000
             }
             period_seconds    = 5
@@ -682,7 +686,7 @@ resource "kubernetes_deployment_v1" "zitadel" {
 
           liveness_probe {
             http_get {
-              path = "/ui/v2/login"
+              path = "/ui/v2/login/healthy"
               port = 3000
             }
             period_seconds    = 10
@@ -692,7 +696,7 @@ resource "kubernetes_deployment_v1" "zitadel" {
 
           readiness_probe {
             http_get {
-              path = "/ui/v2/login"
+              path = "/ui/v2/login/ready"
               port = 3000
             }
             period_seconds    = 5
