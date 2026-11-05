@@ -65,7 +65,7 @@ resource "terraform_data" "kubeconfig_checks" {
 # Layer 2: Platform add-ons (Traefik, cert-manager, monitoring, namespaces).
 # -----------------------------------------------------------------------------
 module "addons" {
-  source = "git::https://github.com/rromenskyi/terraform-k8s-addons.git?ref=v2.16.0"
+  source = "git::https://github.com/rromenskyi/terraform-k8s-addons.git?ref=v2.17.0"
 
   kubeconfig_path      = local.kubeconfig_path
   cluster_name         = var.cluster_name
@@ -185,6 +185,10 @@ module "addons" {
   # Built-in chart rules switched off (`monitoring.disabled_builtin_rules`):
   # not evaluated at all, unlike `muted_builtin_alerts`, which still fire.
   monitoring_disabled_default_rules = try(local.platform.monitoring.disabled_builtin_rules, [])
+  # Host directory node-exporter's textfile collector reads
+  # (`monitoring.node_exporter_textfile_dir`), for metrics published by
+  # host-side scripts. Empty = collector off.
+  monitoring_node_exporter_textfile_dir = try(local.platform.monitoring.node_exporter_textfile_dir, "")
 
   monitoring_prometheus_extra_values = merge(
     length(local.prometheus_spec) > 0 ? { prometheusSpec = local.prometheus_spec } : {},
