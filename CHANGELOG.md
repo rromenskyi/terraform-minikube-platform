@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Argo CD chart 10.11.6 (v3.5.6), fixing CVE-2026-77459 (AppProject restrictions bypassed by PreDelete/PostDelete hooks).
 
 ### Changed
-- disk-health: smartctl-exporter CPU limit 500m (was 200m). Each collection is a short `smartctl` burst that the old limit throttled, firing CPUThrottlingHigh; average use is a few millicores.
+- disk-health: smartctl-exporter CPU limit 500m (was 200m). Each collection is a short `smartctl` burst that the old limit throttled (CPUThrottlingHigh on a 4-disk node); the new limit leaves headroom for it.
 - cluster-autoscaler v1.37.0: a pending pod whose DRA claim (a GPU) fits the devices in plugpool's node group templates (plugpool 0.2.0) can now power a machine on.
 - Image and chart bumps (2026-10-31): MySQL 8.4.13 (shared, per-project, Seafile, platform-dash), cloudflared 2026.10.7, Zitadel and its login UI v4.20.0, Valkey chart 5.6.5, trivy-operator chart 0.38.1 (trivy 0.76.1), prometheus-smartctl-exporter chart 0.19.0, vmalert v1.155.0, samba a3.24.3, busybox 1.38.0 (cluster-autoscaler poweroff pod). Current digests for the same tags: Valkey/Sentinel and `bitnami/kubectl` `latest`, WordPress 7.1, Roundcube 1.6.20, python 3.14-slim (metrics-usage-report), busybox 1.38 (speaches). Zitadel v4.20 is built with Go 1.26.10: outbound TLS rejects chains through the compromised eMudhra intermediate CAs (endpoints behind them need new certificates), URLs with invalid colons in the host are rejected, and post-quantum hybrid key exchange is on by default.
 - terraform-k8s-addons v2.14.1: Traefik chart 41.7.1 (Traefik v3.7.14), cert-manager v1.21.3.

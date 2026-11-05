@@ -41,7 +41,7 @@ variable "affinity" {
 }
 
 variable "resources" {
-  description = "Container resources of the exporter. It runs `smartctl` once per device every collection period: a few millicores on average, but each collection is a short burst that a low CPU limit throttles (CPUThrottlingHigh)."
+  description = "Container resources of the exporter. It runs `smartctl` once per device every collection period. Average use is low, but each collection is a short burst; the limit leaves headroom for it so CPUThrottlingHigh does not fire."
   type        = any
   default = {
     requests = { cpu = "10m", memory = "32Mi" }
