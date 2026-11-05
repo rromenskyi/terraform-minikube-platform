@@ -41,11 +41,11 @@ variable "affinity" {
 }
 
 variable "resources" {
-  description = "Container resources of the exporter. It runs `smartctl` once per device every collection period, so it needs very little."
+  description = "Container resources of the exporter. It runs `smartctl` once per device every collection period. Average use is low, but each collection is a short burst; the limit leaves headroom for it so CPUThrottlingHigh does not fire."
   type        = any
   default = {
     requests = { cpu = "10m", memory = "32Mi" }
-    limits   = { cpu = "200m", memory = "64Mi" }
+    limits   = { cpu = "500m", memory = "64Mi" }
   }
 }
 
