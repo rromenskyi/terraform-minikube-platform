@@ -161,7 +161,7 @@ All three live in the root-owned `platform` namespace (ResourceQuota from `confi
 
 A separate top-level stack for `mail.<primary_mail_domain>`, wired in `mail.tf`. Lives in its own `mail` namespace with a 2 GiB / 2 CPU / 6-pod ResourceQuota.
 
-**Stalwart** (`modules/stalwart`, v0.16.x):
+**Stalwart** (`modules/stalwart`, v1.x):
 - All-in-one mail server: SMTP submission/delivery + IMAP + JMAP + WebUI, Rust, declarative config via `stalwart-cli apply <plan.ndjson>`.
 - StatefulSet, 1 replica, hostPath PV (`<host_volume_path>/mail/stalwart/`) — internal RocksDB store, no Postgres/MySQL needed.
 - Bootstraps on first apply: an `applier` sidecar runs `stalwart-cli` against the JMAP API to push `plan.ndjson` (Authentication directory swap → Zitadel `OidcDirectory`, MtaRoute `Relay` to the smart-host, `DkimSignature` from a TF-generated RSA key, mail UI `defaultDomainId`). The plan engine groups all destroys before all updates, so the directory swap is split into a pre-step `update Authentication singleton --field directoryId=null` to avoid a "still-referenced" abort.

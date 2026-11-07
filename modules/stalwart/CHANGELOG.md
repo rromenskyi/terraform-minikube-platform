@@ -7,6 +7,48 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- **Stalwart v1.0.3** (from 0.16.27), stalwart-cli v1.0.14, WebUI v2.0.5.
+  v1 cannot open a 0.16 store, so the first v1 start copies it: the new
+  `migrate-v1` init container (`migrate_image`, stalwart-migrate 1.0.6)
+  runs `stalwart-migrate run --final` from `data/db.sqlite3` into the new
+  store at `data/v1/db.sqlite3`, accepting the tool's recommended answer
+  to every question, then marks the volume `.v1-ready` and does nothing
+  on later starts. Account, mailbox and thread ids, IMAP UIDs and
+  UIDVALIDITY are kept. The 0.16 file and the state directory
+  (`migrate-v1/`, with `final-report.txt`) stay on the volume: until v1
+  has taken mail, rolling back is reverting the module. To migrate again
+  after a rollback, remove `.v1-ready`, `data/v1/` and `migrate-v1/` from
+  the volume (the pod refuses to start until then). Fresh volumes start
+  on v1 directly.
+- Upgrade impact: OAuth tokens are not migrated, so OAuth clients (WebUI,
+  Roundcube, native clients) sign in again; CalDAV/CardDAV clients fetch
+  their data once more; the search index is rebuilt in the background
+  after the first start.
+- Plan converted to the v1 schema: `Application.enable`,
+  `MtaRoute.host`, `Http.clientIpSource = xForwardedFor` with
+  `forwardedHops = 1` (Traefik appends the peer it saw), and the OIDC
+  directory uses `acceptedAudiences` (the project id),
+  `unscopedTokens = interoperable` (Zitadel access tokens carry no
+  Stalwart scopes) and `opaqueTokenValidation = userInfo`;
+  `requireScopes` no longer exists.
+- The WebUI bundle is served as downloaded: the Zitadel client id reaches
+  it through `Application.oauthClientId` instead of a `sed` over the
+  bundle's JavaScript. The WebUI uses that static id for every sign-in,
+  including the recovery admin's against Stalwart's own authorization
+  server, which in v1 rejects unknown client ids; the plan therefore also
+  creates a matching public `OAuthClient` (scope `full`, the WebUI
+  callback URLs; the applier replaces it on each start) and the
+  Application requests `urn:stalwart:oauth:scope:full`.
+- `migrate-v1` fails closed instead of starting v1 on a wrong store: it
+  stops the pod when `.v1-ready` is set but `data/v1/db.sqlite3` is
+  missing, or when the 0.16 store was written after the migration (the
+  module was rolled back and 0.16 took mail). A final run that completed
+  before the marker was written (pod killed in between) is detected with
+  `stalwart-migrate status` and only marks the volume, unless the 0.16
+  store changed after that run. The final report
+  is printed to the init container's log.
+
 ### Added
 - `storage_class` / `storage_seed_node`: data volume on a StorageClass (PVC
   `data-stalwart`), with a one-time copy of the old hostPath directory on the

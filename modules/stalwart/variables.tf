@@ -23,21 +23,27 @@ variable "volume_base_path" {
 }
 
 variable "image" {
-  description = "Stalwart server container image. Repo changed from stalwartlabs/mail-server to stalwartlabs/stalwart at 0.16. Pin a specific tag — `latest` would silently pull schema changes between restarts."
+  description = "Stalwart server container image. Repo changed from stalwartlabs/mail-server to stalwartlabs/stalwart at 0.16. Pin a specific tag — `latest` would silently pull schema changes between restarts. v1 cannot open a 0.16 store: on the first v1 start the `migrate-v1` init container copies the 0.16 store into a new one (see `migrate_image`)."
   type        = string
-  default     = "stalwartlabs/stalwart:v0.16.27@sha256:c429b311c93db5606598abc1c68225a85a6953183848ae01bee9c6a98885836c"
+  default     = "stalwartlabs/stalwart:v1.0.3@sha256:73c684a84c24f5b4206ec266a8deb8986fe44a9f623997e07f084388d943c8bd"
+}
+
+variable "migrate_image" {
+  description = "stalwart-migrate image for the one-time 0.16 -> v1 store copy. Runs as the `migrate-v1` init container, which does nothing once the volume carries the `.v1-ready` marker (any volume that already runs v1, and every fresh install)."
+  type        = string
+  default     = "stalwartlabs/stalwart-migrate:1.0.6@sha256:16711fd919b36a54d121f1d974027bfa068409c454d98ab2f5ac5d747ce401a3"
 }
 
 variable "cli_url" {
   description = "URL of the stalwart-cli linux-x86_64 tarball. The CLI is a separate release from stalwartlabs/cli; not bundled in the server image. Init container downloads + extracts to a shared emptyDir."
   type        = string
-  default     = "https://github.com/stalwartlabs/cli/releases/download/v1.0.4/stalwart-cli-x86_64-unknown-linux-musl.tar.xz"
+  default     = "https://github.com/stalwartlabs/cli/releases/download/v1.0.14/stalwart-cli-x86_64-unknown-linux-musl.tar.xz"
 }
 
 variable "webui_url" {
-  description = "URL of the upstream Stalwart WebUI bundle. Pinned to the version that ships with the server image — stale bundles drift the API contract. The init container downloads, sed-patches the OAuth client_id, repackages, and Stalwart's Application is pointed at the local file."
+  description = "URL of the upstream Stalwart WebUI bundle. Pinned to the version that ships with the server image — stale bundles drift the API contract; v1 serves only WebUI 2.x. The init container downloads it and Stalwart's Application is pointed at the local file; the Zitadel client_id reaches the WebUI through `Application.oauthClientId`."
   type        = string
-  default     = "https://github.com/stalwartlabs/webui/releases/download/v1.0.5/webui.zip"
+  default     = "https://github.com/stalwartlabs/webui/releases/download/v2.0.5/webui.zip"
 }
 
 variable "smtp_relay_listen_ip" {

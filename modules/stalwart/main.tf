@@ -198,19 +198,23 @@ locals {
     # `rusqlite::Connection::open`. The docs use the word
     # "directory" but the code (`SqliteConnectionManager::file(path)`)
     # treats it as a file. The parent dir is created in the
-    # bootstrap initContainer.
-    path = "/opt/stalwart-mail/data/db.sqlite3"
+    # bootstrap initContainer. v1 lives in its own file under `data/v1/`:
+    # the 0.16 store at `data/db.sqlite3` is the `migrate-v1` source and
+    # stays untouched, so rolling back before v1 took mail is reverting
+    # the module.
+    path = "/opt/stalwart-mail/data/v1/db.sqlite3"
   })
 
-  # The OIDC client_id Zitadel auto-generated for the WebUI app.
-  # Empty string when OIDC is off (the bundle will keep its default
-  # `stalwart-webui` literal — works only against Stalwart-as-IDP).
-  webui_client_id = local.oidc_enabled ? zitadel_application_oidc.stalwart["enabled"].client_id : "stalwart-webui"
+  # The OIDC client_id Zitadel auto-generated for the WebUI app, handed
+  # to the WebUI through `Application.oauthClientId` (Zitadel publishes
+  # no OAuth Client ID Metadata Documents). Null when OIDC is off: the
+  # WebUI then signs in against Stalwart itself.
+  webui_client_id = local.oidc_enabled ? zitadel_application_oidc.stalwart["enabled"].client_id : null
 
   # Zitadel issues access tokens with `aud` set to the project_id, not
-  # the client_id. Stalwart's `requireAudience` field is checked
-  # against the `aud` claim — using the project_id here makes
-  # validation pass. (`<client_id>` would mismatch.)
+  # the client_id. Stalwart's `acceptedAudiences` is checked against
+  # the `aud` claim — using the project_id here makes validation pass.
+  # (`<client_id>` would mismatch.)
   webui_aud = local.oidc_enabled ? zitadel_project.stalwart["enabled"].id : ""
 
   # Plan rendered as NDJSON. Two-pass execution: destroys reverse
@@ -266,20 +270,19 @@ locals {
 
     # ── Create pass: parents-first ────────────────────────────────
     [
-      # Local file replaces upstream URL so Stalwart serves the
-      # patched bundle (bundle's `stalwart-webui` literal sed-
-      # replaced with the Zitadel-issued client_id at init).
+      # Local file (downloaded at init from the pinned `webui_url`)
+      # replaces the upstream URL so Stalwart serves the pinned bundle.
       jsonencode({
         "@type" = "create"
         object  = "Application"
         value = {
-          app-webui = {
+          app-webui = merge({
             description = "Stalwart Web Interface"
-            enabled     = true
+            enable      = true
             resourceUrl = "file:///shared/webui.zip"
             # Stalwart's `Map<String>` serializes as an object whose
             # keys are the elements and values are `true` — not as a
-            # JSON array. Same form below for OidcDirectory.requireScopes.
+            # JSON array. Same form below for OidcDirectory.acceptedAudiences.
             #
             # The /admin and /account paths sit behind a random URL
             # prefix so the Stalwart UI doesn't surface on the public
@@ -288,7 +291,15 @@ locals {
             # served index.html, so urlPrefix at any depth works
             # without code changes.
             urlPrefix = local.webui_url_prefixes
-          }
+            }, local.oidc_enabled ? {
+            # Static client id: the WebUI uses it for every sign-in, the
+            # Zitadel one and the recovery admin's against Stalwart's own
+            # authorization server (matching OAuthClient below). `full`
+            # keeps the WebUI's full access on the latter; Zitadel ignores
+            # the scope.
+            oauthClientId = local.webui_client_id
+            oauthScopes   = { "urn:stalwart:oauth:scope:full" = true }
+          } : null)
         }
       }),
 
@@ -336,37 +347,58 @@ locals {
       # populates Stalwart group memberships, which carry roles via
       # the Group entity created below.
       #
-      # `requireScopes` deliberately omitted — Stalwart enforces it
-      # against the `scope` claim *embedded in the access_token JWT*,
-      # but Zitadel 2.x's default JWT access_token does not carry a
-      # `scope` claim (scopes are tracked at /introspect / /userinfo
-      # only). Setting `requireScopes:{email:true,...}` therefore
-      # produced `Missing required scope 'email', present scopes: []`
-      # → 401 on every login. The actual email/profile/groups data
-      # comes from `/userinfo` via `claimEmail` / `claimName` /
-      # `claimGroups` — those are always populated correctly when the
-      # WebUI requested the right scopes at /authorize.
+      # Zitadel's JWT access_token carries no `scope` claim, so none of
+      # its tokens hold Stalwart's mail/contacts/calendars/files scopes.
+      # `unscopedTokens = interoperable` lets such tokens reach mail,
+      # contacts, calendars and files (IMAP/SMTP for Roundcube and the
+      # native-client proxy) without management rights; tokens issued
+      # to the WebUI's own client id get full access regardless. The
+      # audience check (`acceptedAudiences` = project id) is what keeps
+      # tokens of unrelated Zitadel apps out. `opaqueTokenValidation =
+      # userInfo` keeps 0.16's handling of non-JWT tokens. These values
+      # match what `migrate-v1` records for a migrated directory: the
+      # applier creates the Directory once and never updates it.
       jsonencode({
         "@type" = "create"
         object  = "Directory"
         value = {
           dir-zitadel = {
-            "@type"         = "Oidc"
-            description     = "Zitadel SSO"
-            issuerUrl       = var.zitadel_issuer_url
-            requireAudience = local.webui_aud
-            # Empty Map<String> — explicitly override Stalwart's default
-            # `requireScopes = {openid, email}`. Zitadel's JWT access_token
-            # doesn't carry a `scope` claim at all, so any non-empty
-            # requirement here fails token validation with `present
-            # scopes: []`. The actual email/groups data comes through
-            # /userinfo via `claimEmail` / `claimGroups`, not through
-            # the access_token's scope claim.
-            requireScopes  = {}
-            claimUsername  = "preferred_username"
-            usernameDomain = var.primary_domain
-            claimName      = "name"
-            claimGroups    = "groups"
+            "@type"               = "Oidc"
+            description           = "Zitadel SSO"
+            issuerUrl             = var.zitadel_issuer_url
+            acceptedAudiences     = { (local.webui_aud) = true }
+            unscopedTokens        = "interoperable"
+            opaqueTokenValidation = "userInfo"
+            claimUsername         = "preferred_username"
+            usernameDomain        = var.primary_domain
+            claimName             = "name"
+            claimGroups           = "groups"
+          }
+        }
+      }),
+
+      # Stalwart-side twin of the WebUI's Zitadel client id. v1 rejects
+      # unknown client ids on its own authorization server, which the
+      # WebUI still uses for the recovery-admin sign-in (the fallback
+      # when Zitadel is down); without this it answers `Unknown client
+      # id`. Public client, no secret. The applier replaces the previous
+      # one (matched by client id) before this create.
+      jsonencode({
+        "@type" = "create"
+        object  = "OAuthClient"
+        value = {
+          oauth-webui = {
+            clientId    = local.webui_client_id
+            description = "Stalwart Web Interface (managed by terraform-minikube-platform)"
+            scopes      = { full = true }
+            redirectUris = {
+              "${local.admin_origin}/admin/oauth/callback"   = true
+              "${local.admin_origin}/account/oauth/callback" = true
+            }
+            postLogoutRedirectUris = {
+              "${local.admin_origin}/admin/login"   = true
+              "${local.admin_origin}/account/login" = true
+            }
           }
         }
       }),
@@ -429,7 +461,7 @@ locals {
             "@type"           = "Relay"
             name              = "smarthost"
             description       = "Outbound relay (residential ISPs and Cloudflare Tunnel block direct :25)."
-            address           = var.smarthost_address
+            host              = var.smarthost_address
             port              = var.smarthost_port
             protocol          = "smtp"
             implicitTls       = var.smarthost_implicit_tls
@@ -473,7 +505,7 @@ locals {
             "@type"           = "Relay"
             name              = "ingest-${key}"
             description       = "SMTP-push ingest: ${f.synthetic_domain} delivers to an in-cluster listener."
-            address           = f.smtp_host
+            host              = f.smtp_host
             port              = f.smtp_port
             protocol          = "smtp"
             implicitTls       = false
@@ -720,7 +752,13 @@ locals {
         "@type" = "update"
         object  = "Http"
         value = {
-          useXForwarded = true
+          # Traefik does not trust incoming forwarded headers, so it
+          # sends one X-Forwarded-For entry: the peer it saw. One hop
+          # takes that entry and a client cannot pick its own address
+          # (it drives rate limits and auto-ban). Requests without the
+          # header (socat admin proxy) fall back to the TCP peer.
+          clientIpSource = "xForwardedFor"
+          forwardedHops  = 1
         }
       }),
       jsonencode({

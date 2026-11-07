@@ -12,7 +12,7 @@ resource "kubernetes_deployment_v1" "stalwart" {
       # Force Pod restart when seed changes — without this, a
       # config.json or plan.ndjson edit only takes effect on the
       # next unrelated rollout.
-      "platform.local/seed-hash" = sha256(nonsensitive("${local.config_json}|${local.plan_ndjson}|${local.webui_client_id}"))
+      "platform.local/seed-hash" = sha256(nonsensitive("${local.config_json}|${local.plan_ndjson}"))
     }
   }
 
@@ -34,7 +34,7 @@ resource "kubernetes_deployment_v1" "stalwart" {
         labels = merge(local.tags, { app = "stalwart" })
 
         annotations = {
-          "platform.local/seed-hash" = sha256(nonsensitive("${local.config_json}|${local.plan_ndjson}|${local.webui_client_id}"))
+          "platform.local/seed-hash" = sha256(nonsensitive("${local.config_json}|${local.plan_ndjson}"))
         }
       }
 
@@ -116,10 +116,11 @@ resource "kubernetes_deployment_v1" "stalwart" {
         # ── Init containers ─────────────────────────────────────
         #
         # 1) bootstrap: writes config.json into the data PV (idempotent
-        #    overwrite — small file, only datastore stanza), patches the
-        #    upstream WebUI bundle with our Zitadel client_id and places
-        #    the result on /shared, downloads stalwart-cli onto /shared.
-        # 2) wait-zitadel (OIDC only): block the main container until the
+        #    overwrite — small file, only datastore stanza), downloads
+        #    the WebUI bundle and stalwart-cli onto /shared.
+        # 2) migrate-v1: one-time copy of a 0.16 store into the v1 store
+        #    (no-op once the volume carries `.v1-ready`).
+        # 3) wait-zitadel (OIDC only): block the main container until the
         #    configured issuer is reachable, so a node reboot can't start
         #    Stalwart before Zitadel is back and leave it rejecting every
         #    OIDC token + serving no TLS until manually restarted. Bounded
@@ -133,8 +134,7 @@ resource "kubernetes_deployment_v1" "stalwart" {
           }
 
           # Explicit resources — bootstrap downloads stalwart-cli
-          # (~10MB tarball) and the WebUI bundle (~500KB) and runs
-          # unzip + sed + zip on the latter. The namespace's
+          # (~10MB tarball) and the WebUI bundle (~1MB). The namespace's
           # LimitRange default of 32Mi OOM-kills the apk + xz unpack
           # midway, so this overrides with enough headroom.
           resources {
@@ -150,34 +150,34 @@ resource "kubernetes_deployment_v1" "stalwart" {
             name  = "CLI_URL"
             value = var.cli_url
           }
-          env {
-            name  = "WEBUI_CLIENT_ID"
-            value = local.webui_client_id
-          }
 
           command = ["sh", "-eu", "-c", <<-EOT
-            apk add --no-cache curl unzip zip xz >/dev/null
+            apk add --no-cache curl xz >/dev/null
 
             # ── Volume layout guard ────────────────────────────────
-            # 0.16 only migrates from 0.15.x (per UPGRADING/v0_16.md);
-            # older state leaves the server unrecoverable. The sentinel
-            # marks a volume this bootstrap has already initialised for
-            # 0.16. Without it, an empty volume is a fresh install; a
-            # non-empty one is either pre-0.16 state or a restore that
-            # lost the marker — both need an operator decision, never an
-            # automatic wipe, so the pod refuses to start.
-            SENTINEL=/opt/stalwart-mail/.v016-bootstrapped
-            if [ ! -f "$SENTINEL" ] && [ -n "$(find /opt/stalwart-mail/data /opt/stalwart-mail/etc -type f 2>/dev/null | head -n 1)" ]; then
-              echo "[bootstrap] FATAL: data/etc present but no $SENTINEL." >&2
-              echo "[bootstrap] Restored 0.16 volume: touch $SENTINEL on the volume and restart." >&2
-              echo "[bootstrap] Pre-0.16 state: back it up, remove data/ and etc/ by hand, restart." >&2
-              exit 1
+            # `.v1-ready` marks a volume whose v1 store is in use (fresh
+            # v1 install, or `migrate-v1` finished). `.v016-bootstrapped`
+            # marks a 0.16 volume, which `migrate-v1` copies into v1 on
+            # this start. Without either, an empty volume is a fresh
+            # install; a non-empty one is pre-0.16 state or a restore
+            # that lost its marker — both need an operator decision,
+            # never an automatic wipe, so the pod refuses to start.
+            V1=/opt/stalwart-mail/.v1-ready
+            V016=/opt/stalwart-mail/.v016-bootstrapped
+            if [ ! -f "$V1" ] && [ ! -f "$V016" ]; then
+              if [ -n "$(find /opt/stalwart-mail/data /opt/stalwart-mail/etc -type f 2>/dev/null | head -n 1)" ]; then
+                echo "[bootstrap] FATAL: data/etc present but neither $V1 nor $V016." >&2
+                echo "[bootstrap] Restored v1 volume: touch $V1 on the volume and restart." >&2
+                echo "[bootstrap] Restored 0.16 volume: touch $V016 on the volume and restart (it is migrated to v1)." >&2
+                echo "[bootstrap] Pre-0.16 state: back it up, remove data/ and etc/ by hand, restart." >&2
+                exit 1
+              fi
+              touch "$V1"
             fi
 
             # ── Datastore config (idempotent overwrite) ────────────
-            mkdir -p /opt/stalwart-mail/etc /opt/stalwart-mail/data/blobs
+            mkdir -p /opt/stalwart-mail/etc /opt/stalwart-mail/data/v1
             cp /seed/config.json /opt/stalwart-mail/etc/config.json
-            touch "$SENTINEL"
             # Only files with the wrong owner (chown -R rewrote every ctime).
             find /opt/stalwart-mail \( ! -user 1000 -o ! -group 1000 \) -exec chown 1000:1000 {} +
 
@@ -191,19 +191,8 @@ resource "kubernetes_deployment_v1" "stalwart" {
             fi
             chmod +x /shared/bin/stalwart-cli
 
-            # ── WebUI bundle: download + sed + repackage ───────────
-            mkdir -p /tmp/webui-src
-            curl -sSLfo /tmp/webui.zip "$WEBUI_URL"
-            unzip -qo /tmp/webui.zip -d /tmp/webui-src
-
-            # Single literal `stalwart-webui` appears in the bundle's
-            # JS twice (oauth.ts + api.ts), in both cases as a string.
-            # Zitadel client_ids are URL-safe so the substitution is
-            # straightforward sed.
-            find /tmp/webui-src -name '*.js' -print0 \
-              | xargs -0 sed -i "s/stalwart-webui/$WEBUI_CLIENT_ID/g"
-
-            cd /tmp/webui-src && zip -qr /shared/webui.zip .
+            # ── WebUI bundle ───────────────────────────────────────
+            curl -sSLfo /shared/webui.zip "$WEBUI_URL"
             ls -la /shared/ /shared/bin/
           EOT
           ]
@@ -220,6 +209,98 @@ resource "kubernetes_deployment_v1" "stalwart" {
           volume_mount {
             name       = "seed"
             mount_path = "/seed"
+          }
+        }
+
+        # One-time 0.16 -> v1 store copy. v1 cannot open a 0.16 store;
+        # stalwart-migrate copies it into the new v1 file (ids, UIDs and
+        # UIDVALIDITY preserved) and leaves the 0.16 file untouched. The
+        # Deployment is Recreate, so the 0.16 pod is gone before this runs
+        # (the tool also watches the source for 30s first). A failed run
+        # exits non-zero and the pod retries; the copy resumes from the
+        # state directory. Every question takes the tool's recommended
+        # answer: `prepare --non-interactive` writes each unanswered one
+        # as a commented table ("uncomment the table to accept the
+        # recommended values") and the awk uncomments exactly those. The
+        # settings this module manages are applied again by the applier
+        # on the v1 schema after start.
+        init_container {
+          name  = "migrate-v1"
+          image = var.migrate_image
+
+          command = ["sh", "-eu", "-c", <<-EOT
+            umask 077
+            ROOT=/opt/stalwart-mail
+            READY="$ROOT/.v1-ready"
+            STATE="$ROOT/migrate-v1"
+            OLD_DB="$ROOT/data/db.sqlite3"
+            NEW_DB="$ROOT/data/v1/db.sqlite3"
+            REDO="to migrate again, remove $READY, $ROOT/data/v1/ and $STATE/ and restart"
+            if [ -f "$READY" ]; then
+              # Fail closed instead of starting v1 on an empty or stale
+              # store: v1 store gone, or the 0.16 store written after the
+              # migration (the module was rolled back and 0.16 took mail).
+              if [ -f "$OLD_DB" ] && [ ! -f "$NEW_DB" ]; then
+                echo "[migrate-v1] FATAL: $READY is set but $NEW_DB is missing; $REDO" >&2
+                exit 1
+              fi
+              if [ -f "$OLD_DB" ] && [ "$OLD_DB" -nt "$READY" ]; then
+                echo "[migrate-v1] FATAL: the 0.16 store changed after the migration; $REDO" >&2
+                exit 1
+              fi
+              echo "[migrate-v1] v1 store in use, nothing to do"
+              exit 0
+            fi
+            if [ ! -f "$OLD_DB" ]; then
+              echo "[migrate-v1] FATAL: $ROOT/.v016-bootstrapped is set but $OLD_DB is missing" >&2
+              exit 1
+            fi
+            mkdir -p "$STATE" "$ROOT/data/v1"
+            printf '{"@type":"Sqlite","path":"%s"}' "$OLD_DB" > "$STATE/source.json"
+
+            # A final run that completed before the marker was written
+            # (pod killed in between) refuses to run again; v1 has not
+            # started yet, since it only starts after this container.
+            if [ -f "$STATE/state.sqlite" ] && stalwart-migrate status --state "$STATE" 2>/dev/null | grep -Eq '^final_done +[0-9]'; then
+              if [ ! -f "$STATE/final-report.txt" ] || [ "$OLD_DB" -nt "$STATE/final-report.txt" ]; then
+                echo "[migrate-v1] FATAL: the final run completed but the 0.16 store changed after it; $REDO" >&2
+                exit 1
+              fi
+              echo "[migrate-v1] final run already completed"
+            else
+              stalwart-migrate prepare --non-interactive --source "$STATE/source.json" --state "$STATE" || true
+              awk '
+                /^# Not answered yet:/ { open = 1; print; next }
+                open && /^# / { sub(/^# /, ""); print; next }
+                { open = 0; print }
+              ' "$STATE/answers.toml" > "$STATE/answers.toml.new"
+              mv "$STATE/answers.toml.new" "$STATE/answers.toml"
+              stalwart-migrate prepare --non-interactive --source "$STATE/source.json" --state "$STATE"
+
+              stalwart-migrate run --final --yes \
+                --source "$STATE/source.json" --target /seed/config.json --state "$STATE"
+            fi
+
+            cat "$STATE/final-report.txt" || true
+            touch "$READY"
+            echo "[migrate-v1] done; report in $STATE/final-report.txt"
+          EOT
+          ]
+
+          resources {
+            requests = { cpu = "100m", memory = "128Mi" }
+            limits   = { cpu = "1", memory = "1Gi" }
+          }
+
+          volume_mount {
+            name       = "data"
+            mount_path = "/opt/stalwart-mail"
+            sub_path   = local.data_sub_path
+          }
+          volume_mount {
+            name       = "seed"
+            mount_path = "/seed"
+            read_only  = true
           }
         }
 
@@ -326,6 +407,10 @@ resource "kubernetes_deployment_v1" "stalwart" {
             value = var.primary_domain
           }
           env {
+            name  = "WEBUI_CLIENT_ID"
+            value = local.oidc_enabled ? local.webui_client_id : ""
+          }
+          env {
             name  = "INGEST_ROUTE_NAMES"
             value = join(" ", [for k, _ in var.ingest_forwards : "ingest-${k}"])
           }
@@ -371,6 +456,16 @@ resource "kubernetes_deployment_v1" "stalwart" {
                   || echo "[applier] $rname delete returned non-zero — proceeding anyway (RECONCILE-ERROR)"
               fi
             done
+            # The WebUI's OAuthClient, matched by client id (WEBUI_CLIENT_ID).
+            if [ -n "$${WEBUI_CLIENT_ID:-}" ]; then
+              OID=$(/shared/bin/stalwart-cli query OAuthClient 2>/dev/null \
+                | awk -v n="$WEBUI_CLIENT_ID" '$2==n {print $1; exit}') || true
+              if [ -n "$${OID:-}" ]; then
+                echo "[applier] replacing OAuthClient '$WEBUI_CLIENT_ID' (id $OID)"
+                /shared/bin/stalwart-cli delete OAuthClient --ids "$OID" \
+                  || echo "[applier] OAuthClient delete returned non-zero — proceeding anyway (RECONCILE-ERROR)"
+              fi
+            fi
             SID=$(/shared/bin/stalwart-cli query SieveSystemScript 2>/dev/null \
               | awk '$2=="ingest-forwards" {print $1; exit}') || true
             if [ -n "$${SID:-}" ]; then
