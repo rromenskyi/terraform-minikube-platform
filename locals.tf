@@ -92,7 +92,7 @@ locals {
         enabled                             = false
         hostname                            = ""
         storage_class                       = ""
-        vault_config_operator_chart_version = "v1.0.5"
+        vault_config_operator_chart_version = "v1.0.6"
       }
       argocd = {
         enabled       = false
@@ -444,7 +444,7 @@ locals {
         # Defaults below are the values that survived a real ARC
         # build cycle on this cluster.
         enabled   = false
-        image_tag = "v0.34.1"
+        image_tag = "v0.34.2"
         host_path = "/data/vol/buildkit-cache"
         # Non-empty = the cache on a PVC of this class (`storage_size`)
         # instead of `host_path`, so it follows the Pod across nodes.

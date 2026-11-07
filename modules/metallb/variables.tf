@@ -19,7 +19,7 @@ variable "namespace" {
 variable "version_pin" {
   description = "Helm chart version for metallb/metallb. Pinned so an upstream re-tag doesn't change CRD shape or defaults across applies."
   type        = string
-  default     = "0.16.1"
+  default     = "0.16.2"
 }
 
 variable "controller_node_selector" {
