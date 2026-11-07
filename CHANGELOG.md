@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Stalwart v1.0.3 (from 0.16.27), stalwart-cli v1.0.14, WebUI v2.0.5. The first v1 start copies the 0.16 store into a new one with stalwart-migrate (init container `migrate-v1`) and leaves the 0.16 store in place for rollback. OAuth clients sign in again afterwards. See `modules/stalwart/CHANGELOG.md`.
+
 ### Added
 - `monitoring.node_exporter_textfile_dir`: node-exporter textfile collector for a host directory (terraform-k8s-addons v2.17.0), so host-side scripts can publish metrics. Empty (default) keeps it off.
 - `monitoring.disabled_builtin_rules`: kube-prometheus-stack built-in alert rules to switch off entirely (terraform-k8s-addons v2.16.0), for rules that do not fit the cluster; `muted_builtin_alerts` only keeps them out of notifications.

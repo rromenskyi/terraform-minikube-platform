@@ -81,7 +81,7 @@ resource "zitadel_application_oidc" "stalwart" {
 # against Zitadel, then XOAUTH2 to Stalwart's IMAP/SMTP. Created ONLY when the
 # native-client listeners are published (`client_listen_ip`). In the SAME
 # project as the WebUI app, so its JWT access token carries the project-id
-# audience Stalwart's `requireAudience` checks. Native app + loopback redirect
+# audience Stalwart's `acceptedAudiences` checks. Native app + loopback redirect
 # (RFC 8252 — any localhost port matches) + PKCE (no client secret to store).
 resource "zitadel_application_oidc" "stalwart_native_client" {
   for_each = var.client_listen_ip != "" ? local.oidc_set : toset([])

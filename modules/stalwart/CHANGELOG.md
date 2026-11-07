@@ -7,6 +7,35 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- **Stalwart v1.0.3** (from 0.16.27), stalwart-cli v1.0.14, WebUI v2.0.5.
+  v1 cannot open a 0.16 store, so the first v1 start copies it: the new
+  `migrate-v1` init container (`migrate_image`, stalwart-migrate 1.0.6)
+  runs `stalwart-migrate run --final` from `data/db.sqlite3` into the new
+  store at `data/v1/db.sqlite3`, accepting the tool's recommended answer
+  to every question, then marks the volume `.v1-ready` and does nothing
+  on later starts. Account, mailbox and thread ids, IMAP UIDs and
+  UIDVALIDITY are kept. The 0.16 file and the state directory
+  (`migrate-v1/`, with `final-report.txt`) stay on the volume: until v1
+  has taken mail, rolling back is reverting the module. To migrate again
+  after such a rollback, remove `.v1-ready`, `data/v1/` and `migrate-v1/`
+  from the volume first; otherwise v1 starts on the stale copy. Fresh
+  volumes start on v1 directly.
+- Upgrade impact: OAuth tokens are not migrated, so OAuth clients (WebUI,
+  Roundcube, native clients) sign in again; CalDAV/CardDAV clients fetch
+  their data once more; the search index is rebuilt in the background
+  after the first start.
+- Plan converted to the v1 schema: `Application.enable`,
+  `MtaRoute.host`, `Http.clientIpSource = xForwardedFor` with
+  `forwardedHops = 1` (Traefik appends the peer it saw), and the OIDC
+  directory uses `acceptedAudiences` (the project id),
+  `unscopedTokens = interoperable` (Zitadel access tokens carry no
+  Stalwart scopes) and `opaqueTokenValidation = userInfo`;
+  `requireScopes` no longer exists.
+- The WebUI bundle is served as downloaded: the Zitadel client id reaches
+  it through `Application.oauthClientId` instead of a `sed` over the
+  bundle's JavaScript.
+
 ### Added
 - `storage_class` / `storage_seed_node`: data volume on a StorageClass (PVC
   `data-stalwart`), with a one-time copy of the old hostPath directory on the
