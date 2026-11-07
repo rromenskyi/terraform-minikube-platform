@@ -8,6 +8,7 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Security
+- Chart 10.11.7 (Argo CD v3.5.7).
 - Chart 10.11.6 (Argo CD v3.5.6). Fixes CVE-2026-77459: PreDelete/PostDelete hooks bypassing AppProject restrictions.
 
 ### Added

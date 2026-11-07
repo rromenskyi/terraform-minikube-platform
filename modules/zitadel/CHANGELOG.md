@@ -8,6 +8,7 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Security
+- Zitadel and the login UI default to v4.20.1. The login image moves to Next.js 16.4.3, fixing GHSA-673q-mjm6-r5xr and GHSA-2464-fhr4-w9xw (the latter was already mitigated by the `/_next/image` block).
 - Zitadel and the login UI default to v4.19.5 (Next.js 16.3.6 in the login image), fixing several unauthenticated remote code execution bugs in Next.js 16.2.
 - The login route refuses `/ui/v2/login/_next/image` (403). The login UI does not use Next.js's image optimizer, which had unauthenticated RCE bugs still open in Next.js 16.3 (GHSA-2464-fhr4-w9xw).
 
