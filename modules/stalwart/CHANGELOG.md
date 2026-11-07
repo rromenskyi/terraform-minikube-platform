@@ -45,7 +45,8 @@ the project itself follows [Semantic Versioning](https://semver.org/).
   missing, or when the 0.16 store was written after the migration (the
   module was rolled back and 0.16 took mail). A final run that completed
   before the marker was written (pod killed in between) is detected with
-  `stalwart-migrate status` and only marks the volume. The final report
+  `stalwart-migrate status` and only marks the volume, unless the 0.16
+  store changed after that run. The final report
   is printed to the init container's log.
 
 ### Added

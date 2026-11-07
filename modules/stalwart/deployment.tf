@@ -262,6 +262,10 @@ resource "kubernetes_deployment_v1" "stalwart" {
             # (pod killed in between) refuses to run again; v1 has not
             # started yet, since it only starts after this container.
             if [ -f "$STATE/state.sqlite" ] && stalwart-migrate status --state "$STATE" 2>/dev/null | grep -Eq '^final_done +[0-9]'; then
+              if [ ! -f "$STATE/final-report.txt" ] || [ "$OLD_DB" -nt "$STATE/final-report.txt" ]; then
+                echo "[migrate-v1] FATAL: the final run completed but the 0.16 store changed after it; $REDO" >&2
+                exit 1
+              fi
               echo "[migrate-v1] final run already completed"
             else
               stalwart-migrate prepare --non-interactive --source "$STATE/source.json" --state "$STATE" || true
