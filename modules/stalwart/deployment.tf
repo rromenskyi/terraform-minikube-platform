@@ -231,9 +231,23 @@ resource "kubernetes_deployment_v1" "stalwart" {
           command = ["sh", "-eu", "-c", <<-EOT
             umask 077
             ROOT=/opt/stalwart-mail
+            READY="$ROOT/.v1-ready"
             STATE="$ROOT/migrate-v1"
             OLD_DB="$ROOT/data/db.sqlite3"
-            if [ -f "$ROOT/.v1-ready" ]; then
+            NEW_DB="$ROOT/data/v1/db.sqlite3"
+            REDO="to migrate again, remove $READY, $ROOT/data/v1/ and $STATE/ and restart"
+            if [ -f "$READY" ]; then
+              # Fail closed instead of starting v1 on an empty or stale
+              # store: v1 store gone, or the 0.16 store written after the
+              # migration (the module was rolled back and 0.16 took mail).
+              if [ -f "$OLD_DB" ] && [ ! -f "$NEW_DB" ]; then
+                echo "[migrate-v1] FATAL: $READY is set but $NEW_DB is missing; $REDO" >&2
+                exit 1
+              fi
+              if [ -f "$OLD_DB" ] && [ "$OLD_DB" -nt "$READY" ]; then
+                echo "[migrate-v1] FATAL: the 0.16 store changed after the migration; $REDO" >&2
+                exit 1
+              fi
               echo "[migrate-v1] v1 store in use, nothing to do"
               exit 0
             fi
@@ -244,19 +258,27 @@ resource "kubernetes_deployment_v1" "stalwart" {
             mkdir -p "$STATE" "$ROOT/data/v1"
             printf '{"@type":"Sqlite","path":"%s"}' "$OLD_DB" > "$STATE/source.json"
 
-            stalwart-migrate prepare --non-interactive --source "$STATE/source.json" --state "$STATE" || true
-            awk '
-              /^# Not answered yet:/ { open = 1; print; next }
-              open && /^# / { sub(/^# /, ""); print; next }
-              { open = 0; print }
-            ' "$STATE/answers.toml" > "$STATE/answers.toml.new"
-            mv "$STATE/answers.toml.new" "$STATE/answers.toml"
-            stalwart-migrate prepare --non-interactive --source "$STATE/source.json" --state "$STATE"
+            # A final run that completed before the marker was written
+            # (pod killed in between) refuses to run again; v1 has not
+            # started yet, since it only starts after this container.
+            if [ -f "$STATE/state.sqlite" ] && stalwart-migrate status --state "$STATE" 2>/dev/null | grep -Eq '^final_done +[0-9]'; then
+              echo "[migrate-v1] final run already completed"
+            else
+              stalwart-migrate prepare --non-interactive --source "$STATE/source.json" --state "$STATE" || true
+              awk '
+                /^# Not answered yet:/ { open = 1; print; next }
+                open && /^# / { sub(/^# /, ""); print; next }
+                { open = 0; print }
+              ' "$STATE/answers.toml" > "$STATE/answers.toml.new"
+              mv "$STATE/answers.toml.new" "$STATE/answers.toml"
+              stalwart-migrate prepare --non-interactive --source "$STATE/source.json" --state "$STATE"
 
-            stalwart-migrate run --final --yes \
-              --source "$STATE/source.json" --target /seed/config.json --state "$STATE"
+              stalwart-migrate run --final --yes \
+                --source "$STATE/source.json" --target /seed/config.json --state "$STATE"
+            fi
 
-            touch "$ROOT/.v1-ready"
+            cat "$STATE/final-report.txt" || true
+            touch "$READY"
             echo "[migrate-v1] done; report in $STATE/final-report.txt"
           EOT
           ]
@@ -381,6 +403,10 @@ resource "kubernetes_deployment_v1" "stalwart" {
             value = var.primary_domain
           }
           env {
+            name  = "WEBUI_CLIENT_ID"
+            value = local.oidc_enabled ? local.webui_client_id : ""
+          }
+          env {
             name  = "INGEST_ROUTE_NAMES"
             value = join(" ", [for k, _ in var.ingest_forwards : "ingest-${k}"])
           }
@@ -426,6 +452,16 @@ resource "kubernetes_deployment_v1" "stalwart" {
                   || echo "[applier] $rname delete returned non-zero — proceeding anyway (RECONCILE-ERROR)"
               fi
             done
+            # The WebUI's OAuthClient, matched by client id (WEBUI_CLIENT_ID).
+            if [ -n "$${WEBUI_CLIENT_ID:-}" ]; then
+              OID=$(/shared/bin/stalwart-cli query OAuthClient 2>/dev/null \
+                | awk -v n="$WEBUI_CLIENT_ID" '$2==n {print $1; exit}') || true
+              if [ -n "$${OID:-}" ]; then
+                echo "[applier] replacing OAuthClient '$WEBUI_CLIENT_ID' (id $OID)"
+                /shared/bin/stalwart-cli delete OAuthClient --ids "$OID" \
+                  || echo "[applier] OAuthClient delete returned non-zero — proceeding anyway (RECONCILE-ERROR)"
+              fi
+            fi
             SID=$(/shared/bin/stalwart-cli query SieveSystemScript 2>/dev/null \
               | awk '$2=="ingest-forwards" {print $1; exit}') || true
             if [ -n "$${SID:-}" ]; then

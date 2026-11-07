@@ -276,11 +276,10 @@ locals {
         "@type" = "create"
         object  = "Application"
         value = {
-          app-webui = {
-            description   = "Stalwart Web Interface"
-            enable        = true
-            resourceUrl   = "file:///shared/webui.zip"
-            oauthClientId = local.webui_client_id
+          app-webui = merge({
+            description = "Stalwart Web Interface"
+            enable      = true
+            resourceUrl = "file:///shared/webui.zip"
             # Stalwart's `Map<String>` serializes as an object whose
             # keys are the elements and values are `true` — not as a
             # JSON array. Same form below for OidcDirectory.acceptedAudiences.
@@ -292,7 +291,15 @@ locals {
             # served index.html, so urlPrefix at any depth works
             # without code changes.
             urlPrefix = local.webui_url_prefixes
-          }
+            }, local.oidc_enabled ? {
+            # Static client id: the WebUI uses it for every sign-in, the
+            # Zitadel one and the recovery admin's against Stalwart's own
+            # authorization server (matching OAuthClient below). `full`
+            # keeps the WebUI's full access on the latter; Zitadel ignores
+            # the scope.
+            oauthClientId = local.webui_client_id
+            oauthScopes   = { "urn:stalwart:oauth:scope:full" = true }
+          } : null)
         }
       }),
 
@@ -366,6 +373,32 @@ locals {
             usernameDomain        = var.primary_domain
             claimName             = "name"
             claimGroups           = "groups"
+          }
+        }
+      }),
+
+      # Stalwart-side twin of the WebUI's Zitadel client id. v1 rejects
+      # unknown client ids on its own authorization server, which the
+      # WebUI still uses for the recovery-admin sign-in (the fallback
+      # when Zitadel is down); without this it answers `Unknown client
+      # id`. Public client, no secret. The applier replaces the previous
+      # one (matched by client id) before this create.
+      jsonencode({
+        "@type" = "create"
+        object  = "OAuthClient"
+        value = {
+          oauth-webui = {
+            clientId    = local.webui_client_id
+            description = "Stalwart Web Interface (managed by terraform-minikube-platform)"
+            scopes      = { full = true }
+            redirectUris = {
+              "${local.admin_origin}/admin/oauth/callback"   = true
+              "${local.admin_origin}/account/oauth/callback" = true
+            }
+            postLogoutRedirectUris = {
+              "${local.admin_origin}/admin/login"   = true
+              "${local.admin_origin}/account/login" = true
+            }
           }
         }
       }),
@@ -719,9 +752,11 @@ locals {
         "@type" = "update"
         object  = "Http"
         value = {
-          # Traefik appends the peer it saw to X-Forwarded-For; one
-          # trusted hop takes that entry, so a client cannot pick its
-          # own address (it drives rate limits and auto-ban).
+          # Traefik does not trust incoming forwarded headers, so it
+          # sends one X-Forwarded-For entry: the peer it saw. One hop
+          # takes that entry and a client cannot pick its own address
+          # (it drives rate limits and auto-ban). Requests without the
+          # header (socat admin proxy) fall back to the TCP peer.
           clientIpSource = "xForwardedFor"
           forwardedHops  = 1
         }
