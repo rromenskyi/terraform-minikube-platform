@@ -50,7 +50,7 @@ Roundcube webmail Deployment + PVC for the bundled mail stack. Talks to the Stal
 | <a name="input_cpu_request"></a> [cpu\_request](#input\_cpu\_request) | n/a | `string` | `"20m"` | no |
 | <a name="input_enabled"></a> [enabled](#input\_enabled) | n/a | `bool` | `true` | no |
 | <a name="input_hostname"></a> [hostname](#input\_hostname) | Public hostname Roundcube is reachable at (the same one Stalwart uses; Roundcube serves root, Stalwart admin lives at /admin and /account). | `string` | n/a | yes |
-| <a name="input_image"></a> [image](#input\_image) | Roundcube container image. The Apache flavour is used because the upstream image bakes a working PHP+Apache config; the alpine-fpm flavour needs an extra fpm/nginx pair. | `string` | `"roundcube/roundcubemail:1.6.20-apache@sha256:e69eab9fa2625c4935f4703890afa65263d7584f56eca000cfebd01e5b79fcb4"` | no |
+| <a name="input_image"></a> [image](#input\_image) | Roundcube container image. The Apache flavour is used because the upstream image bakes a working PHP+Apache config; the alpine-fpm flavour needs an extra fpm/nginx pair. | `string` | `"roundcube/roundcubemail:1.7.5-apache@sha256:e440257796672b039072bfb09c678984141559f8ff0ddff804bf21e7261d2b65"` | no |
 | <a name="input_imap_host"></a> [imap\_host](#input\_imap\_host) | In-cluster Stalwart IMAP service host. TLS on port 993 (`tls://...`). | `string` | `"stalwart.mail.svc.cluster.local"` | no |
 | <a name="input_imap_port"></a> [imap\_port](#input\_imap\_port) | n/a | `number` | `993` | no |
 | <a name="input_memory_limit"></a> [memory\_limit](#input\_memory\_limit) | n/a | `string` | `"512Mi"` | no |

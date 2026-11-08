@@ -7,6 +7,9 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- argo-cd chart 10.17.0 (Argo CD v3.6.1). Applications with `ServerSideApply=true` now also use server-side diff.
+
 ### Security
 - Chart 10.11.7 (Argo CD v3.5.7).
 - Chart 10.11.6 (Argo CD v3.5.6). Fixes CVE-2026-77459: PreDelete/PostDelete hooks bypassing AppProject restrictions.

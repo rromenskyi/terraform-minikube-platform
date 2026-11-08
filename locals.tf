@@ -222,7 +222,7 @@ locals {
       }
       github_runners = {
         enabled                  = false
-        chart_version            = "0.14.2" # controller and scale sets must match
+        chart_version            = "0.15.1" # controller and scale sets must match
         controller_node_selector = {}
         controller_tolerations   = []
         scale_sets               = {}

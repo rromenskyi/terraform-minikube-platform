@@ -97,7 +97,7 @@ locals {
     $config['plugins'] = [];
 
     // OIDC client config — Zitadel-managed confidential application
-    // with a client secret. Roundcube 1.6 oauth2 hard-requires the
+    // with a client secret. Roundcube oauth2 hard-requires the
     // secret in the token-exchange request; PKCE-only public clients
     // (auth_method_type=NONE) trigger an infinite redirect loop. The
     // secret is rendered into the ConfigMap directly here for
@@ -121,6 +121,9 @@ locals {
     $config['oauth_scope']           = 'openid email profile offline_access';
     $config['oauth_identity_fields'] = ['email'];
     $config['oauth_login_redirect']  = true;
+    // 1.7 picks OAUTHBEARER over XOAUTH2 when the server offers both;
+    // keep the mechanism 1.6 used against Stalwart.
+    $config['oauth_auth_type']       = 'XOAUTH2';
 
     // Behind Cloudflare Tunnel + Traefik. cloudflared sends HTTP to
     // Traefik on port 80; Traefik forwards to Roundcube as HTTP.

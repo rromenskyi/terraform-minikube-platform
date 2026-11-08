@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- terraform-k8s-addons v2.18.0: Traefik chart 42.3.1 (Traefik v3.7.17), kube-prometheus-stack 93.1.0 (Prometheus Operator v0.95.1, Prometheus 3.16.0, Grafana 13.3.0).
+- Argo CD chart 10.17.0 (v3.6.1), ARC 0.15.1 (scale sets are now replaced automatically on a controller chart version change), Roundcube 1.7.5 (one-way SQLite schema migration; logout also ends the Zitadel session). See the module changelogs.
 - Image and chart bumps: Vault 2.2.1, Vector 0.61.0, git-sync v4.8.0, HAProxy 3.2 (Valkey Sentinel), piraeus chart 2.12.1, smartctl-exporter chart 0.19.1, actions-runner 2.338.2, samba a3.24.4, and fresh digests for the `latest`-only Bitnami images (Valkey, Sentinel, kubectl). See the module changelogs.
 - Stalwart v1.0.3 (from 0.16.27), stalwart-cli v1.0.14, WebUI v2.0.5. The first v1 start copies the 0.16 store into a new one with stalwart-migrate (init container `migrate-v1`) and leaves the 0.16 store in place for rollback. OAuth clients sign in again afterwards. See `modules/stalwart/CHANGELOG.md`.
 
