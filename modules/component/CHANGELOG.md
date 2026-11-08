@@ -10,6 +10,9 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ### Changed
 - git-sync sidecar default image v4.8.0.
 
+### Fixed
+- git-sync v4.8.0 failed on start (`detected dubious ownership in repository at '/git'`): it no longer sets `safe.directory` itself, and `/git` is a root-owned emptyDir. Both git-sync containers now pass `--git-config=safe.directory:*`.
+
 ### Added
 - `volume_preferred_node_selectors`: with volumes on `storage_class`, a soft preference (weight 100, one term per selector) for the nodes holding the volume's copies, added to the caller's own preferred node terms.
 
