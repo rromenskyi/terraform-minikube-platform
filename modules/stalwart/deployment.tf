@@ -516,22 +516,40 @@ resource "kubernetes_deployment_v1" "stalwart" {
               fi
             done
 
-            # DkimSignature idempotency. Stalwart auto-generates a DKIM signature
-            # per Domain (rotation selectors `v1-rsa-<date>` etc.), so our
-            # explicit `create DkimSignature` fails (invalidPatch / duplicate) on
-            # any domain that already has one. Drop any create whose target
-            # Domain (resolved to a real id by the block above) already has a
-            # signature; keep creates for brand-new domains (ref still `#...`).
-            SIGNED=$(/shared/bin/stalwart-cli query DkimSignature 2>/dev/null \
-              | grep -o 'id: [a-z0-9]*' | awk '{print $2}' | sort -u)
+            # DKIM. Each module domain is signed with the module's key under
+            # the module's selector, the one published in DNS. A domain
+            # created with automatic DKIM management (the server default,
+            # or created before the module set Manual) carries server-made
+            # keys under rotation selectors (`v1-rsa-<date>` etc.) that
+            # nothing publishes, so receivers fail those signatures. For
+            # every planned DkimSignature on an existing domain: switch the
+            # domain to manual management, delete its signatures under any
+            # other selector, and drop the create when the module's selector
+            # is already there (the server accepts duplicate selectors, and
+            # the key never changes). Brand-new domains (ref still `#...`)
+            # are created with manual management and keep their create.
+            /shared/bin/stalwart-cli query DkimSignature --json --fields id,domainId,selector \
+              2>/dev/null > /tmp/dkim.ndjson || true
             grep '"object":"DkimSignature","value":' /tmp/plan.ndjson | while IFS= read -r line; do
               fid=$(printf '%s' "$line" | sed 's/.*"object":"DkimSignature","value":{"\([^"]*\)":.*/\1/')
               did=$(printf '%s' "$line" | sed 's/.*"domainId":"\([^"]*\)".*/\1/')
+              sel=$(printf '%s' "$line" | sed 's/.*"selector":"\([^"]*\)".*/\1/')
               case "$did" in "#"*) continue ;; esac
-              if printf '%s\n' "$SIGNED" | grep -qx "$did"; then
-                echo "[applier] Domain id '$did' already has a DKIM signature — skip create '$fid'"
-                sed -i "/\"object\":\"DkimSignature\",\"value\":{\"$fid\"/d" /tmp/plan.ndjson
-              fi
+              printf '{"@type":"update","object":"Domain","id":"%s","value":{"dkimManagement":{"@type":"Manual"}}}' "$did" \
+                | /shared/bin/stalwart-cli apply --stdin --quiet \
+                || echo "[applier] Domain id '$did' manual DKIM switch returned non-zero (RECONCILE-ERROR)"
+              grep "\"domainId\":\"$did\"" /tmp/dkim.ndjson | while IFS= read -r sig; do
+                sid=$(printf '%s' "$sig" | sed 's/.*"id":"\([^"]*\)".*/\1/')
+                ssel=$(printf '%s' "$sig" | sed 's/.*"selector":"\([^"]*\)".*/\1/')
+                if [ "$ssel" = "$sel" ]; then
+                  echo "[applier] Domain id '$did' already has DKIM selector '$sel' — skip create '$fid'"
+                  sed -i "/\"object\":\"DkimSignature\",\"value\":{\"$fid\"/d" /tmp/plan.ndjson
+                else
+                  echo "[applier] Domain id '$did': removing DKIM signature under unpublished selector '$ssel' (id $sid)"
+                  /shared/bin/stalwart-cli delete DkimSignature --ids "$sid" \
+                    || echo "[applier] DkimSignature $sid delete returned non-zero (RECONCILE-ERROR)"
+                fi
+              done
             done
 
             # AllowedIp idempotency: the address is the primary key, so a

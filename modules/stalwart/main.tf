@@ -119,6 +119,9 @@ locals {
   "\n", "")) : ""
   dkim_dns_value = var.enabled ? "v=DKIM1; k=rsa; p=${local.dkim_pubkey_body}" : ""
   dkim_dns_name  = "${var.dkim_selector}._domainkey"
+  dkim_headers = {
+    for h in ["From", "To", "Subject", "Date", "Message-ID", "MIME-Version"] : h => true
+  }
 
   # Per-additional-domain pubkey body + DKIM TXT value. Same shape as
   # `dkim_pubkey_body` above, just iterated. Keyed by the operator-
@@ -304,14 +307,18 @@ locals {
       }),
 
       # Mail domain. defaultDomainId on SystemSettings is patched
-      # in the update pass below, against this same #-ref.
+      # in the update pass below, against this same #-ref. Manual DKIM
+      # management: the module signs with its own key (below), the one
+      # it publishes in DNS. Automatic management would add keys under
+      # rotation selectors that nothing publishes.
       jsonencode({
         "@type" = "create"
         object  = "Domain"
         value = {
           dom-primary = {
-            name        = var.primary_domain
-            description = "Primary mail domain (managed by terraform-minikube-platform)."
+            name           = var.primary_domain
+            description    = "Primary mail domain (managed by terraform-minikube-platform)."
+            dkimManagement = { "@type" = "Manual" }
           }
         }
       }),
@@ -614,11 +621,11 @@ locals {
     ] : [],
 
     # ── DKIM signing key for the primary domain ───────────────────
-    # tls_private_key in TF state stays stable across applies; the
-    # `--continue-on-error` swallows `alreadyExists` on re-apply so
-    # the key in Stalwart is set once and never rotated by accident.
-    # Public key body is also TF-derived and exported via
-    # `dkim_dns_value` for the operator to drop into the domain yaml.
+    # tls_private_key in TF state stays stable across applies. The
+    # applier skips this create once the domain has a signature under
+    # this selector, so the key in Stalwart is set once and never
+    # rotated by accident. Public key body is also TF-derived and
+    # published by dns.tf (or exported via `dkim_dns_value`).
     var.enabled ? [
       jsonencode({
         "@type" = "create"
@@ -630,11 +637,11 @@ locals {
             selector         = var.dkim_selector
             canonicalization = "relaxed/relaxed"
             stage            = "active"
-            headers          = ["From", "To", "Subject", "Date", "Message-ID", "MIME-Version"]
+            headers          = local.dkim_headers
             report           = false
             privateKey = {
-              "@type" = "Value"
-              value   = tls_private_key.dkim["enabled"].private_key_pem
+              "@type" = "Text"
+              secret  = tls_private_key.dkim["enabled"].private_key_pem
             }
           }
         }
@@ -655,8 +662,9 @@ locals {
         object  = "Domain"
         value = {
           "dom-add-${slug}" = {
-            name        = cfg.name
-            description = "Additional mail domain ${cfg.name} (managed by terraform-minikube-platform)."
+            name           = cfg.name
+            description    = "Additional mail domain ${cfg.name} (managed by terraform-minikube-platform)."
+            dkimManagement = { "@type" = "Manual" }
           }
         }
       })
@@ -673,11 +681,11 @@ locals {
             selector         = cfg.dkim_selector
             canonicalization = "relaxed/relaxed"
             stage            = "active"
-            headers          = ["From", "To", "Subject", "Date", "Message-ID", "MIME-Version"]
+            headers          = local.dkim_headers
             report           = false
             privateKey = {
-              "@type" = "Value"
-              value   = tls_private_key.dkim_additional[slug].private_key_pem
+              "@type" = "Text"
+              secret  = tls_private_key.dkim_additional[slug].private_key_pem
             }
           }
         }
