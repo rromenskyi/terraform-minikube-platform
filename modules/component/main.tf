@@ -591,6 +591,10 @@ resource "kubernetes_deployment_v1" "this" {
               "--link=current",
               "--depth=1",
               "--one-time",
+              # /git is an emptyDir owned by root (group fs_group) while
+              # git-sync runs as 65533; git refuses such a repo as
+              # "dubious ownership". git-sync up to v4.4 set this itself.
+              "--git-config=safe.directory:*",
               "--ssh-key-file=/etc/git-secret/ssh-privatekey",
               "--ssh-known-hosts-file=/etc/git-secret/known_hosts",
             ]
@@ -954,6 +958,7 @@ resource "kubernetes_deployment_v1" "this" {
               "--depth=1",
               "--period=${container.value.period_seconds}s",
               "--exechook-command=/git/.serve-hook",
+              "--git-config=safe.directory:*", # see git-sync-init
               "--ssh-key-file=/etc/git-secret/ssh-privatekey",
               "--ssh-known-hosts-file=/etc/git-secret/known_hosts",
             ]
