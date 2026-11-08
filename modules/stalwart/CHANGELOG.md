@@ -63,8 +63,9 @@ the project itself follows [Semantic Versioning](https://semver.org/).
   so receivers could not verify them. Module domains now use manual DKIM
   management and the module's key under `dkim_selector`, the one in DNS.
   On existing domains the applier switches DKIM management to manual,
-  **deletes their signatures under any other selector**, and creates the
-  module's signature once (skipped on later starts).
+  creates the module's signature once (skipped on later starts) and,
+  once it exists, **deletes the domain's signatures under any other
+  selector**. If the create fails, the old signatures stay.
 - Bootstrap no longer wipes `data/` and `etc/` when the 0.16 sentinel is
   missing. A non-empty volume without the sentinel (pre-0.16 state, or a
   restore that lost the marker) now stops the pod with instructions; an

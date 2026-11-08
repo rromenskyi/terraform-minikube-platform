@@ -522,34 +522,36 @@ resource "kubernetes_deployment_v1" "stalwart" {
             # or created before the module set Manual) carries server-made
             # keys under rotation selectors (`v1-rsa-<date>` etc.) that
             # nothing publishes, so receivers fail those signatures. For
-            # every planned DkimSignature on an existing domain: switch the
-            # domain to manual management, delete its signatures under any
-            # other selector, and drop the create when the module's selector
-            # is already there (the server accepts duplicate selectors, and
-            # the key never changes). Brand-new domains (ref still `#...`)
-            # are created with manual management and keep their create.
-            /shared/bin/stalwart-cli query DkimSignature --json --fields id,domainId,selector \
-              2>/dev/null > /tmp/dkim.ndjson || true
+            # every planned DkimSignature on an existing domain: drop the
+            # create when the module's selector is already there (the
+            # server accepts duplicate selectors, and the key never
+            # changes), then switch the domain to manual management. The
+            # signatures under other selectors are deleted after the plan
+            # apply, and only once the module's one exists, so a failed
+            # create never leaves a domain unsigned. Brand-new domains (ref
+            # still `#...`) are created with manual management and keep
+            # their create.
+            : > /tmp/dkim-cleanup
+            if ! /shared/bin/stalwart-cli query DkimSignature --json --fields id,domainId,selector \
+              > /tmp/dkim.ndjson 2>/dev/null; then
+              echo "[applier] DkimSignature query failed — leaving DKIM untouched this start (RECONCILE-ERROR)"
+              sed -i '/"object":"DkimSignature","value":/d' /tmp/plan.ndjson
+            fi
             grep '"object":"DkimSignature","value":' /tmp/plan.ndjson | while IFS= read -r line; do
               fid=$(printf '%s' "$line" | sed 's/.*"object":"DkimSignature","value":{"\([^"]*\)":.*/\1/')
               did=$(printf '%s' "$line" | sed 's/.*"domainId":"\([^"]*\)".*/\1/')
               sel=$(printf '%s' "$line" | sed 's/.*"selector":"\([^"]*\)".*/\1/')
               case "$did" in "#"*) continue ;; esac
-              printf '{"@type":"update","object":"Domain","id":"%s","value":{"dkimManagement":{"@type":"Manual"}}}' "$did" \
-                | /shared/bin/stalwart-cli apply --stdin --quiet \
-                || echo "[applier] Domain id '$did' manual DKIM switch returned non-zero (RECONCILE-ERROR)"
-              grep "\"domainId\":\"$did\"" /tmp/dkim.ndjson | while IFS= read -r sig; do
-                sid=$(printf '%s' "$sig" | sed 's/.*"id":"\([^"]*\)".*/\1/')
-                ssel=$(printf '%s' "$sig" | sed 's/.*"selector":"\([^"]*\)".*/\1/')
-                if [ "$ssel" = "$sel" ]; then
-                  echo "[applier] Domain id '$did' already has DKIM selector '$sel' — skip create '$fid'"
-                  sed -i "/\"object\":\"DkimSignature\",\"value\":{\"$fid\"/d" /tmp/plan.ndjson
-                else
-                  echo "[applier] Domain id '$did': removing DKIM signature under unpublished selector '$ssel' (id $sid)"
-                  /shared/bin/stalwart-cli delete DkimSignature --ids "$sid" \
-                    || echo "[applier] DkimSignature $sid delete returned non-zero (RECONCILE-ERROR)"
-                fi
-              done
+              if grep -F "\"domainId\":\"$did\"" /tmp/dkim.ndjson | grep -qF "\"selector\":\"$sel\""; then
+                echo "[applier] Domain id '$did' already has DKIM selector '$sel' — skip create '$fid'"
+                sed -i "/\"object\":\"DkimSignature\",\"value\":{\"$fid\"/d" /tmp/plan.ndjson
+              fi
+              if printf '{"@type":"update","object":"Domain","id":"%s","value":{"dkimManagement":{"@type":"Manual"}}}' "$did" \
+                | /shared/bin/stalwart-cli apply --stdin --quiet; then
+                printf '%s %s\n' "$did" "$sel" >> /tmp/dkim-cleanup
+              else
+                echo "[applier] Domain id '$did': manual DKIM switch failed — keeping its other signatures (RECONCILE-ERROR)"
+              fi
             done
 
             # AllowedIp idempotency: the address is the primary key, so a
@@ -619,6 +621,27 @@ resource "kubernetes_deployment_v1" "stalwart" {
               echo "[applier] plan applied OK"
             else
               echo "[applier] RECONCILE-ERROR apply finished with errors — see above; main server stays up"
+            fi
+
+            # DKIM cleanup (see the DKIM pre-step): on each domain switched
+            # to manual management, delete the signatures under other
+            # selectors once the module's selector exists.
+            if [ -s /tmp/dkim-cleanup ] && /shared/bin/stalwart-cli query DkimSignature --json \
+              --fields id,domainId,selector > /tmp/dkim.ndjson 2>/dev/null; then
+              while read -r did sel; do
+                grep -F "\"domainId\":\"$did\"" /tmp/dkim.ndjson > /tmp/dkim-domain.ndjson || true
+                if ! grep -qF "\"selector\":\"$sel\"" /tmp/dkim-domain.ndjson; then
+                  echo "[applier] Domain id '$did' has no DKIM selector '$sel' — keeping its other signatures (RECONCILE-ERROR)"
+                  continue
+                fi
+                grep -vF "\"selector\":\"$sel\"" /tmp/dkim-domain.ndjson | while IFS= read -r sig; do
+                  sid=$(printf '%s' "$sig" | sed 's/.*"id":"\([^"]*\)".*/\1/')
+                  ssel=$(printf '%s' "$sig" | sed 's/.*"selector":"\([^"]*\)".*/\1/')
+                  echo "[applier] Domain id '$did': removing DKIM signature under unpublished selector '$ssel' (id $sid)"
+                  /shared/bin/stalwart-cli delete DkimSignature --ids "$sid" \
+                    || echo "[applier] DkimSignature $sid delete returned non-zero (RECONCILE-ERROR)"
+                done
+              done < /tmp/dkim-cleanup
             fi
 
             # The webadmin (Application) is (re)created by the plan AFTER the
