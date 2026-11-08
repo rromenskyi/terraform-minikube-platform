@@ -36,7 +36,8 @@ deleted, reports success, and the runner sets are gone (no listeners, CI
 stalls). So the scale-set releases are replaced (`replace_triggered_by`
 the controller release's chart version): the apply that bumps the version
 uninstalls them first and installs them fresh after the controller
-upgrade. Running jobs on those scale sets are cut off.
+upgrade. Running jobs on those scale sets are cut off, on a patch bump
+too. The two chart versions must be equal (a precondition checks it).
 
 If an old-version `AutoscalingListener` is left in the controller
 namespace afterwards, delete it; the controller can no longer clean it up
