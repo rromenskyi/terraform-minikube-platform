@@ -188,7 +188,7 @@ locals {
       samba = {
         enabled          = false
         namespace        = "nas"
-        image            = "ghcr.io/servercontainers/samba:a3.24.3-s4.23.8-r0"
+        image            = "ghcr.io/servercontainers/samba:a3.24.4-s4.23.8-r0"
         storage_class    = ""
         size             = "100Gi"
         node_hostnames   = []
@@ -280,7 +280,7 @@ locals {
       piraeus = {
         enabled                     = false
         namespace                   = "piraeus-datastore"
-        operator_chart_version      = "2.12.0"
+        operator_chart_version      = "2.12.1"
         node_selector               = {}
         node_hostnames              = []
         csi_controller_replicas     = 1

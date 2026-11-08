@@ -8,6 +8,7 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- Vault 2.2.1. Init Job (`init_image`) `bitnami/kubectl` digest of 2026-11-08 (kubectl 1.37.2, rebuilt image).
 - vault-config-operator chart v1.0.6.
 - Vault init Job (`init_image`) `bitnami/kubectl` digest of 2026-10-31 (kubectl 1.37.2).
 - Vault 2.1.2, vault-secrets-operator chart 1.6.2, kube-rbac-proxy v0.23.1.

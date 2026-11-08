@@ -8,6 +8,7 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- prometheus-smartctl-exporter chart 0.19.1.
 - Exporter CPU limit 500m (was 200m): each collection is a short `smartctl` burst the old limit throttled.
 - prometheus-smartctl-exporter chart 0.19.0 (exporter image unchanged, v0.15.0).
 

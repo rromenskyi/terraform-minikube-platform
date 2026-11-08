@@ -8,6 +8,7 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- Runner image actions-runner 2.338.2.
 - CRD manifests are `apply_only`: disabling the module or dropping a CRD no
   longer deletes it (and every object of that kind cluster-wide).
 

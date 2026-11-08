@@ -56,6 +56,7 @@ before seeding onto an ext4 class.
 | Name | Type |
 | ---- | ---- |
 | [kubectl_manifest.accounts_vault](https://registry.terraform.io/providers/gavinbunney/kubectl/latest/docs/resources/manifest) | resource |
+| [kubectl_manifest.vault_auth](https://registry.terraform.io/providers/gavinbunney/kubectl/latest/docs/resources/manifest) | resource |
 | [kubernetes_deployment_v1.this](https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs/resources/deployment_v1) | resource |
 | [kubernetes_namespace_v1.this](https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs/resources/namespace_v1) | resource |
 | [kubernetes_persistent_volume_claim_v1.data](https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs/resources/persistent_volume_claim_v1) | resource |
@@ -74,7 +75,7 @@ before seeding onto an ext4 class.
 | <a name="input_context"></a> [context](#input\_context) | Serialised parent context from `terraform-null-label`. Caller passes `module.platform_label.context` from the root stack so this module chains its own label off the platform-wide context. Default `null` means the module produces a label with no inherited context. | `string` | `null` | no |
 | <a name="input_enabled"></a> [enabled](#input\_enabled) | Whether to deploy the Samba file server. False collapses every resource. | `bool` | `false` | no |
 | <a name="input_failover_seconds"></a> [failover\_seconds](#input\_failover\_seconds) | How long the pod stays bound to a node that is not ready or unreachable before Kubernetes moves it (tolerationSeconds). Default 300 in Kubernetes; lower = faster failover after a node crash. | `number` | `30` | no |
-| <a name="input_image"></a> [image](#input\_image) | Samba image (ServerContainers, configured by environment variables; macOS `fruit` defaults built in). Pin a tag or digest. | `string` | `"ghcr.io/servercontainers/samba:a3.24.3-s4.23.8-r0"` | no |
+| <a name="input_image"></a> [image](#input\_image) | Samba image (ServerContainers, configured by environment variables; macOS `fruit` defaults built in). Pin a tag or digest. | `string` | `"ghcr.io/servercontainers/samba:a3.24.4-s4.23.8-r0"` | no |
 | <a name="input_load_balancer_ip"></a> [load\_balancer\_ip](#input\_load\_balancer\_ip) | Fixed LAN address of the file server (a MetalLB L2 address). Clients mount `smb://<address>/<share>`. | `string` | `""` | no |
 | <a name="input_namespace"></a> [namespace](#input\_namespace) | Namespace of the file server. | `string` | `"nas"` | no |
 | <a name="input_node_hostnames"></a> [node\_hostnames](#input\_node\_hostnames) | Nodes the file server may run on (`kubernetes.io/hostname`), a required node affinity. With a 2-copy volume, list the nodes holding the copies. The address pool must announce from the same nodes (the Service keeps the clients' source address, `externalTrafficPolicy: Local`). | `list(string)` | `[]` | no |
@@ -85,6 +86,7 @@ before seeding onto an ext4 class.
 | <a name="input_size"></a> [size](#input\_size) | Size of the shares' volume. Can be raised later (online expansion, if the StorageClass allows it). | `string` | `"100Gi"` | no |
 | <a name="input_storage_class"></a> [storage\_class](#input\_storage\_class) | StorageClass of the shares' volume. Use a replicated class (e.g. a 2-copy LINSTOR class) so the file server survives one storage node being down: the pod then starts on another node with the volume. | `string` | `""` | no |
 | <a name="input_users"></a> [users](#input\_users) | Samba accounts: username => { uid }. The uid owns the files (match the owner of migrated data). Passwords come from Vault (`vault_path`, one key per username). | <pre>map(object({<br/>    uid = number<br/>  }))</pre> | `{}` | no |
+| <a name="input_vault_auth_role"></a> [vault\_auth\_role](#input\_vault\_auth\_role) | Vault kubernetes-auth role the account-password sync authenticates with, through a VaultAuth in the namespace (e.g. a role limited to `vault_path`). Empty = VSO's cluster-default VaultAuth, whose role must then bind this namespace. | `string` | `""` | no |
 | <a name="input_vault_path"></a> [vault\_path](#input\_vault\_path) | KV-v2 path under the `secret` mount (e.g. `platform/samba/accounts`) holding one key per username in `users`, value = that user's password. Synced into the namespace by Vault Secrets Operator; a password change restarts the server. | `string` | `"platform/samba/accounts"` | no |
 
 ## Outputs

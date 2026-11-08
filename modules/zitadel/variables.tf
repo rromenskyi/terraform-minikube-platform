@@ -31,7 +31,7 @@ variable "login_image" {
 variable "pat_broker_image" {
   description = "kubectl image for the PAT-broker sidecar, which only runs `kubectl create/patch secret`. Free Docker Hub `bitnami/*` images ship only `:latest` since August 2025 (versioned tags return 404), so the default pins `:latest` by digest; bump the digest deliberately. See `modules/redis/variables.tf` for the Bitnami notes."
   type        = string
-  default     = "bitnami/kubectl:latest@sha256:bedd34c910e2a5ce9836813d16444af449d7fe07a29136d59f34e861e8e660c5"
+  default     = "bitnami/kubectl:latest@sha256:8f59408f9e896fc8992a0660a56687545bd06751f26531b4a26fca6d5dc7562d"
 }
 
 variable "postgres_host" {

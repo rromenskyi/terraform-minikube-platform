@@ -7,6 +7,9 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- Vault backup image hashicorp/vault:2.2.1.
+
 ### Added
 - `pv_paths` entries for volumes on a StorageClass: `pvc` + `namespace` +
   `pod_selector` (+ `sub_path`, default `data`). Each gets its own CronJob in

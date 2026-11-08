@@ -7,6 +7,9 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- Sentinel: HAProxy 3.2 (LTS; was 3.0); Valkey and Sentinel digests of 2026-11-08 (same versions, 9.1.2 and 9.1.3, rebuilt images).
+
 ### Security
 - **BREAKING (layout):** ACL Secrets move to their own namespace
   (`acl_namespace`, default `redis-acl`); the keeper's Role lives there,

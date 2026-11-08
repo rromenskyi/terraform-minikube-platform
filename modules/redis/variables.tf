@@ -91,10 +91,10 @@ variable "sentinel" {
     image_tag           = optional(string, "latest")
     sentinel_image_repo = optional(string, "bitnami/valkey-sentinel")
     sentinel_image_tag  = optional(string, "latest")
-    # `latest` as of 2026-10-31 (Valkey 9.1.2, Sentinel 9.1.3). A digest overrides the tag in the chart.
-    image_digest          = optional(string, "sha256:4dc6511a8a9d4d4cbf3ccf1270ddcc6929819a1e0f4005462cf782cc96d1c3b6")
-    sentinel_image_digest = optional(string, "sha256:f3e4e5d7496abb72b4af312e25b606c53d59373818d6959d006a9d7b3e1c4fe4")
-    haproxy_image         = optional(string, "haproxytech/haproxy-alpine:3.0")
+    # `latest` as of 2026-11-08 (Valkey 9.1.2, Sentinel 9.1.3). A digest overrides the tag in the chart.
+    image_digest          = optional(string, "sha256:3b340a0ca883e7305756cd0ed29fc4a52099343920e022a459a4a0e0cf975ce0")
+    sentinel_image_digest = optional(string, "sha256:4fc3aaf5cbd2e85107a440f8edadd11148f021a54a15c8d560484ddfa0d56d20")
+    haproxy_image         = optional(string, "haproxytech/haproxy-alpine:3.2")
     haproxy_replicas      = optional(number, 2)
     # Nodes whose Valkey pod may hold a copy and vote in the Sentinel
     # quorum but must never be promoted to primary (`replica-priority 0`),
