@@ -7,6 +7,9 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- Roundcube 1.7.5 (was 1.6.20). The first start migrates the SQLite schema (`session.changed` becomes `expires_at`, new `uploads` table), so going back to 1.6 needs the pre-upgrade `sqlite.db` from backup. Logout now also ends the Zitadel session (`oauth_logout_uri` was ignored by 1.6). `oauth_auth_type` is pinned to XOAUTH2, the mechanism 1.6 used.
+
 ### Added
 - `volume_preferred_node_selectors`: with the data on `storage_class`, a soft preference for the nodes holding the volume's copies.
 

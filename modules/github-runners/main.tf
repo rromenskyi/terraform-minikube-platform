@@ -312,6 +312,13 @@ resource "helm_release" "scale_set" {
   # `githubConfigSecret` points at a Secret that never gets created
   # and the listener Pod loops on "Secret not found".
   lifecycle {
+    # A new controller minor deletes every AutoscalingRunnerSet whose
+    # version label it does not accept, racing an in-place Helm upgrade
+    # of the scale sets (Helm patches objects that are being deleted and
+    # reports success; the runner sets are gone). Reinstall the scale
+    # sets whenever the controller chart version changes instead.
+    replace_triggered_by = [helm_release.controller["enabled"].version]
+
     precondition {
       condition = (
         try(each.value.vault, false)
