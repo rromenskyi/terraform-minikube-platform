@@ -25,7 +25,7 @@ variable "victorialogs_image" {
 variable "vector_image" {
   description = "Vector collector image (the DaemonSet agent that tails every node's container logs and ships them to VictoriaLogs)."
   type        = string
-  default     = "timberio/vector:0.58.0-distroless-static"
+  default     = "timberio/vector:0.61.0-distroless-static"
 }
 
 variable "retention_period" {

@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Image and chart bumps: Vault 2.2.1, Vector 0.61.0, git-sync v4.8.0, HAProxy 3.2 (Valkey Sentinel), piraeus chart 2.12.1, smartctl-exporter chart 0.19.1, actions-runner 2.338.2, samba a3.24.4, and fresh digests for the `latest`-only Bitnami images (Valkey, Sentinel, kubectl). See the module changelogs.
 - Stalwart v1.0.3 (from 0.16.27), stalwart-cli v1.0.14, WebUI v2.0.5. The first v1 start copies the 0.16 store into a new one with stalwart-migrate (init container `migrate-v1`) and leaves the 0.16 store in place for rollback. OAuth clients sign in again afterwards. See `modules/stalwart/CHANGELOG.md`.
 
 ### Fixed

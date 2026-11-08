@@ -25,7 +25,7 @@ variable "hostname" {
 variable "image" {
   description = "Vault container image. Pin a specific tag — `:latest` would silently pull schema changes between restarts. `hashicorp/vault` is the upstream repo (community edition)."
   type        = string
-  default     = "hashicorp/vault:2.1.2"
+  default     = "hashicorp/vault:2.2.1"
 }
 
 variable "volume_base_path" {
@@ -206,7 +206,7 @@ variable "vso_kube_rbac_proxy_image" {
 variable "init_image" {
   description = "Image for the one-shot vault-init Job (needs sh, curl, sed, base64, kubectl). Bitnami ships only `:latest`, so pin the digest."
   type        = string
-  default     = "bitnami/kubectl:latest@sha256:bedd34c910e2a5ce9836813d16444af449d7fe07a29136d59f34e861e8e660c5"
+  default     = "bitnami/kubectl:latest@sha256:8f59408f9e896fc8992a0660a56687545bd06751f26531b4a26fca6d5dc7562d"
 }
 
 variable "vso_platform_readers" {

@@ -8,6 +8,7 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- ServerContainers samba a3.24.4-s4.23.8-r0 (Alpine rebuild, Samba unchanged).
 - ServerContainers samba a3.24.3-s4.23.8-r0 (Alpine rebuild, Samba unchanged).
 
 ### Fixed
