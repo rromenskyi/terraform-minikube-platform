@@ -55,6 +55,17 @@ the project itself follows [Semantic Versioning](https://semver.org/).
   first start (modules/volume-seed).
 
 ### Fixed
+- **Outgoing mail carried no valid DKIM signature.** The module's
+  `DkimSignature` creates never applied (`privateKey` used a variant that
+  does not exist and `headers` was a list, not a set), and Stalwart signed
+  with keys it generated itself under rotation selectors
+  (`v1-rsa-<date>`, `v1-ed25519-<date>`) that nothing publishes in DNS,
+  so receivers could not verify them. Module domains now use manual DKIM
+  management and the module's key under `dkim_selector`, the one in DNS.
+  On existing domains the applier switches DKIM management to manual,
+  creates the module's signature once (skipped on later starts) and,
+  once it exists, **deletes the domain's signatures under any other
+  selector**. If the create fails, the old signatures stay.
 - Bootstrap no longer wipes `data/` and `etc/` when the 0.16 sentinel is
   missing. A non-empty volume without the sentinel (pre-0.16 state, or a
   restore that lost the marker) now stops the pod with instructions; an

@@ -516,21 +516,41 @@ resource "kubernetes_deployment_v1" "stalwart" {
               fi
             done
 
-            # DkimSignature idempotency. Stalwart auto-generates a DKIM signature
-            # per Domain (rotation selectors `v1-rsa-<date>` etc.), so our
-            # explicit `create DkimSignature` fails (invalidPatch / duplicate) on
-            # any domain that already has one. Drop any create whose target
-            # Domain (resolved to a real id by the block above) already has a
-            # signature; keep creates for brand-new domains (ref still `#...`).
-            SIGNED=$(/shared/bin/stalwart-cli query DkimSignature 2>/dev/null \
-              | grep -o 'id: [a-z0-9]*' | awk '{print $2}' | sort -u)
+            # DKIM. Each module domain is signed with the module's key under
+            # the module's selector, the one published in DNS. A domain
+            # created with automatic DKIM management (the server default,
+            # or created before the module set Manual) carries server-made
+            # keys under rotation selectors (`v1-rsa-<date>` etc.) that
+            # nothing publishes, so receivers fail those signatures. For
+            # every planned DkimSignature on an existing domain: drop the
+            # create when the module's selector is already there (the
+            # server accepts duplicate selectors, and the key never
+            # changes), then switch the domain to manual management. The
+            # signatures under other selectors are deleted after the plan
+            # apply, and only once the module's one exists, so a failed
+            # create never leaves a domain unsigned. Brand-new domains (ref
+            # still `#...`) are created with manual management and keep
+            # their create.
+            : > /tmp/dkim-cleanup
+            if ! /shared/bin/stalwart-cli query DkimSignature --json --fields id,domainId,selector \
+              > /tmp/dkim.ndjson 2>/dev/null; then
+              echo "[applier] DkimSignature query failed — leaving existing domains' DKIM untouched this start (RECONCILE-ERROR)"
+              sed -i '/"object":"DkimSignature","value":.*"domainId":"[^#]/d' /tmp/plan.ndjson
+            fi
             grep '"object":"DkimSignature","value":' /tmp/plan.ndjson | while IFS= read -r line; do
               fid=$(printf '%s' "$line" | sed 's/.*"object":"DkimSignature","value":{"\([^"]*\)":.*/\1/')
               did=$(printf '%s' "$line" | sed 's/.*"domainId":"\([^"]*\)".*/\1/')
+              sel=$(printf '%s' "$line" | sed 's/.*"selector":"\([^"]*\)".*/\1/')
               case "$did" in "#"*) continue ;; esac
-              if printf '%s\n' "$SIGNED" | grep -qx "$did"; then
-                echo "[applier] Domain id '$did' already has a DKIM signature — skip create '$fid'"
+              if grep -F "\"domainId\":\"$did\"" /tmp/dkim.ndjson | grep -qF "\"selector\":\"$sel\""; then
+                echo "[applier] Domain id '$did' already has DKIM selector '$sel' — skip create '$fid'"
                 sed -i "/\"object\":\"DkimSignature\",\"value\":{\"$fid\"/d" /tmp/plan.ndjson
+              fi
+              if printf '{"@type":"update","object":"Domain","id":"%s","value":{"dkimManagement":{"@type":"Manual"}}}' "$did" \
+                | /shared/bin/stalwart-cli apply --stdin --quiet; then
+                printf '%s %s\n' "$did" "$sel" >> /tmp/dkim-cleanup
+              else
+                echo "[applier] Domain id '$did': manual DKIM switch failed — keeping its other signatures (RECONCILE-ERROR)"
               fi
             done
 
@@ -601,6 +621,29 @@ resource "kubernetes_deployment_v1" "stalwart" {
               echo "[applier] plan applied OK"
             else
               echo "[applier] RECONCILE-ERROR apply finished with errors — see above; main server stays up"
+            fi
+
+            # DKIM cleanup (see the DKIM pre-step): on each domain switched
+            # to manual management, delete the signatures under other
+            # selectors once the module's selector exists.
+            if [ -s /tmp/dkim-cleanup ] && ! /shared/bin/stalwart-cli query DkimSignature --json \
+              --fields id,domainId,selector > /tmp/dkim.ndjson 2>/dev/null; then
+              echo "[applier] DkimSignature query failed — keeping signatures under other selectors this start (RECONCILE-ERROR)"
+            elif [ -s /tmp/dkim-cleanup ]; then
+              while read -r did sel; do
+                grep -F "\"domainId\":\"$did\"" /tmp/dkim.ndjson > /tmp/dkim-domain.ndjson || true
+                if ! grep -qF "\"selector\":\"$sel\"" /tmp/dkim-domain.ndjson; then
+                  echo "[applier] Domain id '$did' has no DKIM selector '$sel' — keeping its other signatures (RECONCILE-ERROR)"
+                  continue
+                fi
+                grep -vF "\"selector\":\"$sel\"" /tmp/dkim-domain.ndjson | while IFS= read -r sig; do
+                  sid=$(printf '%s' "$sig" | sed 's/.*"id":"\([^"]*\)".*/\1/')
+                  ssel=$(printf '%s' "$sig" | sed 's/.*"selector":"\([^"]*\)".*/\1/')
+                  echo "[applier] Domain id '$did': removing DKIM signature under unpublished selector '$ssel' (id $sid)"
+                  /shared/bin/stalwart-cli delete DkimSignature --ids "$sid" \
+                    || echo "[applier] DkimSignature $sid delete returned non-zero (RECONCILE-ERROR)"
+                done
+              done < /tmp/dkim-cleanup
             fi
 
             # The webadmin (Application) is (re)created by the plan AFTER the
