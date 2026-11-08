@@ -534,8 +534,8 @@ resource "kubernetes_deployment_v1" "stalwart" {
             : > /tmp/dkim-cleanup
             if ! /shared/bin/stalwart-cli query DkimSignature --json --fields id,domainId,selector \
               > /tmp/dkim.ndjson 2>/dev/null; then
-              echo "[applier] DkimSignature query failed — leaving DKIM untouched this start (RECONCILE-ERROR)"
-              sed -i '/"object":"DkimSignature","value":/d' /tmp/plan.ndjson
+              echo "[applier] DkimSignature query failed — leaving existing domains' DKIM untouched this start (RECONCILE-ERROR)"
+              sed -i '/"object":"DkimSignature","value":.*"domainId":"[^#]/d' /tmp/plan.ndjson
             fi
             grep '"object":"DkimSignature","value":' /tmp/plan.ndjson | while IFS= read -r line; do
               fid=$(printf '%s' "$line" | sed 's/.*"object":"DkimSignature","value":{"\([^"]*\)":.*/\1/')
@@ -626,8 +626,10 @@ resource "kubernetes_deployment_v1" "stalwart" {
             # DKIM cleanup (see the DKIM pre-step): on each domain switched
             # to manual management, delete the signatures under other
             # selectors once the module's selector exists.
-            if [ -s /tmp/dkim-cleanup ] && /shared/bin/stalwart-cli query DkimSignature --json \
+            if [ -s /tmp/dkim-cleanup ] && ! /shared/bin/stalwart-cli query DkimSignature --json \
               --fields id,domainId,selector > /tmp/dkim.ndjson 2>/dev/null; then
+              echo "[applier] DkimSignature query failed — keeping signatures under other selectors this start (RECONCILE-ERROR)"
+            elif [ -s /tmp/dkim-cleanup ]; then
               while read -r did sel; do
                 grep -F "\"domainId\":\"$did\"" /tmp/dkim.ndjson > /tmp/dkim-domain.ndjson || true
                 if ! grep -qF "\"selector\":\"$sel\"" /tmp/dkim-domain.ndjson; then
