@@ -313,7 +313,7 @@ class HandleGroupTest(unittest.TestCase):
     def test_smtp_failure_retries_and_still_pushes(self):
         calls, pushes = [], []
 
-        def flaky(subject, body):
+        def flaky(subject, body, **kw):
             calls.append(subject)
             raise OSError("smtp down")
         self.m.send_email = flaky
@@ -332,6 +332,40 @@ class HandleGroupTest(unittest.TestCase):
         a["labels"]["alertname"] = "x password=hunter2xyz"
         self.m.handle_group({"alerts": [a]})
         self.assertNotIn("hunter2xyz", titles[0])
+
+    def test_mail_has_html_part_with_sections_and_cards(self):
+        self.m.ask_llm = lambda s, p: (
+            "1. Summary:\nnode went away\n2. Likely cause: autoscaler, medium\n"
+            "- evidence one\n- see `kubectl get nodes`\n3. Check first:\n1. look at <logs>"
+        )
+        self.m.handle_group({"alerts": [self.alert("a"), self.alert("b")]})
+        html_body = self.m.sent_extra[0]["html_body"]
+        self.assertIn(">1. Summary<", html_body)
+        self.assertIn(">2. Likely cause<", html_body)
+        self.assertIn(">3. Check first<", html_body)
+        self.assertIn("autoscaler, medium", html_body)
+        self.assertIn("<li", html_body)
+        self.assertIn("<code", html_body)
+        # A numbered step inside a section is not a new section heading.
+        self.assertEqual(html_body.count("margin:12px 0 4px"), 3)
+        self.assertIn(">1. look at", html_body)
+        self.assertIn("&lt;logs&gt;", html_body)
+        self.assertIn("errors from a", html_body)
+        self.assertIn("errors from b", html_body)
+        self.assertIn("pod ns/a: Running", html_body)
+        self.assertIn("log for", html_body)
+        # The plain-text alternative stays.
+        self.assertIn("node went away", self.m.sent[0][1])
+
+    def test_html_is_escaped_and_redacted(self):
+        self.m.ask_llm = lambda s, p: "<script>x</script> password=hunter2xyz"
+        a = self.alert("a")
+        a["annotations"]["summary"] = "<b>bad</b>"
+        self.m.handle_group({"alerts": [a]})
+        html_body = self.m.sent_extra[0]["html_body"]
+        self.assertNotIn("<script>", html_body)
+        self.assertNotIn("<b>bad</b>", html_body)
+        self.assertNotIn("hunter2xyz", html_body)
 
     def test_context_failures_still_mail(self):
         def fail(*a):
