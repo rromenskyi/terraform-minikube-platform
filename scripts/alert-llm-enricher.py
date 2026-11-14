@@ -765,7 +765,8 @@ def send_email_with_retries(what: str, subject: str, body: str, **extra) -> bool
 # markdown around the heading ("1. **Summary:**", "## 2. Likely cause"). Only
 # the next expected number counts as a heading, so numbered steps inside a
 # section stay body text.
-_SECTION_TITLE = re.compile(r"(\d)\.\s*(\S.{0,59})")
+# The title starts with a non-digit: "### 2.5 more context" is not section 2.
+_SECTION_TITLE = re.compile(r"(\d)\.\s*([^\d\s].{0,59})")
 _PRE = (
     "white-space:pre-wrap;word-break:break-word;font-family:Menlo,Consolas,monospace;font-size:11px;"
     "line-height:1.45;background:#f7f9fa;border:1px solid #eef0f2;border-radius:6px;padding:8px 10px;margin:6px 0 0"
@@ -803,7 +804,8 @@ def _inline_html(text: str) -> str:
             out.append('<code style="font-family:Menlo,Consolas,monospace;font-size:12px;background:#eef2f5;'
                        f'padding:0 3px;border-radius:3px">{html.escape(piece[1:-1])}</code>')
         else:
-            out.append(re.sub(r"\*\*([^*\n]+)\*\*", r"<b>\1</b>", html.escape(piece)))
+            # Not next to a third star: redaction masks are "***".
+            out.append(re.sub(r"(?<!\*)\*\*([^*\n]+)\*\*(?!\*)", r"<b>\1</b>", html.escape(piece)))
     return "".join(out)
 
 

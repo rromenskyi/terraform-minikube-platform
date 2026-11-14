@@ -1033,3 +1033,12 @@ class DiagnosisHtmlTest(unittest.TestCase):
         start = time.monotonic()
         self.m.diagnosis_html("1. A" + " " * 20000 + "x\n" + "2." + " " * 20000)
         self.assertLess(time.monotonic() - start, 0.5)
+
+    def test_hashed_version_number_is_not_a_heading(self):
+        text = "1. Summary: x\n### 2.5 additional context\n2. Likely cause: y"
+        self.assertEqual(self.headings(text), ["1. Summary", "2. Likely cause"])
+
+    def test_redaction_masks_are_not_bold(self):
+        out = self.m.diagnosis_html("password=*** and token=*** were rotated, then **restart**")
+        self.assertIn("password=*** and token=*** were rotated", out)
+        self.assertIn("<b>restart</b>", out)
