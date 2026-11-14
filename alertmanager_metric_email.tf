@@ -28,9 +28,9 @@ locals {
 # push topic name works like a password.
 resource "kubernetes_secret_v1" "metric_alert_push" {
   for_each = local._metric_alert_on && local._alert_push_url != "" ? toset(local._metric_alert_nss) : toset([])
-  # The listed namespaces are usually project namespaces: on the apply that
-  # adds a project, its namespace must exist first.
-  depends_on = [module.project]
+  # The listed namespaces are usually project or addon namespaces: on the apply that
+  # adds one, its namespace must exist first.
+  depends_on = [module.addons, module.project]
 
   metadata {
     name      = "metric-alerts-push"
