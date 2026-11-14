@@ -367,6 +367,23 @@ class HandleGroupTest(unittest.TestCase):
         self.assertNotIn("<b>bad</b>", html_body)
         self.assertNotIn("hunter2xyz", html_body)
 
+    def test_html_redacts_before_escaping(self):
+        self.m.ask_llm = lambda s, p: "diag"
+        self.m.fetch_active_alerts = lambda: (_ for _ in ()).throw(OSError('auth {"password": "hunter2xyz"}'))
+        a = self.alert("a")
+        a["labels"]["alertname"] = 'grp {"token": "s3cretvalue1"}'
+        self.m.handle_group({"alerts": [a], "groupLabels": {"alertname": a["labels"]["alertname"]}})
+        html_body = self.m.sent_extra[0]["html_body"]
+        self.assertNotIn("hunter2xyz", html_body)
+        self.assertNotIn("s3cretvalue1", html_body)
+
+    def test_html_failure_still_sends_text_mail(self):
+        self.m.ask_llm = lambda s, p: "diag"
+        self.m.alert_html = lambda *a: 1 / 0
+        self.m.handle_group({"alerts": [self.alert("a")]})
+        self.assertEqual(len(self.m.sent), 1)
+        self.assertNotIn("html_body", self.m.sent_extra[0])
+
     def test_context_failures_still_mail(self):
         def fail(*a):
             raise urllib.error.URLError("down")
@@ -985,3 +1002,34 @@ class RegistryRedirectTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DiagnosisHtmlTest(unittest.TestCase):
+    def setUp(self):
+        self.m = load()
+
+    def headings(self, text):
+        import re
+        return re.findall(r'margin:12px 0 4px">([^<]+)<', self.m.diagnosis_html(text))
+
+    def test_markdown_heading_forms(self):
+        text = "1. **Summary:** node down\n**2. Likely cause:**\nx\n## 3. Check first\ny\n### 4. If confirmed:\nz"
+        self.assertEqual(self.headings(text), ["1. Summary", "2. Likely cause", "3. Check first", "4. If confirmed"])
+        self.assertIn("node down", self.m.diagnosis_html(text))
+        self.assertNotIn("**", self.m.diagnosis_html(text))
+
+    def test_body_stars_survive(self):
+        out = self.m.diagnosis_html("1. Summary: ***\n2. Likely cause: **node down**")
+        self.assertIn("***", out)
+        self.assertIn("<b>node down</b>", out)
+
+    def test_bold_markers_inside_code_stay_literal(self):
+        out = self.m.diagnosis_html("- run `a ** b ** c`")
+        self.assertIn("a ** b ** c", out)
+        self.assertNotIn("<b>", out)
+
+    def test_long_whitespace_line_is_fast(self):
+        import time
+        start = time.monotonic()
+        self.m.diagnosis_html("1. A" + " " * 20000 + "x\n" + "2." + " " * 20000)
+        self.assertLess(time.monotonic() - start, 0.5)

@@ -762,26 +762,54 @@ def send_email_with_retries(what: str, subject: str, body: str, **extra) -> bool
 
 
 # The model answers in numbered sections ("1. Summary:" ...), sometimes with
-# markdown around the heading. Only the next expected number counts as a
-# heading, so numbered steps inside a section stay body text.
-_SECTION_HEADING = re.compile(r"^\s*(?:#+\s*)?\**\s*(\d)\.\s*([^:*`\n]{1,60}?)\s*\**\s*:\s*\**\s*(.*)$")
+# markdown around the heading ("1. **Summary:**", "## 2. Likely cause"). Only
+# the next expected number counts as a heading, so numbered steps inside a
+# section stay body text.
+_SECTION_TITLE = re.compile(r"(\d)\.\s*(\S.{0,59})")
 _PRE = (
     "white-space:pre-wrap;word-break:break-word;font-family:Menlo,Consolas,monospace;font-size:11px;"
     "line-height:1.45;background:#f7f9fa;border:1px solid #eef0f2;border-radius:6px;padding:8px 10px;margin:6px 0 0"
 )
+_WRAP = "overflow-wrap:anywhere;word-break:break-word"
 _SEVERITY_COLORS = {"critical": "#c0392b", "warning": "#d68910"}
 
 
+def _section_heading(line: str, expected: int) -> tuple[str, str] | None:
+    """(title, rest of the line) when the line opens section `expected`.
+    Plain string handling, no backtracking on long lines."""
+    s = line.strip()
+    hashed = s.startswith("#")
+    s = s.lstrip("#").strip()
+    head, colon, rest = s.partition(":")
+    if not colon and not hashed:
+        return None
+    if len(head) > 70:
+        return None
+    match = _SECTION_TITLE.fullmatch(head.replace("**", "").strip())
+    if not match or int(match.group(1)) != expected:
+        return None
+    rest = rest.strip()
+    # "1. **Summary:** text": the bold opened before the colon closes after it.
+    if head.count("**") % 2 and rest.startswith("**"):
+        rest = rest[2:].strip()
+    return f"{expected}. {match.group(2).strip()}", rest
+
+
 def _inline_html(text: str) -> str:
-    out = html.escape(text)
-    out = re.sub(r"`([^`]+)`", r'<code style="font-family:Menlo,Consolas,monospace;font-size:12px;'
-                 r'background:#eef2f5;padding:0 3px;border-radius:3px">\1</code>', out)
-    return re.sub(r"\*\*([^*]+)\*\*", r"<b>\1</b>", out)
+    """Redacted, escaped, with `code` and **bold** (bold only outside code)."""
+    out = []
+    for i, piece in enumerate(re.split(r"(`[^`\n]+`)", redact(text))):
+        if i % 2:
+            out.append('<code style="font-family:Menlo,Consolas,monospace;font-size:12px;background:#eef2f5;'
+                       f'padding:0 3px;border-radius:3px">{html.escape(piece[1:-1])}</code>')
+        else:
+            out.append(re.sub(r"\*\*([^*\n]+)\*\*", r"<b>\1</b>", html.escape(piece)))
+    return "".join(out)
 
 
 def diagnosis_html(text: str) -> str:
     """The model's plain-text answer as HTML: section headings, bullet lists,
-    `code` and **bold**; everything escaped."""
+    `code` and **bold**; everything redacted and escaped."""
     parts, bullets, expected = [], [], 1
 
     def flush() -> None:
@@ -790,16 +818,13 @@ def diagnosis_html(text: str) -> str:
             bullets.clear()
 
     for line in text.splitlines():
-        heading = _SECTION_HEADING.match(line)
-        if heading and int(heading.group(1)) == expected:
+        heading = _section_heading(line, expected)
+        if heading:
             flush()
             expected += 1
-            parts.append(
-                f'<div style="font-size:14px;font-weight:700;margin:12px 0 4px">'
-                f"{heading.group(1)}. {html.escape(heading.group(2))}</div>"
-            )
-            line = heading.group(3)
-            if not line.strip():
+            parts.append(f'<div style="font-size:14px;font-weight:700;margin:12px 0 4px">{_inline_html(heading[0])}</div>')
+            line = heading[1]
+            if not line:
                 continue
         stripped = line.strip()
         if stripped[:2] in ("- ", "* ", "• "):
@@ -813,7 +838,10 @@ def diagnosis_html(text: str) -> str:
 
 
 def alert_html(group: str, severity: str, total: int, diagnosis: str, contexts: list[dict], cluster: str) -> str:
-    e = html.escape
+    def e(value) -> str:
+        # Redact before escaping: escaped quotes no longer match the masks.
+        return html.escape(redact(str(value)))
+
     color = _SEVERITY_COLORS.get(severity, "#5d6d7e")
     parts = [
         '<div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1c2833;'
@@ -822,12 +850,12 @@ def alert_html(group: str, severity: str, total: int, diagnosis: str, contexts: 
         f"{e(group)} <span style=\"font-weight:400;color:#5d6d7e\">({total})</span></div>",
         f'<div style="{_CARD};border-left:4px solid #2e86c1"><div style="font-size:12px;color:#85929e">'
         f"Diagnosis by the local LLM ({e(LLM_MODEL)})</div>"
-        f'<div style="font-size:14px;line-height:1.5">{diagnosis_html(diagnosis)}</div></div>',
+        f'<div style="font-size:14px;line-height:1.5;{_WRAP}">{diagnosis_html(diagnosis)}</div></div>',
     ]
     for ctx in contexts:
         title, *rest = ctx["header"].split("\n")
-        details = "".join(f'<div style="font-size:12px;color:#5d6d7e;margin-top:2px">{e(r)}</div>' for r in rest)
-        card = [f'<div style="{_CARD}"><div style="font-size:14px;font-weight:700">{e(title)}</div>{details}']
+        details = "".join(f'<div style="font-size:12px;color:#5d6d7e;margin-top:2px;{_WRAP}">{e(r)}</div>' for r in rest)
+        card = [f'<div style="{_CARD}"><div style="font-size:14px;font-weight:700;{_WRAP}">{e(title)}</div>{details}']
         if ctx["k8s"]:
             card.append(f'<pre style="{_PRE}">{e(ctx["k8s"])}</pre>')
         if ctx["logs"]:
@@ -887,8 +915,12 @@ def handle_group(payload: dict) -> None:
         body.append(f"({len(firing) - len(contexts)} more alerts in this group not shown)\n")
     body.append(f"--- Other alerts firing in the cluster ---\n{cluster}")
     subject, text = redact(subject), redact("\n".join(body))
-    html_body = redact(alert_html(group, severity, len(firing), diagnosis, contexts, cluster))
-    send_email_with_retries(group, subject, text, html_body=html_body)
+    try:
+        extra = {"html_body": redact(alert_html(group, severity, len(firing), diagnosis, contexts, cluster))}
+    except Exception as e:  # noqa: BLE001 - the plain-text e-mail goes out regardless
+        print(f"html rendering failed for {group}: {e}", file=sys.stderr)
+        extra = {}
+    send_email_with_retries(group, subject, text, **extra)
 
     try:
         push_notification(redact(f"{group} ({len(firing)})"), diagnosis, severity)
