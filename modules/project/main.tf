@@ -57,7 +57,7 @@ locals {
   _component_names = distinct([for _, c in local.routes : c])
 
   component_defaults = {
-    image       = "nginx:alpine"
+    image       = "nginx:1.31.9-alpine"
     port        = 80
     replicas    = 2
     health_path = "/"

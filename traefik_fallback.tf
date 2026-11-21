@@ -134,7 +134,7 @@ resource "kubernetes_deployment_v1" "fallback" {
       spec {
         container {
           name  = "nginx"
-          image = "nginx:alpine"
+          image = "nginx:1.31.9-alpine"
 
           port {
             container_port = 80
