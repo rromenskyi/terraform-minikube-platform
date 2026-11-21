@@ -1311,10 +1311,25 @@ def _k8s_call(method: str, path: str, body: dict | None = None, raw: bool = Fals
     return out.decode(errors="replace") if raw else json.loads(out or b"{}")
 
 
-def scan_candidate(target: str) -> set[str] | None:
+def _retried(call, tries: int = 3):
+    """call(), retried on transient API errors (a 404 is final)."""
+    for attempt in range(tries):
+        try:
+            return call()
+        except urllib.error.HTTPError as e:
+            if e.code == 404 or attempt == tries - 1:
+                raise
+        except (OSError, ValueError):
+            if attempt == tries - 1:
+                raise
+        time.sleep(2)
+
+
+def scan_candidate(target: str, max_wait: float | None = None) -> set[str] | None:
     """"ID|package" pairs trivy finds in `target`, via a Job in
     CANDIDATE_SCAN_NAMESPACE; None when the scan could not run or finish
-    (private image, registry down, timeout). Every call makes its own Job
+    (private image, registry down, timeout, or `max_wait` seconds passed).
+    Every call makes its own Job
     (random suffix) and only ever deletes that one: two enricher pods during
     a rollout can scan at once without touching each other's Jobs."""
     cm = (_k8s_get(f"/api/v1/namespaces/{TRIVY_CONFIG_NAMESPACE}/configmaps/{TRIVY_CONFIGMAP}").get("data") or {})
@@ -1326,7 +1341,8 @@ def scan_candidate(target: str) -> set[str] | None:
     name = f"candidate-scan-{hashlib.sha256(target.encode()).hexdigest()[:8]}-{os.urandom(4).hex()}"
     uid = _k8s_call("POST", jobs, scan_job(name, f"{repo}:{tag}", server, target))["metadata"]["uid"]
     try:
-        deadline = time.time() + CANDIDATE_SCAN_TIMEOUT + 60
+        wait = CANDIDATE_SCAN_TIMEOUT + 60
+        deadline = time.time() + (wait if max_wait is None else min(wait, max_wait))
         status: dict = {}
         while time.time() < deadline:
             try:
@@ -1335,17 +1351,18 @@ def scan_candidate(target: str) -> set[str] | None:
                 if e.code == 404:
                     return None
                 print(f"security digest: polling {name}: {e}", file=sys.stderr)
-            except OSError as e:  # an API blip: keep polling until the deadline
+            except (OSError, ValueError) as e:  # an API blip: keep polling until the deadline
                 print(f"security digest: polling {name}: {e}", file=sys.stderr)
             if status.get("succeeded") or status.get("failed"):
                 break
             time.sleep(5)
         if not status.get("succeeded"):
             return None
-        pods = _k8s_get(f"/api/v1/namespaces/{ns}/pods?labelSelector=controller-uid%3D{uid}").get("items") or []
+        pods = _retried(lambda: _k8s_get(f"/api/v1/namespaces/{ns}/pods?labelSelector=controller-uid%3D{uid}")).get("items") or []
         if not pods:
             return None
-        return parse_scan_output(_k8s_call("GET", f"/api/v1/namespaces/{ns}/pods/{pods[0]['metadata']['name']}/log", raw=True))
+        pod = pods[0]["metadata"]["name"]
+        return parse_scan_output(_retried(lambda: _k8s_call("GET", f"/api/v1/namespaces/{ns}/pods/{pod}/log", raw=True)))
     finally:
         try:
             _k8s_call("DELETE", f"{jobs}/{name}", {"propagationPolicy": "Background"})
@@ -1382,11 +1399,13 @@ def _labels(pairs: list[str], all_pairs: set[str]) -> list[str]:
 
 def verify_candidates(findings: dict[str, dict], newer: dict, cache: dict, now: int) -> tuple[dict, dict]:
     """Scan each image's newer tags (patch and latest) and say which of its
-    findings each one really fixes. `cache` maps a scanned image reference to
-    {"checked": pairs, "remaining": pairs, "at": time} — only the running
-    image's findings are kept, and a finding not checked yet means a rescan —
-    or {"failed": true, "at": time}. Results expire after CANDIDATE_SCAN_TTL
-    (the vulnerability DB moves), failures after CANDIDATE_FAILED_TTL. At most
+    findings each one really fixes. `cache` maps "<running image> -> <tag
+    image>" to {"checked": pairs, "remaining": pairs, "at": time} — only the
+    running image's findings are kept, and a finding not checked yet means a
+    rescan — or {"failed": true, "at": time}. Results expire after
+    CANDIDATE_SCAN_TTL (the vulnerability DB moves), failures after
+    CANDIDATE_FAILED_TTL; a failed rescan keeps the last good result, with
+    the findings it never checked counted as not fixed. At most
     CANDIDATE_SCANS_PER_RUN scans and CANDIDATE_SCAN_BUDGET seconds per run;
     the rest stay unverified until the next run.
     Returns ({image ref: {tag: verdict}}, new cache)."""
@@ -1397,26 +1416,27 @@ def verify_candidates(findings: dict[str, dict], newer: dict, cache: dict, now: 
         current = {_pair(v) for v in f["vulns"]}
         for tag in candidate_tags(newer.get(ref)):
             target = image_key(f["registry"], f["repository"], tag)
-            entry = cache.get(target)
-            if entry is not None and not entry.get("failed") and not current <= set(entry["checked"]):
-                entry = None
-            if (
-                entry is None and CANDIDATE_SCAN_NAMESPACE and scans < CANDIDATE_SCANS_PER_RUN
-                and time.monotonic() - started < CANDIDATE_SCAN_BUDGET
-            ):
+            key = f"{ref} -> {target}"
+            old = cache.get(key)
+            good = old if old is not None and not old.get("failed") else None
+            entry = old if old is not None and (good is None or current <= set(good["checked"])) else None
+            left = CANDIDATE_SCAN_BUDGET - (time.monotonic() - started)
+            if entry is None and CANDIDATE_SCAN_NAMESPACE and scans < CANDIDATE_SCANS_PER_RUN and left > 0:
                 scans += 1
                 try:
-                    found = scan_candidate(target)
+                    found = scan_candidate(target, max_wait=left)
                 except Exception as e:  # noqa: BLE001 - an unverified tag is still worth a digest
                     print(f"security digest: scan of {target} failed: {e}", file=sys.stderr)
                     found = None
-                if found is None:
-                    entry = cache[target] = {"failed": True, "at": now}
-                else:
-                    entry = cache[target] = {"checked": sorted(current), "remaining": sorted(current & found), "at": now}
+                if found is not None:
+                    entry = cache[key] = {"checked": sorted(current), "remaining": sorted(current & found), "at": now}
+                elif good is None:
+                    entry = cache[key] = {"failed": True, "at": now}
+            if entry is None:
+                entry = good  # stale (a finding it never checked), still the best answer there is
             verdict = {"major": is_major(f["tag"], tag), "status": "unverified", "fixes": [], "still": []}
             if entry is not None and not entry.get("failed"):
-                remaining = current & set(entry["remaining"])
+                remaining = (current & set(entry["remaining"])) | (current - set(entry["checked"]))
                 verdict.update(status="scanned", fixes=_labels(list(current - remaining), current),
                                still=_labels(list(remaining), current))
             verdicts.setdefault(ref, {})[tag] = verdict
@@ -2013,6 +2033,10 @@ def run_security_digest(now: int | None = None) -> bool:
     # push then repeats every interval, not every retry). Neither channel
     # delivered: retried soon.
     if not mailed:
+        try:  # the digest goes again next interval; the scans need not
+            write_state({**state, "candidates": cache})
+        except Exception as e:  # noqa: BLE001 - the scans just run again
+            print(f"security digest: could not save state: {e}", file=sys.stderr)
         return pushed
     try:
         write_state({**new_state(findings, newer, now, state), "candidates": cache})
