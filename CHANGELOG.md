@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
-- nginx 1.31.9 (fixes the HTTP/2 CVE-2026-123633 and CVE-2026-123007) for the default component image, `config/components/web.yaml`, the Traefik fallback page and the cluster OIDC proxy. The tag is now exact: with `nginx:alpine` and `IfNotPresent`, nodes kept whatever build they had pulled first. None of these servers speak HTTP/2 here (Traefik proxies to them over HTTP/1.1), so this is hygiene, not an exposure fix.
+- nginx 1.31.9 (fixes the HTTP/2 CVE-2026-123633 and CVE-2026-123007) for the default component image, `config/components/web.yaml`, the Traefik fallback page and the cluster OIDC proxy. The tag is now exact: with `nginx:alpine` and `IfNotPresent`, nodes kept whatever build they had pulled first. None of these servers speak HTTP/2 here (Traefik proxies to them over HTTP/1.1), so this is hygiene, not an exposure fix. Seafile's own nginx comes with the Seafile image and is not covered.
 - terraform-k8s-addons v2.18.0: Traefik chart 42.3.1 (Traefik v3.7.17), kube-prometheus-stack 93.1.0 (Prometheus Operator v0.95.1, Prometheus 3.16.0, Grafana 13.3.0).
 - Argo CD chart 10.17.0 (v3.6.1), ARC 0.15.1 (scale sets are now replaced automatically on a controller chart version change), Roundcube 1.7.5 (one-way SQLite schema migration; logout also ends the Zitadel session). See the module changelogs.
 - Image and chart bumps: Vault 2.2.1, Vector 0.61.0, git-sync v4.8.0, HAProxy 3.2 (Valkey Sentinel), piraeus chart 2.12.1, smartctl-exporter chart 0.19.1, actions-runner 2.338.2, samba a3.24.4, and fresh digests for the `latest`-only Bitnami images (Valkey, Sentinel, kubectl). See the module changelogs.
