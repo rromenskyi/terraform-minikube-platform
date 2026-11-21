@@ -11,6 +11,7 @@ import tempfile
 import threading
 import unittest
 import urllib.error
+from unittest import mock
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -838,8 +839,8 @@ class SecurityDigestRunTest(unittest.TestCase):
         self.m.push_notification = lambda title, message, severity: self.pushes.append((title, message))
         self.m.ask_llm = lambda s, p: (self.prompts.append((s, p)), "advice")[1]
         self.m.SMTP_RETRY_DELAYS = ()
-        self.m.CANDIDATE_SCAN_NAMESPACE = "security-scan"
-        self.m.scan_candidate = lambda image: {"CVE-1"}
+        self.m.CANDIDATE_SCAN_NAMESPACE = "scans"
+        self.m.scan_candidate = lambda image: {"CVE-1|openssl"}
 
     def test_sends_once_then_stays_quiet(self):
         self.m.run_security_digest(1_800_000_000)
@@ -976,7 +977,7 @@ class CandidateScanTest(unittest.TestCase):
 
     def setUp(self):
         self.m = load()
-        self.m.CANDIDATE_SCAN_NAMESPACE = "security-scan"
+        self.m.CANDIDATE_SCAN_NAMESPACE = "scans"
         self.findings = self.m.collect_findings(
             [vreport("a", "StatefulSet", "s", "org/app", "1.2.3", [vuln("CVE-1"), vuln("CVE-2", pkg="zlib")])], set()
         )
@@ -996,12 +997,21 @@ class CandidateScanTest(unittest.TestCase):
         self.assertFalse(self.m.is_major("1.2.3", "1.2.4"))
 
     def test_verdict_lists_what_the_candidate_fixes(self):
-        self.m.scan_candidate = self.scan({"CVE-2", "CVE-9"})
+        self.m.scan_candidate = self.scan({"CVE-2|zlib", "CVE-9|curl"})
         verdicts, cache = self.m.verify_candidates(self.findings, {self.ref: ("1.2.4", "1.2.4")}, {}, self.NOW)
         v = verdicts[self.ref]["1.2.4"]
         self.assertEqual((v["status"], v["fixes"], v["still"], v["major"]), ("scanned", ["CVE-1"], ["CVE-2"], False))
         self.assertEqual(self.scanned, ["quay.io/org/app:1.2.4"])
-        self.assertIn("quay.io/org/app:1.2.4", cache)
+        self.assertNotIn("CVE-9|curl", json.dumps(cache))  # only what matters for these findings is kept
+
+    def test_same_id_in_another_package_is_a_partial_fix(self):
+        f = self.m.collect_findings(
+            [vreport("a", "StatefulSet", "s", "org/app", "1.2.3", [vuln("CVE-1"), vuln("CVE-1", pkg="zlib")])], set()
+        )
+        self.m.scan_candidate = self.scan({"CVE-1|zlib"})
+        verdicts, _ = self.m.verify_candidates(f, {self.ref: ("1.2.4", "1.2.4")}, {}, self.NOW)
+        v = verdicts[self.ref]["1.2.4"]
+        self.assertEqual((v["fixes"], v["still"]), (["CVE-1 (openssl)"], ["CVE-1 (zlib)"]))
 
     def test_patch_and_latest_are_both_checked_once(self):
         self.m.scan_candidate = self.scan(set())
@@ -1019,32 +1029,59 @@ class CandidateScanTest(unittest.TestCase):
         self.m.verify_candidates(self.findings, newer, cache, self.NOW + self.m.CANDIDATE_SCAN_TTL + 1)
         self.assertEqual(len(self.scanned), 2)
 
-    def test_failed_scan_is_unverified_and_not_cached(self):
+    def test_a_new_finding_on_the_running_image_rescans(self):
+        self.m.scan_candidate = self.scan(set())
+        newer = {self.ref: ("1.2.4", "1.2.4")}
+        _, cache = self.m.verify_candidates(self.findings, newer, {}, self.NOW)
+        more = self.m.collect_findings(
+            [vreport("a", "StatefulSet", "s", "org/app", "1.2.3", [vuln("CVE-1"), vuln("CVE-3", pkg="curl")])], set()
+        )
+        self.m.verify_candidates(more, newer, cache, self.NOW + 60)
+        self.assertEqual(len(self.scanned), 2)
+
+    def test_failed_scan_is_unverified_and_not_retried_for_a_day(self):
         self.m.scan_candidate = self.scan(None)
-        verdicts, cache = self.m.verify_candidates(self.findings, {self.ref: ("1.2.4", "1.2.4")}, {}, self.NOW)
+        newer = {self.ref: ("1.2.4", "1.2.4")}
+        verdicts, cache = self.m.verify_candidates(self.findings, newer, {}, self.NOW)
         self.assertEqual(verdicts[self.ref]["1.2.4"]["status"], "unverified")
-        self.assertEqual(cache, {})
+        self.m.verify_candidates(self.findings, newer, cache, self.NOW + 3600)
+        self.assertEqual(len(self.scanned), 1)
+        self.m.verify_candidates(self.findings, newer, cache, self.NOW + self.m.CANDIDATE_FAILED_TTL + 1)
+        self.assertEqual(len(self.scanned), 2)
 
     def test_scanning_off_or_over_the_per_run_cap_is_unverified(self):
         self.m.scan_candidate = self.scan(set())
         self.m.CANDIDATE_SCAN_NAMESPACE = ""
         verdicts, _ = self.m.verify_candidates(self.findings, {self.ref: ("1.2.4", "1.2.4")}, {}, self.NOW)
         self.assertEqual(verdicts[self.ref]["1.2.4"]["status"], "unverified")
-        self.m.CANDIDATE_SCAN_NAMESPACE = "security-scan"
+        self.m.CANDIDATE_SCAN_NAMESPACE = "scans"
         self.m.CANDIDATE_SCANS_PER_RUN = 1
         verdicts, _ = self.m.verify_candidates(self.findings, {self.ref: ("1.2.4", "2.0.0")}, {}, self.NOW)
         self.assertEqual(sorted(v["status"] for v in verdicts[self.ref].values()), ["scanned", "unverified"])
         self.assertEqual(len(self.scanned), 1)
 
+    def test_scans_stop_when_the_run_budget_is_spent(self):
+        clock = iter([0, 0, self.m.CANDIDATE_SCAN_BUDGET + 1, self.m.CANDIDATE_SCAN_BUDGET + 1])
+        patcher = mock.patch.object(self.m.time, "monotonic", lambda: next(clock))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.m.scan_candidate = self.scan(set())
+        verdicts, _ = self.m.verify_candidates(self.findings, {self.ref: ("1.2.4", "2.0.0")}, {}, self.NOW)
+        self.assertEqual(len(self.scanned), 1)
+        self.assertEqual(sorted(v["status"] for v in verdicts[self.ref].values()), ["scanned", "unverified"])
+
     def test_corrupt_cache_counts_as_empty(self):
         self.m.scan_candidate = self.scan(set())
         newer = {self.ref: ("1.2.4", "1.2.4")}
-        for cache in ([], {"quay.io/org/app:1.2.4": {"at": self.NOW}}, {"quay.io/org/app:1.2.4": "x"}):
+        key = "quay.io/org/app:1.2.4"
+        for cache in ([], {key: {"at": self.NOW}}, {key: "x"}, {key: {"at": self.NOW, "checked": [{}], "remaining": []}},
+                      {key: {"at": self.NOW, "checked": [], "remaining": [1]}}, {key: {"at": "x", "failed": True}}):
             verdicts, _ = self.m.verify_candidates(self.findings, newer, cache, self.NOW)
             self.assertEqual(verdicts[self.ref]["1.2.4"]["status"], "scanned", cache)
 
     def test_scan_output_parsing(self):
-        self.assertEqual(self.m.parse_scan_output("noise\nSCAN-OK CVE-1 GHSA-x-y CVE-1 \n"), {"CVE-1", "GHSA-x-y"})
+        self.assertEqual(self.m.parse_scan_output("noise\nSCAN-OK CVE-1|openssl GHSA-x-y|zlib CVE-1|openssl \n"),
+                         {"CVE-1|openssl", "GHSA-x-y|zlib"})
         self.assertEqual(self.m.parse_scan_output("SCAN-OK"), set())
         self.assertIsNone(self.m.parse_scan_output("FATAL unable to fetch image"))
 
@@ -1061,6 +1098,88 @@ class CandidateScanTest(unittest.TestCase):
         self.assertIn("--server", c["args"])
         self.assertEqual(c["args"][-1], "docker.io/library/postgres:18.7-alpine")
         self.assertIn("limits", c["resources"])
+
+
+class ScanCandidateLifecycleTest(unittest.TestCase):
+    """scan_candidate against a fake API server."""
+
+    def setUp(self):
+        self.m = load()
+        self.m.CANDIDATE_SCAN_NAMESPACE = "scans"
+        self.m.TRIVY_CONFIG_NAMESPACE = "security-scan"
+        patcher = mock.patch.object(self.m.time, "sleep", lambda s: None)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.calls = []
+        self.statuses = [{}, {"succeeded": 1}]
+        self.log = "SCAN-OK CVE-1|openssl"
+        self.poll_error = None
+
+        def get(path):
+            self.calls.append(("GET", path))
+            if "/configmaps/" in path:
+                return {"data": {"trivy.serverURL": "http://trivy:4954", "trivy.repository": "aquasec/trivy",
+                                 "trivy.tag": "0.76.1"}}
+            if "/pods?" in path:
+                return {"items": [{"metadata": {"name": "pod-1"}}]}
+            if self.poll_error:
+                err, self.poll_error = self.poll_error, None
+                raise err
+            return {"status": self.statuses.pop(0) if len(self.statuses) > 1 else self.statuses[0]}
+
+        def call(method, path, body=None, raw=False):
+            self.calls.append((method, path))
+            if method == "POST":
+                self.created = body
+                return {"metadata": {"name": body["metadata"]["name"], "uid": "uid-1"}}
+            if raw:
+                return self.log
+            return {}
+
+        self.m._k8s_get = get
+        self.m._k8s_call = call
+
+    def test_success_reads_its_own_pod_and_cleans_up(self):
+        self.assertEqual(self.m.scan_candidate("quay.io/org/app:1.2.4"), {"CVE-1|openssl"})
+        name = self.created["metadata"]["name"]
+        self.assertTrue(name.startswith("candidate-scan-"))
+        self.assertIn(("GET", "/api/v1/namespaces/scans/pods?labelSelector=controller-uid%3Duid-1"), self.calls)
+        self.assertEqual(self.calls[-1], ("DELETE", f"/apis/batch/v1/namespaces/scans/jobs/{name}"))
+        self.assertNotIn("DELETE", [c[0] for c in self.calls[:-1]])  # never touches anyone else's Job
+
+    def test_two_scans_of_one_image_get_different_jobs(self):
+        self.m.scan_candidate("quay.io/org/app:1.2.4")
+        first = self.created["metadata"]["name"]
+        self.statuses = [{"succeeded": 1}]
+        self.m.scan_candidate("quay.io/org/app:1.2.4")
+        self.assertNotEqual(first, self.created["metadata"]["name"])
+
+    def test_failed_job_is_none_and_cleaned_up(self):
+        self.statuses = [{"failed": 1}]
+        self.assertIsNone(self.m.scan_candidate("quay.io/org/app:1.2.4"))
+        self.assertEqual(self.calls[-1][0], "DELETE")
+
+    def test_transient_poll_error_does_not_kill_the_scan(self):
+        self.poll_error = urllib.error.URLError("blip")
+        self.assertEqual(self.m.scan_candidate("quay.io/org/app:1.2.4"), {"CVE-1|openssl"})
+
+    def test_job_deleted_under_us_is_none(self):
+        self.poll_error = urllib.error.HTTPError("u", 404, "gone", {}, None)
+        self.assertIsNone(self.m.scan_candidate("quay.io/org/app:1.2.4"))
+
+    def test_timeout_is_none_and_cleaned_up(self):
+        self.statuses = [{}]
+        clock = iter(range(0, 100000, 100))
+        patcher = mock.patch.object(self.m.time, "time", lambda: next(clock))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.assertIsNone(self.m.scan_candidate("quay.io/org/app:1.2.4"))
+        self.assertEqual(self.calls[-1][0], "DELETE")
+
+    def test_no_server_configured_is_none_without_a_job(self):
+        self.m._k8s_get = lambda path: {"data": {}}
+        self.assertIsNone(self.m.scan_candidate("quay.io/org/app:1.2.4"))
+        self.assertNotIn("POST", [c[0] for c in self.calls])
 
 
 class RegistryRedirectTest(unittest.TestCase):

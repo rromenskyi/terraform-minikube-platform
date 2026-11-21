@@ -78,13 +78,17 @@ SECURITY_SEVERITIES = {
 # ConfigMap (in POD_NAMESPACE) holding what the last digest reported.
 SECURITY_STATE_CONFIGMAP = os.environ.get("SECURITY_STATE_CONFIGMAP", "")
 # Candidate tags are scanned by a short trivy Job in this namespace (trivy
-# client against trivy-operator's built-in server, settings from the
-# operator's ConfigMap). Empty = no scans: every candidate stays unverified.
+# client against trivy-operator's built-in server; server URL and image from
+# the operator's ConfigMap in TRIVY_CONFIG_NAMESPACE). Empty = no scans:
+# every candidate stays unverified.
 CANDIDATE_SCAN_NAMESPACE = os.environ.get("CANDIDATE_SCAN_NAMESPACE", "")
+TRIVY_CONFIG_NAMESPACE = os.environ.get("TRIVY_CONFIG_NAMESPACE", "")
 TRIVY_CONFIGMAP = os.environ.get("TRIVY_CONFIGMAP", "trivy-operator-trivy-config")
 CANDIDATE_SCAN_TTL = 7 * 86400
+CANDIDATE_FAILED_TTL = 86400
 CANDIDATE_SCANS_PER_RUN = 6
-CANDIDATE_SCAN_TIMEOUT = 900
+CANDIDATE_SCAN_BUDGET = 1200
+CANDIDATE_SCAN_TIMEOUT = 420
 POD_NAMESPACE = os.environ.get("POD_NAMESPACE", "")
 
 LOG_FETCH_LIMIT = 500
@@ -1238,12 +1242,17 @@ def is_major(tag: str, candidate: str) -> bool:
 
 
 _SCAN_MARK = "SCAN-OK"
-# Prints the marker, then every vulnerability ID trivy found in the image.
-_SCAN_TEMPLATE = _SCAN_MARK + " {{range .}}{{range .Vulnerabilities}}{{.VulnerabilityID}} {{end}}{{end}}"
+# Prints the marker, then "ID|package" for every vulnerability trivy found:
+# one ID can sit in several packages and a tag may fix only some of them.
+_SCAN_TEMPLATE = _SCAN_MARK + " {{range .}}{{range .Vulnerabilities}}{{.VulnerabilityID}}|{{.PkgName}} {{end}}{{end}}"
+
+
+def _pair(v: dict) -> str:
+    return f"{v['id']}|{v['package']}"
 
 
 def parse_scan_output(text: str) -> set[str] | None:
-    """Vulnerability IDs from a scan Job's log; None when the scan did not
+    """"ID|package" pairs from a scan Job's log; None when the scan did not
     finish (no marker)."""
     _, mark, ids = text.partition(_SCAN_MARK)
     return set(ids.split()) if mark else None
@@ -1303,40 +1312,43 @@ def _k8s_call(method: str, path: str, body: dict | None = None, raw: bool = Fals
 
 
 def scan_candidate(target: str) -> set[str] | None:
-    """Vulnerability IDs trivy finds in `target`, via a Job in
+    """"ID|package" pairs trivy finds in `target`, via a Job in
     CANDIDATE_SCAN_NAMESPACE; None when the scan could not run or finish
-    (private image, registry down, timeout)."""
-    ns = CANDIDATE_SCAN_NAMESPACE
-    cm = (_k8s_get(f"/api/v1/namespaces/{ns}/configmaps/{TRIVY_CONFIGMAP}").get("data") or {})
+    (private image, registry down, timeout). Every call makes its own Job
+    (random suffix) and only ever deletes that one: two enricher pods during
+    a rollout can scan at once without touching each other's Jobs."""
+    cm = (_k8s_get(f"/api/v1/namespaces/{TRIVY_CONFIG_NAMESPACE}/configmaps/{TRIVY_CONFIGMAP}").get("data") or {})
     server, repo, tag = cm.get("trivy.serverURL", ""), cm.get("trivy.repository", ""), cm.get("trivy.tag", "")
     if not (server and repo and tag):
         return None
-    name = "candidate-scan-" + hashlib.sha256(target.encode()).hexdigest()[:12]
+    ns = CANDIDATE_SCAN_NAMESPACE
     jobs = f"/apis/batch/v1/namespaces/{ns}/jobs"
-    gone = {"propagationPolicy": "Background"}
-    try:
-        _k8s_call("DELETE", f"{jobs}/{name}", gone)  # a leftover from a run that died mid-scan
-    except urllib.error.HTTPError as e:
-        if e.code != 404:
-            raise
-    _k8s_call("POST", jobs, scan_job(name, f"{repo}:{tag}", server, target))
+    name = f"candidate-scan-{hashlib.sha256(target.encode()).hexdigest()[:8]}-{os.urandom(4).hex()}"
+    uid = _k8s_call("POST", jobs, scan_job(name, f"{repo}:{tag}", server, target))["metadata"]["uid"]
     try:
         deadline = time.time() + CANDIDATE_SCAN_TIMEOUT + 60
+        status: dict = {}
         while time.time() < deadline:
-            status = _k8s_get(f"{jobs}/{name}").get("status") or {}
+            try:
+                status = _k8s_get(f"{jobs}/{name}").get("status") or {}
+            except urllib.error.HTTPError as e:
+                if e.code == 404:
+                    return None
+                print(f"security digest: polling {name}: {e}", file=sys.stderr)
+            except OSError as e:  # an API blip: keep polling until the deadline
+                print(f"security digest: polling {name}: {e}", file=sys.stderr)
             if status.get("succeeded") or status.get("failed"):
                 break
             time.sleep(5)
-        else:
+        if not status.get("succeeded"):
             return None
-        pods = _k8s_get(f"/api/v1/namespaces/{ns}/pods?labelSelector=job-name%3D{name}").get("items") or []
+        pods = _k8s_get(f"/api/v1/namespaces/{ns}/pods?labelSelector=controller-uid%3D{uid}").get("items") or []
         if not pods:
             return None
-        log = _k8s_call("GET", f"/api/v1/namespaces/{ns}/pods/{pods[0]['metadata']['name']}/log", raw=True)
-        return parse_scan_output(log) if status.get("succeeded") else None
+        return parse_scan_output(_k8s_call("GET", f"/api/v1/namespaces/{ns}/pods/{pods[0]['metadata']['name']}/log", raw=True))
     finally:
         try:
-            _k8s_call("DELETE", f"{jobs}/{name}", gone)
+            _k8s_call("DELETE", f"{jobs}/{name}", {"propagationPolicy": "Background"})
         except Exception as e:  # noqa: BLE001 - ttlSecondsAfterFinished cleans it up anyway
             print(f"security digest: could not delete scan job {name}: {e}", file=sys.stderr)
 
@@ -1345,39 +1357,68 @@ def candidate_tags(v) -> list[str]:
     return [t for i, t in enumerate(v or ()) if t and t not in (v or ())[:i]]
 
 
+def _strs(v) -> bool:
+    return isinstance(v, list) and all(isinstance(x, str) for x in v)
+
+
+def _cache_entry_ok(v, now: int) -> bool:
+    if not (isinstance(v, dict) and isinstance(v.get("at"), int)):
+        return False
+    if v.get("failed") is True:
+        return now - v["at"] < CANDIDATE_FAILED_TTL
+    return _strs(v.get("checked")) and _strs(v.get("remaining")) and now - v["at"] < CANDIDATE_SCAN_TTL
+
+
+def _labels(pairs: list[str], all_pairs: set[str]) -> list[str]:
+    """Pairs as IDs; "ID (package)" where the image has that ID in more than
+    one package."""
+    ids = [p.split("|", 1)[0] for p in all_pairs]
+    out = []
+    for p in sorted(pairs):
+        vid, pkg = p.split("|", 1)
+        out.append(f"{vid} ({pkg})" if ids.count(vid) > 1 else vid)
+    return sorted(set(out))
+
+
 def verify_candidates(findings: dict[str, dict], newer: dict, cache: dict, now: int) -> tuple[dict, dict]:
     """Scan each image's newer tags (patch and latest) and say which of its
     findings each one really fixes. `cache` maps a scanned image reference to
-    {"ids": [...], "at": time}; entries older than CANDIDATE_SCAN_TTL are
-    scanned again (the vulnerability DB moves), failed scans are not kept.
-    At most CANDIDATE_SCANS_PER_RUN scans per run; the rest stay unverified
-    until the next run. Returns ({image ref: {tag: verdict}}, new cache)."""
-    cache = {
-        k: v for k, v in (cache.items() if isinstance(cache, dict) else ())
-        if isinstance(v, dict) and isinstance(v.get("ids"), list) and isinstance(v.get("at"), int)
-        and now - v["at"] < CANDIDATE_SCAN_TTL
-    }
-    scans = 0
+    {"checked": pairs, "remaining": pairs, "at": time} — only the running
+    image's findings are kept, and a finding not checked yet means a rescan —
+    or {"failed": true, "at": time}. Results expire after CANDIDATE_SCAN_TTL
+    (the vulnerability DB moves), failures after CANDIDATE_FAILED_TTL. At most
+    CANDIDATE_SCANS_PER_RUN scans and CANDIDATE_SCAN_BUDGET seconds per run;
+    the rest stay unverified until the next run.
+    Returns ({image ref: {tag: verdict}}, new cache)."""
+    cache = {k: v for k, v in (cache.items() if isinstance(cache, dict) else ()) if _cache_entry_ok(v, now)}
+    started, scans = time.monotonic(), 0
     verdicts: dict[str, dict] = {}
     for ref, f in sorted(findings.items()):
+        current = {_pair(v) for v in f["vulns"]}
         for tag in candidate_tags(newer.get(ref)):
             target = image_key(f["registry"], f["repository"], tag)
             entry = cache.get(target)
-            if entry is None and CANDIDATE_SCAN_NAMESPACE and scans < CANDIDATE_SCANS_PER_RUN:
+            if entry is not None and not entry.get("failed") and not current <= set(entry["checked"]):
+                entry = None
+            if (
+                entry is None and CANDIDATE_SCAN_NAMESPACE and scans < CANDIDATE_SCANS_PER_RUN
+                and time.monotonic() - started < CANDIDATE_SCAN_BUDGET
+            ):
                 scans += 1
                 try:
-                    ids = scan_candidate(target)
+                    found = scan_candidate(target)
                 except Exception as e:  # noqa: BLE001 - an unverified tag is still worth a digest
                     print(f"security digest: scan of {target} failed: {e}", file=sys.stderr)
-                    ids = None
-                if ids is not None:
-                    entry = cache[target] = {"ids": sorted(ids), "at": now}
+                    found = None
+                if found is None:
+                    entry = cache[target] = {"failed": True, "at": now}
+                else:
+                    entry = cache[target] = {"checked": sorted(current), "remaining": sorted(current & found), "at": now}
             verdict = {"major": is_major(f["tag"], tag), "status": "unverified", "fixes": [], "still": []}
-            if entry is not None:
-                remaining = set(entry["ids"])
-                found = sorted({v["id"] for v in f["vulns"]})
-                verdict.update(status="scanned", fixes=[i for i in found if i not in remaining],
-                               still=[i for i in found if i in remaining])
+            if entry is not None and not entry.get("failed"):
+                remaining = current & set(entry["remaining"])
+                verdict.update(status="scanned", fixes=_labels(list(current - remaining), current),
+                               still=_labels(list(remaining), current))
             verdicts.setdefault(ref, {})[tag] = verdict
     return verdicts, cache
 
@@ -1917,17 +1958,18 @@ def run_security_digest(now: int | None = None) -> bool:
         ref: lookup_versions(f["registry"], f["repository"], f["tag"]) if f["tag"] else ("", "")
         for ref, f in findings.items()
     }
-    decision = digest_decision(findings, newer, state, now)
-    if decision is None:
-        return True
+    # Scans run every interval (cached ones cost nothing), not only when a
+    # digest goes out, so candidates past the per-run cap get their turn.
     verdicts, cache = verify_candidates(findings, newer, state.get("candidates") or {}, now)
-    if decision["reason"] == "reminder" and not has_verified_fix(verdicts):
-        # Pending tags that fix nothing are no reason to nag. Keep the scans
-        # so the next interval doesn't repeat them.
-        try:
-            write_state({**state, "candidates": cache})
-        except Exception as e:  # noqa: BLE001 - the scans just run again
-            print(f"security digest: could not save state: {e}", file=sys.stderr)
+    decision = digest_decision(findings, newer, state, now)
+    if decision is not None and decision["reason"] == "reminder" and not has_verified_fix(verdicts):
+        decision = None  # pending tags that fix nothing are no reason to nag
+    if decision is None:
+        if cache != state.get("candidates"):
+            try:
+                write_state({**state, "candidates": cache})
+            except Exception as e:  # noqa: BLE001 - the scans just run again
+                print(f"security digest: could not save state: {e}", file=sys.stderr)
         return True
 
     system = security_system_prompt()
