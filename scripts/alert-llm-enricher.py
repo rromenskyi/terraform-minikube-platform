@@ -13,6 +13,7 @@ Stdlib only, deliberately: this runs on a generic python image with the
 script mounted from a ConfigMap, no image build/registry needed.
 """
 
+import hashlib
 import html
 import io
 import json
@@ -76,6 +77,18 @@ SECURITY_SEVERITIES = {
 }
 # ConfigMap (in POD_NAMESPACE) holding what the last digest reported.
 SECURITY_STATE_CONFIGMAP = os.environ.get("SECURITY_STATE_CONFIGMAP", "")
+# Candidate tags are scanned by a short trivy Job in this namespace (trivy
+# client against trivy-operator's built-in server; server URL and image from
+# the operator's ConfigMap in TRIVY_CONFIG_NAMESPACE). Empty = no scans:
+# every candidate stays unverified.
+CANDIDATE_SCAN_NAMESPACE = os.environ.get("CANDIDATE_SCAN_NAMESPACE", "")
+TRIVY_CONFIG_NAMESPACE = os.environ.get("TRIVY_CONFIG_NAMESPACE", "")
+TRIVY_CONFIGMAP = os.environ.get("TRIVY_CONFIGMAP", "trivy-operator-trivy-config")
+CANDIDATE_SCAN_TTL = 7 * 86400
+CANDIDATE_FAILED_TTL = 86400
+CANDIDATE_SCANS_PER_RUN = 6
+CANDIDATE_SCAN_BUDGET = 1200
+CANDIDATE_SCAN_TIMEOUT = 420
 POD_NAMESPACE = os.environ.get("POD_NAMESPACE", "")
 
 LOG_FETCH_LIMIT = 500
@@ -947,11 +960,19 @@ for each image whether its registry has a newer tag. Findings marked [NEW] appea
 marked [UPDATE AVAILABLE] got a newer tag since then.
 
 Rules:
-- Base every claim on the data given. A newer tag is not proof that it fixes the vulnerability: say to check its \
-release notes or scan it before rolling it out.
-- Order by what to do first: images with a newer tag, most exposed and most severe first; then images with no \
-newer tag yet.
-- For an image with no newer tag, say it waits for upstream; name a mitigation only when the data supports one.
+- Base every claim on the data given. Each newer tag comes with the result of scanning it: "scanned, fixes ..." \
+lists the findings that tag really fixes; "unverified" means it was not scanned. A newer tag fixes a finding only \
+when its scan line says so.
+- Under "Update now" go only tags whose scan shows they fix at least one finding and that are not marked MAJOR. \
+Name which findings the bump fixes and which remain.
+- A tag marked MAJOR is a major upgrade, never a quick fix: mention it under "Wait for upstream" as an upgrade to \
+plan, with what its scan shows.
+- A tag whose scan fixes none of the findings does not help: the image waits for upstream. An unverified tag: say \
+it must be scanned before anyone relies on it.
+- Order by what to do first: verified fixes, most exposed and most severe first; then everything else.
+- For an image with no verified fix, say it waits for upstream; name a mitigation only when the data supports one.
+- Say a service is reachable from outside the cluster only when the runbook says so; otherwise treat it as \
+internal.
 - Recommend switching a service off only when all of these hold: the runbook marks it as non-critical, the runbook \
 or the data shows it is reachable from outside the cluster, and a finding is remotely exploitable with no newer \
 image. Otherwise never suggest switching anything off.
@@ -962,8 +983,9 @@ suggest commands that change the cluster.
 Write the whole answer in {language}, as plain text with these sections, each heading written in {language}:
 1. Summary: one or two sentences on the state as a whole. This part is also sent as a push notification, so it \
 must stand on its own.
-2. Update now: per image with a newer tag, what to bump, where, and why it comes first.
-3. Wait for upstream: images with no newer tag, and a mitigation only where justified."""
+2. Update now: per image with a verified fix, what to bump, where, which findings it fixes, and why it comes first.
+3. Wait for upstream: images with no verified fix (no newer tag, a tag that fixes nothing, an unverified tag or a \
+MAJOR upgrade), and a mitigation only where justified."""
 
 _DOCKER_HUB = {"docker.io", "index.docker.io", "registry-1.docker.io"}
 _VERSION_TAG = re.compile(r"^(v?)(\d+(?:\.\d+)*)(.*)$")
@@ -1211,6 +1233,229 @@ def lookup_versions(registry: str, repository: str, tag: str) -> tuple[str, str]
         _tags_cache[key] = list_tags(registry, repository)
     tags = _tags_cache[key]
     return None if tags is None else newer_versions(tag, tags)
+
+
+def is_major(tag: str, candidate: str) -> bool:
+    """The candidate's first version number is higher: a major upgrade."""
+    a, b = _VERSION_TAG.match(tag), _VERSION_TAG.match(candidate)
+    return bool(a and b and int(b.group(2).split(".")[0]) > int(a.group(2).split(".")[0]))
+
+
+_SCAN_MARK = "SCAN-OK"
+# Prints the marker, then "ID|package" for every vulnerability trivy found:
+# one ID can sit in several packages and a tag may fix only some of them.
+_SCAN_TEMPLATE = _SCAN_MARK + " {{range .}}{{range .Vulnerabilities}}{{.VulnerabilityID}}|{{.PkgName}} {{end}}{{end}}"
+
+
+def _pair(v: dict) -> str:
+    return f"{v['id']}|{v['package']}"
+
+
+def parse_scan_output(text: str) -> set[str] | None:
+    """"ID|package" pairs from a scan Job's log; None when the scan did not
+    finish (no marker)."""
+    _, mark, ids = text.partition(_SCAN_MARK)
+    return set(ids.split()) if mark else None
+
+
+def scan_job(name: str, image: str, server: str, target: str) -> dict:
+    """A one-shot trivy client Job: scans `target` against the trivy server,
+    prints only the IDs. No API token, non-root, read-only root, capped."""
+    return {
+        "apiVersion": "batch/v1",
+        "kind": "Job",
+        "metadata": {"name": name, "labels": {"app.kubernetes.io/name": "candidate-scan",
+                                              "app.kubernetes.io/managed-by": "alert-llm-enricher"}},
+        "spec": {
+            "backoffLimit": 0,
+            "activeDeadlineSeconds": CANDIDATE_SCAN_TIMEOUT,
+            "ttlSecondsAfterFinished": 600,
+            "template": {
+                "metadata": {"labels": {"app.kubernetes.io/name": "candidate-scan"}},
+                "spec": {
+                    "restartPolicy": "Never",
+                    "automountServiceAccountToken": False,
+                    "securityContext": {"runAsNonRoot": True, "runAsUser": 65534, "runAsGroup": 65534,
+                                        "seccompProfile": {"type": "RuntimeDefault"}},
+                    "containers": [{
+                        "name": "trivy",
+                        "image": image,
+                        "args": ["image", "--server", server, "--scanners", "vuln", "--quiet",
+                                 "--timeout", f"{CANDIDATE_SCAN_TIMEOUT - 60}s", "--cache-dir", "/tmp/trivy",
+                                 "--format", "template", "--template", _SCAN_TEMPLATE, target],
+                        "env": [{"name": "HOME", "value": "/tmp"}],
+                        "resources": {"requests": {"cpu": "100m", "memory": "256Mi"},
+                                      "limits": {"cpu": "1", "memory": "2Gi"}},
+                        "securityContext": {"allowPrivilegeEscalation": False, "readOnlyRootFilesystem": True,
+                                            "capabilities": {"drop": ["ALL"]}},
+                        "volumeMounts": [{"name": "tmp", "mountPath": "/tmp"}],
+                    }],
+                    "volumes": [{"name": "tmp", "emptyDir": {"sizeLimit": "6Gi"}}],
+                },
+            },
+        },
+    }
+
+
+def _k8s_call(method: str, path: str, body: dict | None = None, raw: bool = False):
+    with open(K8S_TOKEN_FILE) as f:
+        token = f.read().strip()
+    headers = {"Authorization": f"Bearer {token}"}
+    data = None
+    if body is not None:
+        data = json.dumps(body).encode()
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(f"{K8S_API_URL}{path}", data=data, method=method, headers=headers)
+    with urllib.request.urlopen(req, timeout=10, context=ssl.create_default_context(cafile=K8S_CA_FILE)) as resp:
+        out = resp.read()
+    return out.decode(errors="replace") if raw else json.loads(out or b"{}")
+
+
+def _retried(call, tries: int = 3):
+    """call(), retried on transient API errors (a 404 is final)."""
+    for attempt in range(tries):
+        try:
+            return call()
+        except urllib.error.HTTPError as e:
+            if e.code == 404 or attempt == tries - 1:
+                raise
+        except (OSError, ValueError):
+            if attempt == tries - 1:
+                raise
+        time.sleep(2)
+
+
+def scan_candidate(target: str, max_wait: float | None = None) -> set[str] | None:
+    """"ID|package" pairs trivy finds in `target`, via a Job in
+    CANDIDATE_SCAN_NAMESPACE; None when the scan could not run or finish
+    (private image, registry down, timeout, or `max_wait` seconds passed).
+    Every call makes its own Job
+    (random suffix) and only ever deletes that one: two enricher pods during
+    a rollout can scan at once without touching each other's Jobs."""
+    cm = (_k8s_get(f"/api/v1/namespaces/{TRIVY_CONFIG_NAMESPACE}/configmaps/{TRIVY_CONFIGMAP}").get("data") or {})
+    server, repo, tag = cm.get("trivy.serverURL", ""), cm.get("trivy.repository", ""), cm.get("trivy.tag", "")
+    if not (server and repo and tag):
+        return None
+    ns = CANDIDATE_SCAN_NAMESPACE
+    jobs = f"/apis/batch/v1/namespaces/{ns}/jobs"
+    name = f"candidate-scan-{hashlib.sha256(target.encode()).hexdigest()[:8]}-{os.urandom(4).hex()}"
+    uid = _k8s_call("POST", jobs, scan_job(name, f"{repo}:{tag}", server, target))["metadata"]["uid"]
+    try:
+        wait = CANDIDATE_SCAN_TIMEOUT + 60
+        deadline = time.time() + (wait if max_wait is None else min(wait, max_wait))
+        status: dict = {}
+        while time.time() < deadline:
+            try:
+                status = _k8s_get(f"{jobs}/{name}").get("status") or {}
+            except urllib.error.HTTPError as e:
+                if e.code == 404:
+                    return None
+                print(f"security digest: polling {name}: {e}", file=sys.stderr)
+            except (OSError, ValueError) as e:  # an API blip: keep polling until the deadline
+                print(f"security digest: polling {name}: {e}", file=sys.stderr)
+            if status.get("succeeded") or status.get("failed"):
+                break
+            time.sleep(5)
+        if not status.get("succeeded"):
+            return None
+        pods = _retried(lambda: _k8s_get(f"/api/v1/namespaces/{ns}/pods?labelSelector=controller-uid%3D{uid}")).get("items") or []
+        if not pods:
+            return None
+        pod = pods[0]["metadata"]["name"]
+        return parse_scan_output(_retried(lambda: _k8s_call("GET", f"/api/v1/namespaces/{ns}/pods/{pod}/log", raw=True)))
+    finally:
+        try:
+            _k8s_call("DELETE", f"{jobs}/{name}", {"propagationPolicy": "Background"})
+        except Exception as e:  # noqa: BLE001 - ttlSecondsAfterFinished cleans it up anyway
+            print(f"security digest: could not delete scan job {name}: {e}", file=sys.stderr)
+
+
+def candidate_tags(v) -> list[str]:
+    return [t for i, t in enumerate(v or ()) if t and t not in (v or ())[:i]]
+
+
+def _strs(v) -> bool:
+    return isinstance(v, list) and all(isinstance(x, str) for x in v)
+
+
+def _cache_entry_ok(v, now: int) -> bool:
+    if not (isinstance(v, dict) and isinstance(v.get("at"), int)):
+        return False
+    if v.get("failed") is True:
+        return now - v["at"] < CANDIDATE_FAILED_TTL
+    return _strs(v.get("checked")) and _strs(v.get("remaining")) and now - v["at"] < CANDIDATE_SCAN_TTL
+
+
+def _labels(pairs: list[str], all_pairs: set[str]) -> list[str]:
+    """Pairs as IDs; "ID (package)" where the image has that ID in more than
+    one package."""
+    ids = [p.split("|", 1)[0] for p in all_pairs]
+    out = []
+    for p in sorted(pairs):
+        vid, pkg = p.split("|", 1)
+        out.append(f"{vid} ({pkg})" if ids.count(vid) > 1 else vid)
+    return sorted(set(out))
+
+
+def verify_candidates(findings: dict[str, dict], newer: dict, cache: dict, now: int) -> tuple[dict, dict]:
+    """Scan each image's newer tags (patch and latest) and say which of its
+    findings each one really fixes. `cache` maps "<running image> -> <tag
+    image>" to {"checked": pairs, "remaining": pairs, "at": time} — only the
+    running image's findings are kept, and a finding not checked yet means a
+    rescan — or {"failed": true, "at": time}. Results expire after
+    CANDIDATE_SCAN_TTL (the vulnerability DB moves), failures after
+    CANDIDATE_FAILED_TTL; a failed rescan keeps the last good result, with
+    the findings it never checked counted as not fixed. At most
+    CANDIDATE_SCANS_PER_RUN scans and CANDIDATE_SCAN_BUDGET seconds per run;
+    the rest stay unverified until the next run.
+    Returns ({image ref: {tag: verdict}}, new cache)."""
+    cache = {k: v for k, v in (cache.items() if isinstance(cache, dict) else ()) if _cache_entry_ok(v, now)}
+    started, scans = time.monotonic(), 0
+    verdicts: dict[str, dict] = {}
+    for ref, f in sorted(findings.items()):
+        current = {_pair(v) for v in f["vulns"]}
+        for tag in candidate_tags(newer.get(ref)):
+            target = image_key(f["registry"], f["repository"], tag)
+            key = f"{ref} -> {target}"
+            old = cache.get(key)
+            good = old if old is not None and not old.get("failed") else None
+            entry = old if old is not None and (good is None or current <= set(good["checked"])) else None
+            left = CANDIDATE_SCAN_BUDGET - (time.monotonic() - started)
+            if entry is None and CANDIDATE_SCAN_NAMESPACE and scans < CANDIDATE_SCANS_PER_RUN and left > 0:
+                scans += 1
+                try:
+                    found = scan_candidate(target, max_wait=left)
+                except Exception as e:  # noqa: BLE001 - an unverified tag is still worth a digest
+                    print(f"security digest: scan of {target} failed: {e}", file=sys.stderr)
+                    found = None
+                if found is not None:
+                    entry = cache[key] = {"checked": sorted(current), "remaining": sorted(current & found), "at": now}
+                elif good is None:
+                    entry = cache[key] = {"failed": True, "at": now}
+            if entry is None:
+                entry = good  # stale (a finding it never checked), still the best answer there is
+            verdict = {"major": is_major(f["tag"], tag), "status": "unverified", "fixes": [], "still": []}
+            if entry is not None and not entry.get("failed"):
+                remaining = (current & set(entry["remaining"])) | (current - set(entry["checked"]))
+                verdict.update(status="scanned", fixes=_labels(list(current - remaining), current),
+                               still=_labels(list(remaining), current))
+            verdicts.setdefault(ref, {})[tag] = verdict
+    return verdicts, cache
+
+
+def verdict_text(tag: str, v: dict) -> str:
+    head = f"{tag}: " + ("MAJOR upgrade, " if v["major"] else "")
+    if v["status"] != "scanned":
+        return head + "unverified (not scanned)"
+    if not v["fixes"]:
+        return head + "scanned, fixes none of these findings"
+    if not v["still"]:
+        return head + "scanned, fixes all of these findings"
+    return head + f"scanned, fixes {', '.join(v['fixes'])}; still has {', '.join(v['still'])}"
+
+
+def has_verified_fix(verdicts: dict) -> bool:
+    return any(v["status"] == "scanned" and v["fixes"] and not v["major"] for tags in verdicts.values() for v in tags.values())
 
 
 def pair_keys(findings: dict[str, dict]) -> set[str]:
@@ -1520,7 +1765,12 @@ def _security_final_instruction() -> str:
     )
 
 
-def security_prompt(findings: dict[str, dict], newer: dict, decision: dict, system_chars: int = 0) -> str:
+def _verdict_lines(ref: str, verdicts: dict | None) -> list[str]:
+    return [verdict_text(tag, v) for tag, v in ((verdicts or {}).get(ref) or {}).items()]
+
+
+def security_prompt(findings: dict[str, dict], newer: dict, decision: dict, system_chars: int = 0,
+                    verdicts: dict | None = None) -> str:
     budget = max(PROMPT_CHAR_BUDGET - system_chars, 1000)
     tail = "\n" + _security_final_instruction()
     head = f"{len(findings)} image(s) with fixable vulnerabilities ({', '.join(sorted(SECURITY_SEVERITIES))}).\n"
@@ -1529,6 +1779,7 @@ def security_prompt(findings: dict[str, dict], newer: dict, decision: dict, syst
         f = findings[ref]
         mark = " [UPDATE AVAILABLE]" if ref in decision["new_tags"] else ""
         lines = [f"### Image {ref}{mark} — newer tag: {_newer_text(newer.get(ref))}"]
+        lines += [f"  Newer tag {t}" for t in _verdict_lines(ref, verdicts)]
         lines.append("Runs in: " + _some(f["workloads"], 5))
         cves = _ordered_vulns(f, decision["new"])
         for v, is_new in cves[:MAX_CVES_PER_IMAGE]:
@@ -1556,11 +1807,13 @@ def _summary_line(findings: dict, newer: dict, decision: dict, rows: list[dict])
     )
 
 
-def digest_text(advice: str, findings: dict, newer: dict, decision: dict, rows: list[dict]) -> str:
+def digest_text(advice: str, findings: dict, newer: dict, decision: dict, rows: list[dict],
+                verdicts: dict | None = None) -> str:
     out = [_summary_line(findings, newer, decision, rows), "", f"--- Advice by the local LLM ({LLM_MODEL}) ---", advice, ""]
     for ref in _ordered_images(findings, newer, decision):
         f = findings[ref]
         out.append(f"=== {ref} — newer tag: {_newer_text(newer.get(ref))} ===")
+        out += [f"Newer tag {t}" for t in _verdict_lines(ref, verdicts)]
         out.append("Runs in: " + ", ".join(sorted(f["workloads"])))
         for v, is_new in _ordered_vulns(f, decision["new"]):
             out.append(f"  {'[NEW] ' if is_new else ''}{v['id']} {v['package']} {v['installed']} -> {v['fixed']}: {v['title']}")
@@ -1582,7 +1835,8 @@ def _badge(text: str, bg: str, fg: str = "#ffffff") -> str:
     )
 
 
-def digest_html(advice: str, findings: dict, newer: dict, decision: dict, rows: list[dict], now: int) -> str:
+def digest_html(advice: str, findings: dict, newer: dict, decision: dict, rows: list[dict], now: int,
+                verdicts: dict | None = None) -> str:
     e = html.escape
     updates = sum(1 for ref in findings if _has_update(newer.get(ref)))
     stats = [
@@ -1620,6 +1874,10 @@ def digest_html(advice: str, findings: dict, newer: dict, decision: dict, rows: 
             update = '<span style="color:#b9770e">registry could not be read: newer tags unknown</span>'
         elif _has_update(versions):
             update = f'newer tag <b style="font-family:monospace">{e(format_newer(*versions))}</b>'
+            update += "".join(
+                f'<div style="font-size:12px;color:#5d6d7e;font-family:monospace">{e(t)}</div>'
+                for t in _verdict_lines(ref, verdicts)
+            )
         else:
             update = '<span style="color:#85929e">no newer tag yet</span>'
         cve_rows = []
@@ -1650,7 +1908,8 @@ def digest_html(advice: str, findings: dict, newer: dict, decision: dict, rows: 
         )
     parts.append(
         '<div style="font-size:12px;color:#85929e">The attached workbook lists every running image (Images) and every '
-        "finding (Findings). A newer tag is not proof of a fix: check its release notes or scan it first.</div></div>"
+        "finding (Findings). Each newer tag was scanned to see which findings it really fixes; an unverified tag "
+        "was not.</div></div>"
     )
     return "".join(parts)
 
@@ -1719,12 +1978,22 @@ def run_security_digest(now: int | None = None) -> bool:
         ref: lookup_versions(f["registry"], f["repository"], f["tag"]) if f["tag"] else ("", "")
         for ref, f in findings.items()
     }
+    # Scans run every interval (cached ones cost nothing), not only when a
+    # digest goes out, so candidates past the per-run cap get their turn.
+    verdicts, cache = verify_candidates(findings, newer, state.get("candidates") or {}, now)
     decision = digest_decision(findings, newer, state, now)
+    if decision is not None and decision["reason"] == "reminder" and not has_verified_fix(verdicts):
+        decision = None  # pending tags that fix nothing are no reason to nag
     if decision is None:
+        if cache != state.get("candidates"):
+            try:
+                write_state({**state, "candidates": cache})
+            except Exception as e:  # noqa: BLE001 - the scans just run again
+                print(f"security digest: could not save state: {e}", file=sys.stderr)
         return True
 
     system = security_system_prompt()
-    prompt = security_prompt(findings, newer, decision, system_chars=len(system))
+    prompt = security_prompt(findings, newer, decision, system_chars=len(system), verdicts=verdicts)
     try:
         with _WORKERS:
             advice = ask_llm(system, prompt)
@@ -1750,8 +2019,8 @@ def run_security_digest(now: int | None = None) -> bool:
     if decision["reason"] == "reminder":
         label.append("reminder")
     subject = redact(f"[Security digest] {len(findings)} images with fixable findings ({', '.join(label)})")
-    text = redact(digest_text(advice, findings, newer, decision, rows))
-    page = redact(digest_html(advice, findings, newer, decision, rows, now))
+    text = redact(digest_text(advice, findings, newer, decision, rows, verdicts))
+    page = redact(digest_html(advice, findings, newer, decision, rows, now, verdicts))
     mailed = send_email_with_retries("security digest", subject, text, html_body=page, attachments=attachments)
     pushed = False
     try:
@@ -1764,9 +2033,13 @@ def run_security_digest(now: int | None = None) -> bool:
     # push then repeats every interval, not every retry). Neither channel
     # delivered: retried soon.
     if not mailed:
+        try:  # the digest goes again next interval; the scans need not
+            write_state({**state, "candidates": cache})
+        except Exception as e:  # noqa: BLE001 - the scans just run again
+            print(f"security digest: could not save state: {e}", file=sys.stderr)
         return pushed
     try:
-        write_state(new_state(findings, newer, now, state))
+        write_state({**new_state(findings, newer, now, state), "candidates": cache})
     except Exception as e:  # noqa: BLE001 - the next run resends; logged so a loop is visible
         print(f"security digest: could not save state: {e}", file=sys.stderr)
     return True
