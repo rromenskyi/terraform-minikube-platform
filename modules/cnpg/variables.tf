@@ -27,7 +27,7 @@ variable "operator_chart_version" {
 variable "barman_plugin_chart_version" {
   description = "Version of the `plugin-barman-cloud` Helm chart. It needs cert-manager in the cluster."
   type        = string
-  default     = "0.8.1"
+  default     = "0.9.0"
 }
 
 # ── Cluster ─────────────────────────────────────────────────────────────────

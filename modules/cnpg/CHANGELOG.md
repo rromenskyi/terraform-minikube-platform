@@ -7,6 +7,9 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Changed
+- plugin-barman-cloud chart 0.9.0 (v0.16.0): zstd base backups, S3 addressing style and SSE-C, multiple plugin replicas; its sidecar image fixes GHSA-6q48-6c7w-9gw2 (certifi).
+
 ### Added
 - `managed_roles`: declarative roles on the primary (CNPG
   `spec.managed.roles`), each with its password in a module-written Secret

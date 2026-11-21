@@ -166,7 +166,7 @@ resource "helm_release" "trivy_operator" {
       builtInTrivyServer = var.builtin_trivy_server
     }
 
-    trivy = {
+    trivy = merge(var.trivy_image_tag == "" ? {} : { image = { tag = var.trivy_image_tag } }, {
       severity = var.severity
       # Findings without a fixed version cannot be acted on and never go
       # away; keeping them makes every alert permanent noise.
@@ -183,7 +183,7 @@ resource "helm_release" "trivy_operator" {
       server = {
         resources = var.trivy_server_resources
       }
-    }
+    })
 
     resources = var.operator_resources
 

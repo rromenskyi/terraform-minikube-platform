@@ -123,6 +123,12 @@ variable "grafana_dashboard_enabled" {
   default     = false
 }
 
+variable "trivy_image_tag" {
+  description = "Tag of the trivy image used by scan Jobs and the built-in trivy server (client and server must match). Empty = the chart's default. Set it when trivy ships a fix before a chart release picks it up."
+  type        = string
+  default     = "0.76.2"
+}
+
 variable "builtin_trivy_server" {
   description = "Run trivy-operator's built-in trivy server and scan in ClientServer mode. The DB lives once on a PVC instead of in every scan Pod, and multi-container workloads no longer fail on the shared local cache lock."
   type        = bool

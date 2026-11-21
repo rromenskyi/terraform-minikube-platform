@@ -7,6 +7,9 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- `trivy_image_tag` (default `0.76.2`): trivy image for scan Jobs and the built-in server, ahead of the chart default (0.76.1, fixes CVE-2026-111497). Empty = the chart's default.
+
 ### Added
 - `image_alert_enabled` (default `true`): `false` leaves `ImageVulnerabilities`
   out of the PrometheusRule, for when another consumer reports the findings.
