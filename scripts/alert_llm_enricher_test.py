@@ -838,6 +838,8 @@ class SecurityDigestRunTest(unittest.TestCase):
         self.m.push_notification = lambda title, message, severity: self.pushes.append((title, message))
         self.m.ask_llm = lambda s, p: (self.prompts.append((s, p)), "advice")[1]
         self.m.SMTP_RETRY_DELAYS = ()
+        self.m.CANDIDATE_SCAN_NAMESPACE = "security-scan"
+        self.m.scan_candidate = lambda image: {"CVE-1"}
 
     def test_sends_once_then_stays_quiet(self):
         self.m.run_security_digest(1_800_000_000)
@@ -862,6 +864,43 @@ class SecurityDigestRunTest(unittest.TestCase):
         self.assertIn("newer tag: v2", prompt)
         self.assertIn("non-critical", system)
         self.assertTrue(prompt.endswith(self.m._security_final_instruction()))
+
+    def patch_release(self):
+        self.reports = [vreport("a", "StatefulSet", "s", "org/app", "1.0.0", [vuln("CVE-1")])]
+        self.m.lookup_versions = lambda registry, repository, tag: ("1.0.1", "1.0.1")
+
+    def test_prompt_carries_the_scan_verdict_and_the_rules(self):
+        self.patch_release()
+        self.m.run_security_digest(1_800_000_000)
+        system, prompt = self.prompts[0]
+        self.assertIn("1.0.1: scanned, fixes none of these findings", prompt)
+        self.assertIn("MAJOR", system)
+        self.assertIn("runbook", system)
+        self.assertIn("fixes none", self.m.sent[0][1])
+        self.assertIn("fixes none", self.m.sent_extra[0]["html_body"])
+
+    def test_verdict_cache_is_saved_with_the_state(self):
+        self.m.run_security_digest(1_800_000_000)
+        self.assertIn("quay.io/org/app:v2", self.state["candidates"])
+
+    def test_major_candidate_is_marked(self):
+        self.m.scan_candidate = lambda image: set()
+        self.m.run_security_digest(1_800_000_000)
+        self.assertIn("v2: MAJOR upgrade, scanned, fixes all of these findings", self.prompts[0][1])
+
+    def test_reminder_needs_a_verified_fix(self):
+        self.patch_release()
+        week_ago = 1_800_000_000 - 8 * 86400
+        self.m.SECURITY_DIGEST_REMINDER = 7 * 86400
+        self.state = {"pairs": ["quay.io/org/app|CVE-1"], "known": {"quay.io/org/app:*": ["1.0.1"]}, "sent_at": week_ago}
+        self.m.run_security_digest(1_800_000_000)
+        self.assertEqual(self.m.sent, [])
+        self.assertIn("quay.io/org/app:1.0.1", self.state["candidates"])
+        self.state["candidates"] = {}
+        self.m.scan_candidate = lambda image: set()
+        self.m.run_security_digest(1_800_000_000)
+        self.assertEqual(len(self.m.sent), 1)
+        self.assertIn("reminder", self.m.sent[0][0])
 
     def test_advice_is_escaped_in_html(self):
         self.m.ask_llm = lambda s, p: "<script>x</script>"
@@ -930,6 +969,98 @@ class SecurityDigestRunTest(unittest.TestCase):
         self.m.run_security_digest(1_800_000_000)
         self.assertEqual(self.m.sent, [])
         self.assertEqual(self.state, {})
+
+
+class CandidateScanTest(unittest.TestCase):
+    NOW = 1_800_000_000
+
+    def setUp(self):
+        self.m = load()
+        self.m.CANDIDATE_SCAN_NAMESPACE = "security-scan"
+        self.findings = self.m.collect_findings(
+            [vreport("a", "StatefulSet", "s", "org/app", "1.2.3", [vuln("CVE-1"), vuln("CVE-2", pkg="zlib")])], set()
+        )
+        self.ref = "quay.io/org/app:1.2.3"
+        self.scanned = []
+
+    def scan(self, result):
+        def fake(image):
+            self.scanned.append(image)
+            return result(image) if callable(result) else result
+        return fake
+
+    def test_major_jump(self):
+        self.assertTrue(self.m.is_major("18.6-alpine", "19.0-alpine"))
+        self.assertTrue(self.m.is_major("8.4.13", "26.10.0"))
+        self.assertFalse(self.m.is_major("v0.15.1", "v0.16.0"))
+        self.assertFalse(self.m.is_major("1.2.3", "1.2.4"))
+
+    def test_verdict_lists_what_the_candidate_fixes(self):
+        self.m.scan_candidate = self.scan({"CVE-2", "CVE-9"})
+        verdicts, cache = self.m.verify_candidates(self.findings, {self.ref: ("1.2.4", "1.2.4")}, {}, self.NOW)
+        v = verdicts[self.ref]["1.2.4"]
+        self.assertEqual((v["status"], v["fixes"], v["still"], v["major"]), ("scanned", ["CVE-1"], ["CVE-2"], False))
+        self.assertEqual(self.scanned, ["quay.io/org/app:1.2.4"])
+        self.assertIn("quay.io/org/app:1.2.4", cache)
+
+    def test_patch_and_latest_are_both_checked_once(self):
+        self.m.scan_candidate = self.scan(set())
+        verdicts, _ = self.m.verify_candidates(self.findings, {self.ref: ("1.2.4", "2.0.0")}, {}, self.NOW)
+        self.assertEqual(sorted(verdicts[self.ref]), ["1.2.4", "2.0.0"])
+        self.assertTrue(verdicts[self.ref]["2.0.0"]["major"])
+        self.assertEqual(len(self.scanned), 2)
+
+    def test_cache_is_reused_until_it_expires(self):
+        self.m.scan_candidate = self.scan(set())
+        newer = {self.ref: ("1.2.4", "1.2.4")}
+        _, cache = self.m.verify_candidates(self.findings, newer, {}, self.NOW)
+        self.m.verify_candidates(self.findings, newer, cache, self.NOW + 3600)
+        self.assertEqual(len(self.scanned), 1)
+        self.m.verify_candidates(self.findings, newer, cache, self.NOW + self.m.CANDIDATE_SCAN_TTL + 1)
+        self.assertEqual(len(self.scanned), 2)
+
+    def test_failed_scan_is_unverified_and_not_cached(self):
+        self.m.scan_candidate = self.scan(None)
+        verdicts, cache = self.m.verify_candidates(self.findings, {self.ref: ("1.2.4", "1.2.4")}, {}, self.NOW)
+        self.assertEqual(verdicts[self.ref]["1.2.4"]["status"], "unverified")
+        self.assertEqual(cache, {})
+
+    def test_scanning_off_or_over_the_per_run_cap_is_unverified(self):
+        self.m.scan_candidate = self.scan(set())
+        self.m.CANDIDATE_SCAN_NAMESPACE = ""
+        verdicts, _ = self.m.verify_candidates(self.findings, {self.ref: ("1.2.4", "1.2.4")}, {}, self.NOW)
+        self.assertEqual(verdicts[self.ref]["1.2.4"]["status"], "unverified")
+        self.m.CANDIDATE_SCAN_NAMESPACE = "security-scan"
+        self.m.CANDIDATE_SCANS_PER_RUN = 1
+        verdicts, _ = self.m.verify_candidates(self.findings, {self.ref: ("1.2.4", "2.0.0")}, {}, self.NOW)
+        self.assertEqual(sorted(v["status"] for v in verdicts[self.ref].values()), ["scanned", "unverified"])
+        self.assertEqual(len(self.scanned), 1)
+
+    def test_corrupt_cache_counts_as_empty(self):
+        self.m.scan_candidate = self.scan(set())
+        newer = {self.ref: ("1.2.4", "1.2.4")}
+        for cache in ([], {"quay.io/org/app:1.2.4": {"at": self.NOW}}, {"quay.io/org/app:1.2.4": "x"}):
+            verdicts, _ = self.m.verify_candidates(self.findings, newer, cache, self.NOW)
+            self.assertEqual(verdicts[self.ref]["1.2.4"]["status"], "scanned", cache)
+
+    def test_scan_output_parsing(self):
+        self.assertEqual(self.m.parse_scan_output("noise\nSCAN-OK CVE-1 GHSA-x-y CVE-1 \n"), {"CVE-1", "GHSA-x-y"})
+        self.assertEqual(self.m.parse_scan_output("SCAN-OK"), set())
+        self.assertIsNone(self.m.parse_scan_output("FATAL unable to fetch image"))
+
+    def test_scan_job_is_locked_down(self):
+        job = self.m.scan_job("candidate-scan-x", "mirror.gcr.io/aquasec/trivy:0.76.1",
+                              "http://trivy-service.security-scan:4954", "docker.io/library/postgres:18.7-alpine")
+        spec = job["spec"]["template"]["spec"]
+        c = spec["containers"][0]
+        self.assertEqual(job["spec"]["backoffLimit"], 0)
+        self.assertIn("ttlSecondsAfterFinished", job["spec"])
+        self.assertFalse(spec["automountServiceAccountToken"])
+        self.assertTrue(spec["securityContext"]["runAsNonRoot"])
+        self.assertEqual(c["securityContext"]["capabilities"]["drop"], ["ALL"])
+        self.assertIn("--server", c["args"])
+        self.assertEqual(c["args"][-1], "docker.io/library/postgres:18.7-alpine")
+        self.assertIn("limits", c["resources"])
 
 
 class RegistryRedirectTest(unittest.TestCase):

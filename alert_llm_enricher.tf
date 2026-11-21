@@ -46,6 +46,9 @@ locals {
     ? toset(["enabled"]) : toset([])
   )
   alert_llm_security_state_name = "${local.alert_llm_enricher_name}-security-state"
+  # trivy-operator's own settings (server URL, trivy image): the candidate
+  # scans use the same ones.
+  alert_llm_trivy_configmap = "trivy-operator-trivy-config"
 
   # The push topic URL works like a password (anyone holding it can read and
   # post), so it reaches the pod through a Secret, not a plain env value.
@@ -205,6 +208,59 @@ resource "kubernetes_role_binding_v1" "alert_llm_security_state" {
   }
 }
 
+# ── Candidate tag scans ─────────────────────────────────────────────────────
+# Before the digest calls a newer tag a fix, the enricher scans it: a short
+# trivy client Job in the scanner namespace, against trivy-operator's built-in
+# server, settings read from the operator's ConfigMap. The Role covers exactly
+# that: the Jobs, their logs, and that one ConfigMap.
+
+resource "kubernetes_role_v1" "alert_llm_candidate_scan" {
+  for_each   = local.alert_llm_security_digest
+  depends_on = [module.security_scan]
+
+  metadata {
+    name      = "${local.alert_llm_enricher_name}-candidate-scan"
+    namespace = module.security_scan.namespace
+    labels    = module.platform_label.tags
+  }
+  rule {
+    api_groups = ["batch"]
+    resources  = ["jobs"]
+    verbs      = ["get", "create", "delete"]
+  }
+  rule {
+    api_groups = [""]
+    resources  = ["pods/log"]
+    verbs      = ["get"]
+  }
+  rule {
+    api_groups     = [""]
+    resources      = ["configmaps"]
+    resource_names = [local.alert_llm_trivy_configmap]
+    verbs          = ["get"]
+  }
+}
+
+resource "kubernetes_role_binding_v1" "alert_llm_candidate_scan" {
+  for_each = local.alert_llm_security_digest
+
+  metadata {
+    name      = "${local.alert_llm_enricher_name}-candidate-scan"
+    namespace = module.security_scan.namespace
+    labels    = module.platform_label.tags
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "Role"
+    name      = kubernetes_role_v1.alert_llm_candidate_scan["enabled"].metadata[0].name
+  }
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account_v1.alert_llm_enricher["enabled"].metadata[0].name
+    namespace = local.platform.services.logging.namespace
+  }
+}
+
 resource "kubernetes_deployment_v1" "alert_llm_enricher" {
   for_each = local.alert_llm_enrichment_instances
 
@@ -335,6 +391,15 @@ resource "kubernetes_deployment_v1" "alert_llm_enricher" {
             name = "SECURITY_STATE_CONFIGMAP"
             # Through the resource, so the ConfigMap exists before the pod.
             value = try(kubernetes_config_map_v1.alert_llm_security_state["enabled"].metadata[0].name, "")
+          }
+          env {
+            name = "CANDIDATE_SCAN_NAMESPACE"
+            # Through the binding, so the Role exists before the pod; "" = no scans.
+            value = try(kubernetes_role_binding_v1.alert_llm_candidate_scan["enabled"].metadata[0].namespace, "")
+          }
+          env {
+            name  = "TRIVY_CONFIGMAP"
+            value = local.alert_llm_trivy_configmap
           }
           env {
             name  = "POD_NAMESPACE"
