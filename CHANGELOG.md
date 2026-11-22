@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Stalwart v1.0.3 (from 0.16.27), stalwart-cli v1.0.14, WebUI v2.0.5. The first v1 start copies the 0.16 store into a new one with stalwart-migrate (init container `migrate-v1`) and leaves the 0.16 store in place for rollback. OAuth clients sign in again afterwards. See `modules/stalwart/CHANGELOG.md`.
 
 ### Fixed
-- gpu_dra: dra-driver-dri 0.2.2 reads DRM fdinfo only for processes of pods holding a GPU claim. It listed every process on the node, and AppArmor denied and logged each read of a host process or privileged pod (about 1100 kernel audit lines an hour per GPU node).
+- gpu_dra: dra-driver-dri 0.2.3 reads DRM fdinfo only for processes of pods holding a GPU claim, and skips their pause process. It listed every process on the node, and AppArmor denied and logged each read of a host process, privileged pod or pause container (about 1100 kernel audit lines an hour per GPU node).
 - git-sync v4.8.0 sidecars start again: they pass `--git-config=safe.directory:*`, which git-sync stopped setting itself (the git-sync-init container failed with `detected dubious ownership`).
 - Stalwart signs outgoing mail with the module's DKIM key, the one published in DNS. Before, the module's key never reached Stalwart, which signed with self-generated keys that were not in DNS. Existing domains switch to manual DKIM management and lose their signatures under other selectors.
 
