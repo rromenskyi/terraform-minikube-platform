@@ -601,7 +601,7 @@ resource "kubectl_manifest" "ingressroute" {
         # Longer rule, so it outranks the route above. The service is a
         # placeholder the CRD requires; the middleware answers first.
         {
-          match = "Host(`${var.hostname}`) && PathPrefix(`/metrics`)"
+          match = "Host(`${var.hostname}`) && Path(`/metrics`)"
           kind  = "Rule"
           services = [{
             name = "noop@internal"
