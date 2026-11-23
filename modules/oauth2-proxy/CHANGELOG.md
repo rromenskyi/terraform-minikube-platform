@@ -7,6 +7,12 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- The Zitadel application puts the userinfo claims (e-mail) into the ID token
+  (`id_token_userinfo_assertion = true`). traefik-forward-auth reads the e-mail
+  from the ID token only, so with `allowed_emails`/`allowed_domains` set every
+  login was rejected as "Not authorized" (`Invalid email email=`).
+
 ### Changed
 - File layout split into `main.tf` / `variables.tf` / `outputs.tf` per AGENT.md
   module conventions. Pure file reorganisation — no resource, input, output, or

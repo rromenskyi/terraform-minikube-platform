@@ -103,7 +103,11 @@ resource "zitadel_application_oidc" "this" {
   access_token_type           = "OIDC_TOKEN_TYPE_BEARER"
   access_token_role_assertion = false
   id_token_role_assertion     = false
-  id_token_userinfo_assertion = false
+  # traefik-forward-auth reads the user's e-mail from the ID token only (it
+  # never calls userinfo). Without the userinfo claims in the ID token the
+  # e-mail is empty and an allowed_emails/allowed_domains list rejects
+  # everyone ("Invalid email").
+  id_token_userinfo_assertion = true
   clock_skew                  = "0s"
 }
 
