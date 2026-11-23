@@ -46,19 +46,22 @@ locals {
   # validations guarantee these suffixes).
   mib = {
     for k, v in {
-      shm   = var.shm_size
-      cache = var.cache_size
-      limit = var.resources.limits.memory
-      quota = var.quota.memory
+      shm     = var.shm_size
+      cache   = var.cache_size
+      limit   = var.resources.limits.memory
+      request = var.resources.requests.memory
+      quota   = var.quota.memory
     } : k => tonumber(regex("^([0-9]+)", v)[0]) * (endswith(v, "Gi") ? 1024 : 1)
   }
   millicores = {
     for k, v in {
-      limit = var.resources.limits.cpu
-      quota = var.quota.cpu
+      limit   = var.resources.limits.cpu
+      request = var.resources.requests.cpu
+      quota   = var.quota.cpu
     } : k => endswith(v, "m") ? tonumber(trimsuffix(v, "m")) : tonumber(v) * 1000
   }
-  # The init container's limits (see the Deployment).
+  # The init container's limits (see the Deployment). Kubernetes charges a
+  # pod max(init container, app containers) per resource, not the sum.
   init_limit = { mib = 64, millicores = 200 }
 }
 
@@ -86,8 +89,13 @@ resource "terraform_data" "checks" {
       error_message = "shm_size + cache_size (${local.mib.shm + local.mib.cache} MiB) must stay below resources.limits.memory (${local.mib.limit} MiB): both are memory-backed and count against the limit."
     }
     precondition {
-      condition     = local.mib.limit + local.init_limit.mib <= local.mib.quota && local.millicores.limit + local.init_limit.millicores <= local.millicores.quota
-      error_message = "quota must cover resources.limits plus the init container (64Mi, 200m); otherwise the pod is rejected by the ResourceQuota."
+      condition = alltrue([
+        max(local.mib.limit, local.init_limit.mib) <= local.mib.quota,
+        max(local.millicores.limit, local.init_limit.millicores) <= local.millicores.quota,
+        local.mib.request <= local.mib.limit,
+        local.millicores.request <= local.millicores.limit,
+      ])
+      error_message = "resources.requests must not exceed resources.limits, and quota must cover resources.limits (and the init container's 64Mi/200m); otherwise the pod is rejected by the ResourceQuota."
     }
     precondition {
       condition     = length(try(keys(var.frigate_config.cameras), [])) > 0
@@ -112,8 +120,8 @@ resource "kubernetes_namespace_v1" "this" {
   }
 }
 
-# A ceiling for the namespace (AGENT.md): Frigate plus its init container
-# and one rollout's overlap. Containers without resources get the
+# A ceiling for the namespace (AGENT.md): Frigate and its init container
+# (Recreate: no rollout overlap). Containers without resources get the
 # LimitRange defaults.
 resource "kubernetes_resource_quota_v1" "this" {
   for_each = local.instances
@@ -493,8 +501,10 @@ resource "kubernetes_service_v1" "this" {
   }
 }
 
-# Port 5000 has no login: only the ingress controller (which applies the
-# gate) and Prometheus may reach the pod. Cameras are reached outbound and
+# Port 5000 has no login: only pods in the ingress controller's namespace
+# (which applies the gate) and Prometheus's namespace may reach the pod.
+# Needs a CNI or controller that enforces NetworkPolicy (k3s's built-in
+# one does unless started with --disable-network-policy). Cameras are reached outbound and
 # are not affected.
 resource "kubernetes_network_policy_v1" "ingress" {
   for_each = var.enabled && length(var.ingress_from_namespaces) > 0 ? toset(["enabled"]) : toset([])

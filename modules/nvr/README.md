@@ -20,7 +20,9 @@ UI and the RTSP/WebRTC restream (go2rtc built in).
   own login** — route it only through an authenticating gate (for example
   `auth: zitadel` on a `kind: external` component). 8554 is the RTSP
   restream, 8555 WebRTC (two-way talk). `ingress_from_namespaces` adds a
-  NetworkPolicy so only the ingress controller and Prometheus reach the pod.
+  NetworkPolicy so only pods in those namespaces (ingress controller,
+  Prometheus) reach Frigate; it needs NetworkPolicy enforcement (k3s's
+  built-in controller provides it).
 - **Monitoring:** ServiceMonitor on `/api/metrics`; alerts `FrigateDown`
   and `FrigateRecordingsVolumeFull`.
 

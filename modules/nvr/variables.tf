@@ -92,8 +92,11 @@ variable "resources" {
   }
 
   validation {
-    condition     = can(regex("^[0-9]+(Mi|Gi)$", var.resources.limits.memory)) && can(regex("^[0-9]+m?$", var.resources.limits.cpu))
-    error_message = "resources.limits.memory must be a whole number of Mi or Gi and resources.limits.cpu cores or millicores (e.g. 8 or 8000m)."
+    condition = alltrue([
+      for q in [var.resources.limits, var.resources.requests] :
+      can(regex("^[0-9]+(Mi|Gi)$", q.memory)) && can(regex("^[0-9]+m?$", q.cpu))
+    ])
+    error_message = "resources.limits and resources.requests: memory a whole number of Mi or Gi, cpu cores or millicores (e.g. 8 or 8000m)."
   }
 }
 
@@ -132,6 +135,11 @@ variable "ingress_from_namespaces" {
   description = "Namespaces allowed to reach Frigate's pod (a NetworkPolicy): the ingress controller that fronts it with an authenticating gate and the Prometheus namespace. Port 5000 has no login of its own, so everything else in the cluster is kept out. Empty creates no NetworkPolicy."
   type        = list(string)
   default     = []
+
+  validation {
+    condition     = alltrue([for n in var.ingress_from_namespaces : can(regex("^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$", n))])
+    error_message = "ingress_from_namespaces: each entry must be a namespace name (DNS-1123 label); a typo would cut the ingress controller or Prometheus off."
+  }
 }
 
 variable "volume_full_threshold" {
