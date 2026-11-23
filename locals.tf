@@ -202,6 +202,31 @@ locals {
         seed_image       = "instrumentisto/rsync-ssh:alpine3.23-r3"
         failover_seconds = 30
       }
+      # Cameras recorded by Frigate (modules/nvr). `frigate_config` is
+      # Frigate's config.yml as an object; credentials are {FRIGATE_*}
+      # placeholders filled from `vault_path`.
+      nvr = {
+        enabled         = false
+        namespace       = "nvr"
+        image           = "ghcr.io/blakeblackshear/frigate:0.18.2@sha256:fd60f99ffd4eb6c42360ed4e14953e270586f239309ab3983e55b2e97ffac09a"
+        storage_class   = ""
+        recordings_size = "500Gi"
+        config_size     = "5Gi"
+        shm_size        = "256Mi"
+        cache_size      = "1Gi"
+        resources = {
+          requests = { cpu = "1", memory = "1Gi" }
+          limits   = { cpu = "8", memory = "4Gi" }
+        }
+        quota          = { cpu = "10", memory = "6Gi" }
+        node_selector  = {}
+        tolerations    = []
+        vault_path     = "platform/cameras"
+        frigate_config = {}
+        # Who may reach Frigate's pod: the ingress controller and Prometheus.
+        ingress_from_namespaces = ["ingress-controller", "monitoring"]
+        volume_full_threshold   = 0.85
+      }
       metallb = {
         enabled                  = false
         controller_node_selector = {}
@@ -708,6 +733,7 @@ locals {
       keda                 = merge(local._platform_defaults.services.keda, try(local._platform_services.keda, {}))
       cluster_autoscaler   = merge(local._platform_defaults.services.cluster_autoscaler, try(local._platform_services.cluster_autoscaler, {}))
       samba                = merge(local._platform_defaults.services.samba, try(local._platform_services.samba, {}))
+      nvr                  = merge(local._platform_defaults.services.nvr, try(local._platform_services.nvr, {}))
       metallb              = merge(local._platform_defaults.services.metallb, try(local._platform_services.metallb, {}))
       minio                = merge(local._platform_defaults.services.minio, try(local._platform_services.minio, {}))
       github_runners       = merge(local._platform_defaults.services.github_runners, try(local._platform_services.github_runners, {}))
