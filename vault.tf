@@ -119,6 +119,10 @@ module "vault" {
     local.platform.services.samba.enabled ? {
       samba = { namespaces = [local.platform.services.samba.namespace], paths = [local.platform.services.samba.vault_path] }
     } : {},
+    # Frigate reads the camera credentials only.
+    local.platform.services.nvr.enabled ? {
+      nvr = { namespaces = [local.platform.services.nvr.namespace], paths = [local.platform.services.nvr.vault_path] }
+    } : {},
     # plugpool reads the plugs' web password only.
     local.cluster_autoscaler_on ? {
       plugpool = { namespaces = [local.platform.services.cluster_autoscaler.namespace], paths = [local.cluster_autoscaler_vault_path] }
