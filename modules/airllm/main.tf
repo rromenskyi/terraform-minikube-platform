@@ -552,8 +552,33 @@ resource "kubectl_manifest" "ingressroute_web" {
   })
 }
 
+# The gateway serves Prometheus `/metrics` unauthenticated on the same port
+# as the API (for the in-cluster scrape, which goes Service -> pod and never
+# through Traefik). It lists aliases, providers, upstream models, token and
+# cost counters, so the public route refuses the path: an allow-list that
+# admits only loopback answers 403 to every real client.
+resource "kubectl_manifest" "metrics_deny_middleware" {
+  for_each = local.routed
+
+  yaml_body = yamlencode({
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "${var.name}-metrics-deny"
+      namespace = kubernetes_namespace_v1.this["enabled"].metadata[0].name
+    }
+    spec = {
+      ipAllowList = {
+        sourceRange = ["127.0.0.1/32"]
+      }
+    }
+  })
+}
+
 resource "kubectl_manifest" "ingressroute" {
   for_each = local.routed
+
+  depends_on = [kubectl_manifest.metrics_deny_middleware]
 
   yaml_body = yamlencode({
     apiVersion = "traefik.io/v1alpha1"
@@ -564,14 +589,27 @@ resource "kubectl_manifest" "ingressroute" {
     }
     spec = {
       entryPoints = ["websecure"]
-      routes = [{
-        match = "Host(`${var.hostname}`)"
-        kind  = "Rule"
-        services = [{
-          name = var.name # the chart's Service is named after the release
-          port = 8080
-        }]
-      }]
+      routes = [
+        {
+          match = "Host(`${var.hostname}`)"
+          kind  = "Rule"
+          services = [{
+            name = var.name # the chart's Service is named after the release
+            port = 8080
+          }]
+        },
+        # Longer rule, so it outranks the route above. The service is a
+        # placeholder the CRD requires; the middleware answers first.
+        {
+          match = "Host(`${var.hostname}`) && Path(`/metrics`)"
+          kind  = "Rule"
+          services = [{
+            name = "noop@internal"
+            kind = "TraefikService"
+          }]
+          middlewares = [{ name = "${var.name}-metrics-deny" }]
+        },
+      ]
       tls = { secretName = "${var.name}-tls" }
     }
   })

@@ -7,6 +7,13 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Security
+- The public route refuses `/metrics` (403 from a loopback-only allow-list on
+  a higher-priority rule). The gateway serves Prometheus metrics
+  unauthenticated on the API port for the in-cluster scrape; through Traefik
+  they exposed alias, provider, model, token and cost data to anyone. The
+  scrape goes Service to pod and is unaffected.
+
 ### Added
 - Initial module, extracted from the root `airllm.tf`: one AirLLM instance
   (Argo CD Application from the public chart, database and Redis ACL user
