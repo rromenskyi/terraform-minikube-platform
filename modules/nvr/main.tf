@@ -41,6 +41,25 @@ locals {
   config_yaml = yamlencode(local.config)
 
   secret_name = "frigate-env"
+
+  # Quantities in MiB / millicores for the plan-time checks (the variables'
+  # validations guarantee these suffixes).
+  mib = {
+    for k, v in {
+      shm   = var.shm_size
+      cache = var.cache_size
+      limit = var.resources.limits.memory
+      quota = var.quota.memory
+    } : k => tonumber(regex("^([0-9]+)", v)[0]) * (endswith(v, "Gi") ? 1024 : 1)
+  }
+  millicores = {
+    for k, v in {
+      limit = var.resources.limits.cpu
+      quota = var.quota.cpu
+    } : k => endswith(v, "m") ? tonumber(trimsuffix(v, "m")) : tonumber(v) * 1000
+  }
+  # The init container's limits (see the Deployment).
+  init_limit = { mib = 64, millicores = 200 }
 }
 
 module "label" {
@@ -61,6 +80,14 @@ resource "terraform_data" "checks" {
     precondition {
       condition     = var.storage_class != ""
       error_message = "var.storage_class is required — use a replicated class so the NVR can restart on another node with its recordings."
+    }
+    precondition {
+      condition     = local.mib.shm + local.mib.cache < local.mib.limit
+      error_message = "shm_size + cache_size (${local.mib.shm + local.mib.cache} MiB) must stay below resources.limits.memory (${local.mib.limit} MiB): both are memory-backed and count against the limit."
+    }
+    precondition {
+      condition     = local.mib.limit + local.init_limit.mib <= local.mib.quota && local.millicores.limit + local.init_limit.millicores <= local.millicores.quota
+      error_message = "quota must cover resources.limits plus the init container (64Mi, 200m); otherwise the pod is rejected by the ResourceQuota."
     }
     precondition {
       condition     = length(try(keys(var.frigate_config.cameras), [])) > 0
@@ -357,6 +384,15 @@ resource "kubernetes_deployment_v1" "this" {
             period_seconds    = 10
             failure_threshold = 30
           }
+          readiness_probe {
+            http_get {
+              path = "/api/version"
+              port = "http"
+            }
+            period_seconds    = 10
+            timeout_seconds   = 5
+            failure_threshold = 3
+          }
           liveness_probe {
             http_get {
               path = "/api/version"
@@ -453,6 +489,35 @@ resource "kubernetes_service_v1" "this" {
       port        = 8555
       target_port = "webrtc-udp"
       protocol    = "UDP"
+    }
+  }
+}
+
+# Port 5000 has no login: only the ingress controller (which applies the
+# gate) and Prometheus may reach the pod. Cameras are reached outbound and
+# are not affected.
+resource "kubernetes_network_policy_v1" "ingress" {
+  for_each = var.enabled && length(var.ingress_from_namespaces) > 0 ? toset(["enabled"]) : toset([])
+
+  metadata {
+    name      = "frigate-ingress"
+    namespace = kubernetes_namespace_v1.this["enabled"].metadata[0].name
+    labels    = local.tags
+  }
+  spec {
+    pod_selector {
+      match_labels = local.labels
+    }
+    policy_types = ["Ingress"]
+    ingress {
+      dynamic "from" {
+        for_each = var.ingress_from_namespaces
+        content {
+          namespace_selector {
+            match_labels = { "kubernetes.io/metadata.name" = from.value }
+          }
+        }
+      }
     }
   }
 }

@@ -223,6 +223,9 @@ locals {
         tolerations    = []
         vault_path     = "platform/cameras"
         frigate_config = {}
+        # Who may reach Frigate's pod: the ingress controller and Prometheus.
+        ingress_from_namespaces = ["ingress-controller", "monitoring"]
+        volume_full_threshold   = 0.85
       }
       metallb = {
         enabled                  = false

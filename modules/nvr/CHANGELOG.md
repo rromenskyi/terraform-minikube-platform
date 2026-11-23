@@ -13,4 +13,6 @@ the project itself follows [Semantic Versioning](https://semver.org/).
   replicated volumes for the database and recordings, memory-backed
   /dev/shm and /tmp/cache, a Service (UI/API 5000, RTSP 8554, WebRTC
   8555), ServiceMonitor and alerts (`FrigateDown`,
-  `FrigateRecordingsVolumeFull`), namespace quota and LimitRange.
+  `FrigateRecordingsVolumeFull`), namespace quota and LimitRange, an optional NetworkPolicy
+  (`ingress_from_namespaces`), plan-time checks that /dev/shm + /tmp/cache
+  fit the memory limit and the quota covers the limits.

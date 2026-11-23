@@ -20,4 +20,7 @@ module "nvr" {
   # Narrow Vault role from module.vault (vso_platform_readers): this path only.
   vault_auth_role = local.platform.services.vault.enabled ? "vso-platform-nvr" : ""
   frigate_config  = local.platform.services.nvr.frigate_config
+
+  ingress_from_namespaces = local.platform.services.nvr.ingress_from_namespaces
+  volume_full_threshold   = local.platform.services.nvr.volume_full_threshold
 }

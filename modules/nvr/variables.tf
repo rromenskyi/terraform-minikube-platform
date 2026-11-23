@@ -62,12 +62,22 @@ variable "shm_size" {
   description = "Size of /dev/shm (memory-backed). Frigate needs about (width × height × 1.5 + 270480) / 1048576 × 25 MB per camera at the detect resolution, plus ~50 MB."
   type        = string
   default     = "256Mi"
+
+  validation {
+    condition     = can(regex("^[0-9]+(Mi|Gi)$", var.shm_size))
+    error_message = "shm_size must be a whole number of Mi or Gi, e.g. 256Mi."
+  }
 }
 
 variable "cache_size" {
   description = "Size of /tmp/cache (memory-backed), where recording segments wait before they are moved to the recordings volume."
   type        = string
   default     = "1Gi"
+
+  validation {
+    condition     = can(regex("^[0-9]+(Mi|Gi)$", var.cache_size))
+    error_message = "cache_size must be a whole number of Mi or Gi, e.g. 1Gi."
+  }
 }
 
 variable "resources" {
@@ -80,6 +90,11 @@ variable "resources" {
     requests = { cpu = "1", memory = "1Gi" }
     limits   = { cpu = "8", memory = "4Gi" }
   }
+
+  validation {
+    condition     = can(regex("^[0-9]+(Mi|Gi)$", var.resources.limits.memory)) && can(regex("^[0-9]+m?$", var.resources.limits.cpu))
+    error_message = "resources.limits.memory must be a whole number of Mi or Gi and resources.limits.cpu cores or millicores (e.g. 8 or 8000m)."
+  }
 }
 
 variable "quota" {
@@ -89,6 +104,11 @@ variable "quota" {
     memory = string
   })
   default = { cpu = "10", memory = "6Gi" }
+
+  validation {
+    condition     = can(regex("^[0-9]+(Mi|Gi)$", var.quota.memory)) && can(regex("^[0-9]+m?$", var.quota.cpu))
+    error_message = "quota.memory must be a whole number of Mi or Gi and quota.cpu cores or millicores."
+  }
 }
 
 variable "node_selector" {
@@ -108,8 +128,19 @@ variable "tolerations" {
   default = []
 }
 
+variable "ingress_from_namespaces" {
+  description = "Namespaces allowed to reach Frigate's pod (a NetworkPolicy): the ingress controller that fronts it with an authenticating gate and the Prometheus namespace. Port 5000 has no login of its own, so everything else in the cluster is kept out. Empty creates no NetworkPolicy."
+  type        = list(string)
+  default     = []
+}
+
 variable "volume_full_threshold" {
   description = "Alert when the recordings volume is fuller than this fraction."
   type        = number
   default     = 0.85
+
+  validation {
+    condition     = var.volume_full_threshold > 0 && var.volume_full_threshold < 1
+    error_message = "volume_full_threshold is a fraction between 0 and 1 (0.85 = 85 %)."
+  }
 }

@@ -9,15 +9,18 @@ UI and the RTSP/WebRTC restream (go2rtc built in).
   init container on every start, so the declared configuration always wins.
   The module sets `database.path` and, unless given, `mqtt.enabled: false`.
 - **Credentials:** every key at `vault_path` (KV v2, mount `secret`) becomes
-  an environment variable through VSO. Use `FRIGATE_*` names and refer to
-  them as `{FRIGATE_...}` in the configuration. A change restarts Frigate.
+  an environment variable of the container through VSO. Use `FRIGATE_*`
+  names and refer to them as `{FRIGATE_...}` where Frigate substitutes them:
+  go2rtc stream URLs (from the container environment), camera input paths,
+  `go2rtc.rtsp` credentials. A change restarts Frigate.
 - **Storage:** `/config` (database, model cache) and `/media/frigate`
   (recordings, clips, exports) on two ReadWriteOnce PVCs of
   `storage_class`; `/dev/shm` and `/tmp/cache` are memory-backed.
 - **Access:** Service `frigate`, port 5000 is Frigate's UI/API **without its
   own login** — route it only through an authenticating gate (for example
   `auth: zitadel` on a `kind: external` component). 8554 is the RTSP
-  restream, 8555 WebRTC (two-way talk).
+  restream, 8555 WebRTC (two-way talk). `ingress_from_namespaces` adds a
+  NetworkPolicy so only the ingress controller and Prometheus reach the pod.
 - **Monitoring:** ServiceMonitor on `/api/metrics`; alerts `FrigateDown`
   and `FrigateRecordingsVolumeFull`.
 
