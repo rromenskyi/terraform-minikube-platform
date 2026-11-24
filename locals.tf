@@ -39,6 +39,11 @@ locals {
         nodes        = [] # hostnames the instances may use; empty = any node
         synchronous  = true
         storage_size = "20Gi"
+        # Requests/limits of each Postgres container (both clusters); empty
+        # keeps the module defaults (requests 100m/256Mi, limits 1/1Gi).
+        # A backend that outgrows the limit is OOM-killed with the whole
+        # instance, which on the primary means a failover.
+        resources = {}
         # A second cluster copying this one, e.g. on another site's nodes:
         # { name, instances, nodes, tolerations, storage_size }; null = none.
         replica_cluster = null

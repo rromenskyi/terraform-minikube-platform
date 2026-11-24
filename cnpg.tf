@@ -73,6 +73,7 @@ module "cnpg" {
   nodes        = local.cnpg.nodes
   synchronous  = local.cnpg.synchronous
   storage_size = local.cnpg.storage_size
+  resources    = local.cnpg.resources
 
   # A second cluster (e.g. at another site) following this one, and which of
   # the two takes writes; changing `primary_cluster` is a failover.
