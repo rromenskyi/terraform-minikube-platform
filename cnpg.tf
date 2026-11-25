@@ -77,6 +77,7 @@ module "cnpg" {
   parameters   = local.cnpg.parameters
 
   smart_shutdown_timeout = local.cnpg.smart_shutdown_timeout
+  backup_read_timeout    = local.cnpg.backup_read_timeout
 
   # A second cluster (e.g. at another site) following this one, and which of
   # the two takes writes; changing `primary_cluster` is a failover.

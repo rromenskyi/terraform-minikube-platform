@@ -52,6 +52,9 @@ locals {
         # shutdown on a restart/roll (operator default 180 = 3 min of
         # write downtime per roll).
         smart_shutdown_timeout = 180
+        # Seconds barman-cloud waits on a read from the backup store before
+        # retrying (barman default 60); see modules/cnpg.
+        backup_read_timeout = 60
         # A second cluster copying this one, e.g. on another site's nodes:
         # { name, instances, nodes, tolerations, storage_size, resources,
         #   parameters }; null = none.

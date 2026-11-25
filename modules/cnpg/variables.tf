@@ -104,6 +104,17 @@ variable "parameters" {
   default     = {}
 }
 
+variable "backup_read_timeout" {
+  description = "Seconds barman-cloud waits for the object store to answer a read before boto retries (`--read-timeout` of the WAL archive/restore commands; barman's default is 60). On a shutdown or restart Postgres waits for the last WAL to be archived, so a stalled upload with long timeouts (several 60 s attempts) is minutes of downtime."
+  type        = number
+  default     = 60
+
+  validation {
+    condition     = floor(var.backup_read_timeout) == var.backup_read_timeout && var.backup_read_timeout >= 5 && var.backup_read_timeout <= 300
+    error_message = "backup_read_timeout is whole seconds from 5 to 300."
+  }
+}
+
 variable "smart_shutdown_timeout" {
   description = "Seconds a Postgres instance waits for clients to disconnect on its own (smart shutdown) before a fast shutdown, on a restart or rolling update (`spec.smartShutdownTimeout`, operator default 180). While it waits, the primary takes no new connections: a long wait is write downtime."
   type        = number
