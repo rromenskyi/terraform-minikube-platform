@@ -110,8 +110,8 @@ variable "backup_read_timeout" {
   default     = 60
 
   validation {
-    condition     = floor(var.backup_read_timeout) == var.backup_read_timeout && var.backup_read_timeout >= 5
-    error_message = "backup_read_timeout is whole seconds, at least 5."
+    condition     = floor(var.backup_read_timeout) == var.backup_read_timeout && var.backup_read_timeout >= 5 && var.backup_read_timeout <= 300
+    error_message = "backup_read_timeout is whole seconds from 5 to 300."
   }
 }
 
