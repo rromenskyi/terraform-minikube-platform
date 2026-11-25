@@ -7,6 +7,10 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Added
+- `smart_shutdown_timeout` (`spec.smartShutdownTimeout`, default 180 as the operator's).
+- `replica_cluster.resources` and `replica_cluster.parameters`: the second cluster's own requests/limits and parameters merged over `parameters` (e.g. a smaller `shared_buffers` on smaller nodes).
+
 ### Changed
 - plugin-barman-cloud chart 0.9.0 (v0.16.0): zstd base backups, S3 addressing style and SSE-C, multiple plugin replicas; its sidecar image fixes GHSA-6q48-6c7w-9gw2 (certifi). CNPG rolls every cluster with backups on to the new sidecar right after the upgrade (replicas recreated, primary restarted or switched over per `primaryUpdateMethod`); the plugin Deployment itself is `Recreate`, so a backup started in that minute retries.
 

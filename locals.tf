@@ -46,8 +46,15 @@ locals {
         # A backend that outgrows the limit is OOM-killed with the whole
         # instance, which on the primary means a failover.
         resources = {}
+        # Extra postgresql.conf parameters (shared_buffers, work_mem, ...).
+        parameters = {}
+        # Seconds the primary waits for clients to leave before a fast
+        # shutdown on a restart/roll (operator default 180 = 3 min of
+        # write downtime per roll).
+        smart_shutdown_timeout = 180
         # A second cluster copying this one, e.g. on another site's nodes:
-        # { name, instances, nodes, tolerations, storage_size }; null = none.
+        # { name, instances, nodes, tolerations, storage_size, resources,
+        #   parameters }; null = none.
         replica_cluster = null
         # Which cluster takes writes (`name` or `replica_cluster.name`);
         # empty = `name`. Changing it is a failover (modules/cnpg README).

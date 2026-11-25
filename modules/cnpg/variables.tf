@@ -104,6 +104,17 @@ variable "parameters" {
   default     = {}
 }
 
+variable "smart_shutdown_timeout" {
+  description = "Seconds a Postgres instance waits for clients to disconnect on its own (smart shutdown) before a fast shutdown, on a restart or rolling update (`spec.smartShutdownTimeout`, operator default 180). While it waits, the primary takes no new connections: a long wait is write downtime."
+  type        = number
+  default     = 180
+
+  validation {
+    condition     = var.smart_shutdown_timeout >= 0 && var.smart_shutdown_timeout <= 1800
+    error_message = "smart_shutdown_timeout is seconds between 0 and 1800 (the operator's stopDelay)."
+  }
+}
+
 variable "service_name" {
   description = "Extra Service clients connect to, selecting the current primary (e.g. the name clients of a server this cluster replaces already use). Empty = only the operator's `<name>-rw` / `-ro` / `-r` Services."
   type        = string
@@ -131,6 +142,8 @@ variable "replica_cluster" {
     - `instances`, `nodes`: like the main cluster's.
     - `tolerations`: for nodes with taints (e.g. edge nodes), Kubernetes toleration objects.
     - `storage_size`: null = `storage_size`.
+    - `resources`: null maps = the main cluster's `resources` maps.
+    - `parameters`: merged over `parameters` (e.g. a smaller `shared_buffers`).
     It starts as a `pg_basebackup` copy of the main cluster and then streams from it (TLS client certificate of the operator's `streaming_replica` user), with the main cluster's WAL archive as fallback when backups are on. It uses the same superuser Secret, image, parameters and backup store (archived under its own name). Asynchronous: a failover to it loses what it had not received yet.
     Keep backups on with it: the source keeps no replication slot for it, so without the WAL archive an outage longer than the source's WAL retention means re-cloning it.
   EOT
@@ -145,6 +158,16 @@ variable "replica_cluster" {
       effect   = optional(string)
     })), [])
     storage_size = optional(string)
+    # Its own requests/limits (each map replaces the main cluster's whole
+    # map when set) and parameters merged over `parameters`, e.g. a
+    # smaller `shared_buffers` on smaller nodes. Settings a standby must
+    # match or exceed (max_connections, max_worker_processes, ...) stay
+    # inherited; do not lower them here.
+    resources = optional(object({
+      requests = optional(map(string))
+      limits   = optional(map(string))
+    }), {})
+    parameters = optional(map(string), {})
   })
   default = null
 
