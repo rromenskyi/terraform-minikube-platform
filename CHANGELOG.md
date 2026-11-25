@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- `host_rate_limit` in component yaml: a request rate limit for everything a component serves. See the project module changelog.
+- `host_rate_limit` in component yaml: a request rate limit on every route of a component. See the project module changelog.
 
 ### Changed
 - cluster-autoscaler no longer evicts DaemonSet Pods during a scale-down, so the CSI node plugin stays until the workload volumes are unmounted. See the module changelog.

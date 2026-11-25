@@ -273,11 +273,12 @@ locals {
     name => c if try(c.auth, "") == "zitadel"
   }
 
-  # One request rate limit for everything a component serves
-  # (`host_rate_limit:` in the component yaml): a RateLimit middleware on
-  # all of its own routes (whole-host and path-scoped), counted per client
-  # like `rate_limits`. Routes of other components or modules on the same
-  # host are not affected.
+  # A request rate limit on every route of a component (`host_rate_limit:`
+  # in the component yaml): one RateLimit middleware attached to all of its
+  # own routes (whole-host and path-scoped), counted per client like
+  # `rate_limits`. Traefik keeps a separate counter per route, so a
+  # component with several routes allows the limit on each. Routes of other
+  # components or modules on the same host are not affected.
   host_rate_limits = {
     for name, c in local.normalized_components :
     name => {

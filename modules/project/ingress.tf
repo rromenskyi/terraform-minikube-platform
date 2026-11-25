@@ -24,6 +24,16 @@ resource "kubectl_manifest" "ingressroute" {
       ])
       error_message = "component '${each.key}' in project '${local.namespace}' has a path-scoped route with an invalid path: ${jsonencode([for r in local.path_routes_by_component[each.key] : r.path])}. Use `<host-prefix>/<segment>[/<segment>...]` route keys (e.g. \"/api\" or \"www/api/v1\") — non-empty segments of [A-Za-z0-9._~-]."
     }
+    # A bad value would make Traefik drop the middleware and with it every
+    # route of the component.
+    precondition {
+      condition = !contains(keys(local.host_rate_limits), each.key) || (
+        can(tonumber(local.host_rate_limits[each.key].average)) && try(tonumber(local.host_rate_limits[each.key].average) > 0, false) &&
+        can(tonumber(local.host_rate_limits[each.key].burst)) && try(tonumber(local.host_rate_limits[each.key].burst) > 0, false) &&
+        can(regex("^[0-9]+(ms|s|m|h)$", local.host_rate_limits[each.key].period))
+      )
+      error_message = "component '${each.key}' in project '${local.namespace}': host_rate_limit needs a positive number `average` (and `burst`, if set) and a `period` like 1s, 500ms, 1m or 1h."
+    }
   }
 
   yaml_body = yamlencode({

@@ -198,9 +198,12 @@ resource "kubectl_manifest" "rate_limit_middleware" {
 }
 
 # One RateLimit middleware per component with `host_rate_limit:`; the
-# component's IngressRoute attaches it to all of its routes.
+# component's IngressRoute attaches it to each of its routes (Traefik keeps
+# a separate counter per route).
 resource "kubectl_manifest" "host_rate_limit_middleware" {
   for_each = local.host_rate_limits
+
+  depends_on = [kubernetes_namespace_v1.this]
 
   yaml_body = yamlencode({
     apiVersion = "traefik.io/v1alpha1"
