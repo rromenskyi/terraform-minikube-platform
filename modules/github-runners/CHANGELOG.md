@@ -8,6 +8,7 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- Listener Pods carry `cluster-autoscaler.kubernetes.io/safe-to-evict: "true"`. cluster-autoscaler sees their owner (AutoscalingListener) as no controller and would never power off a node they run on; the ARC controller recreates an evicted listener elsewhere. Changes the AutoscalingRunnerSet in place; the listener restarts once.
 - ARC charts 0.15.1. A change of the controller chart version now replaces the scale-set releases in the same apply (`replace_triggered_by`), so a minor upgrade no longer needs a manual `-replace`. Jobs running on the scale sets at that moment are cut off (on a patch bump too). `scale_set_chart_version` must now equal `controller_chart_version`.
 - Runner image actions-runner 2.338.2.
 - CRD manifests are `apply_only`: disabling the module or dropping a CRD no
