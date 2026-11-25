@@ -205,6 +205,19 @@ resource "kubectl_manifest" "host_rate_limit_middleware" {
 
   depends_on = [kubernetes_namespace_v1.this]
 
+  # A bad value would make Traefik drop the middleware and with it every
+  # route of the component.
+  lifecycle {
+    precondition {
+      condition = (
+        can(regex("^[1-9][0-9]*$", tostring(each.value.average))) &&
+        can(regex("^[1-9][0-9]*$", tostring(each.value.burst))) &&
+        can(regex("^[1-9][0-9]*(ms|s|m|h)$", each.value.period))
+      )
+      error_message = "component '${each.key}' in project '${local.namespace}': host_rate_limit needs a positive whole number `average` (and `burst`, if set) and a non-zero `period` like 1s, 500ms, 1m or 1h."
+    }
+  }
+
   yaml_body = yamlencode({
     apiVersion = "traefik.io/v1alpha1"
     kind       = "Middleware"

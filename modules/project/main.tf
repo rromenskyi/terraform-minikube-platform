@@ -282,9 +282,9 @@ locals {
   host_rate_limits = {
     for name, c in local.normalized_components :
     name => {
-      average = c.host_rate_limit.average
+      average = try(c.host_rate_limit.average, null)
       period  = try(c.host_rate_limit.period, "1s")
-      burst   = try(c.host_rate_limit.burst, c.host_rate_limit.average)
+      burst   = try(c.host_rate_limit.burst, c.host_rate_limit.average, null)
     } if try(c.host_rate_limit, null) != null
   }
 
