@@ -416,6 +416,8 @@ resource "kubectl_manifest" "cluster" {
         limits   = var.resources.limits
       }
 
+      smartShutdownTimeout = var.smart_shutdown_timeout
+
       postgresql = merge({ parameters = var.parameters }, local.synchronous)
 
       affinity = merge({
@@ -476,11 +478,13 @@ resource "kubectl_manifest" "replica_cluster" {
       }
 
       resources = {
-        requests = var.resources.requests
-        limits   = var.resources.limits
+        requests = coalesce(var.replica_cluster.resources.requests, var.resources.requests)
+        limits   = coalesce(var.replica_cluster.resources.limits, var.resources.limits)
       }
 
-      postgresql = merge({ parameters = var.parameters }, local.replica_synchronous)
+      smartShutdownTimeout = var.smart_shutdown_timeout
+
+      postgresql = merge({ parameters = merge(var.parameters, var.replica_cluster.parameters) }, local.replica_synchronous)
 
       affinity = local.replica_affinity
     }, local.backup_plugin)
