@@ -8,7 +8,7 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
-- `rate_limits[].prefix`: limit a path and everything below it (`path: /` = the whole host). Prefix rules sit below path-scoped routes and above the host's plain route.
+- `rate_limits[].prefix`: limit a path and everything below it, on segment boundaries (`path: /` = the whole host). The prefix rule's priority sits just above the host's plain route (its rule length), so path-scoped routes and other modules' carve-outs on the host still win.
 - `volume_preferred_node_selectors` (StorageClass => node selectors), passed to components with `storage_class`.
 
 ### Added

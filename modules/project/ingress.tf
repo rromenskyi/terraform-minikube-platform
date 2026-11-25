@@ -48,17 +48,24 @@ resource "kubectl_manifest" "ingressroute" {
           )] : [],
           # Rate-limited paths on the whole-host routes. An exact path sits
           # above every path-scoped route so the limit cannot be skipped. A
-          # prefix sits below the path-scoped routes (which may belong to
-          # other components on the same host) and above this host's plain
-          # route; the longer prefix wins.
+          # prefix (segment boundary, as for path-scoped routes; `/` = the
+          # whole host) sits just above this host's plain route, whose
+          # priority is its rule's length: every more specific route on the
+          # host, path-scoped or another module's carve-out, still wins and
+          # is not limited. The longer prefix wins among prefixes.
           length(each.value) == 0 ? [] : [
             for rl in values(local.rate_limits) : {
               match = join(" && ", concat(
-                ["(${join(" || ", [for d in each.value : "Host(`${d}`)"])})", rl.prefix ? "PathPrefix(`${rl.path}`)" : "Path(`${rl.path}`)"],
+                [
+                  "(${join(" || ", [for d in each.value : "Host(`${d}`)"])})",
+                  !rl.prefix ? "Path(`${rl.path}`)" : rl.path == "/" ? "PathPrefix(`/`)" : "(Path(`${rl.path}`) || PathPrefix(`${rl.path}/`))",
+                ],
                 length(rl.methods) > 0 ? ["(${join(" || ", [for m in rl.methods : "Method(`${m}`)"])})"] : [],
               ))
-              kind        = "Rule"
-              priority    = (rl.prefix ? 5000 : 20000) + length(rl.path)
+              kind = "Rule"
+              priority = (rl.prefix
+                ? length(join(" || ", [for d in each.value : "Host(`${d}`)"])) + 1 + length(rl.path)
+              : 20000 + length(rl.path))
               services    = [local.ir_service_refs[each.key]]
               middlewares = concat([{ name = rl.name }], local.ir_middlewares[each.key])
             } if rl.component == each.key
