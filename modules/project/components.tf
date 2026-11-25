@@ -197,6 +197,50 @@ resource "kubectl_manifest" "rate_limit_middleware" {
   })
 }
 
+# One RateLimit middleware per component with `host_rate_limit:`; the
+# component's IngressRoute attaches it to each of its routes (Traefik keeps
+# a separate counter per route).
+resource "kubectl_manifest" "host_rate_limit_middleware" {
+  for_each = local.host_rate_limits
+
+  depends_on = [kubernetes_namespace_v1.this]
+
+  # A bad value would make Traefik drop the middleware and with it every
+  # route of the component.
+  lifecycle {
+    precondition {
+      condition = (
+        can(regex("^[1-9][0-9]*$", tostring(each.value.average))) &&
+        can(regex("^[1-9][0-9]*$", tostring(each.value.burst))) &&
+        can(regex("^[1-9][0-9]*(ms|s|m|h)$", each.value.period))
+      )
+      error_message = "component '${each.key}' in project '${local.namespace}': host_rate_limit needs a positive whole number `average` (and `burst`, if set) and a non-zero `period` like 1s, 500ms, 1m or 1h."
+    }
+  }
+
+  yaml_body = yamlencode({
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "${each.key}-host-rate-limit"
+      namespace = local.namespace
+      labels    = module.project_label.tags
+    }
+    spec = {
+      rateLimit = {
+        # Numbers even when the yaml quotes them (the CRD wants integers;
+        # the precondition above rejects anything else).
+        average = try(tonumber(each.value.average), each.value.average)
+        period  = each.value.period
+        burst   = try(tonumber(each.value.burst), each.value.burst)
+        sourceCriterion = {
+          requestHeaderName = "CF-Connecting-IP"
+        }
+      }
+    }
+  })
+}
+
 resource "kubectl_manifest" "basic_auth_middleware" {
   for_each = local.basic_auth_components
 

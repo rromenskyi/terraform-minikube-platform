@@ -8,6 +8,7 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- `host_rate_limit` (component yaml): one RateLimit middleware, counted per client, attached to every route of the component (Traefik keeps a counter per route); values are checked at plan time. No new routers, so routes of other components or modules on the same host keep their precedence.
 - `volume_preferred_node_selectors` (StorageClass => node selectors), passed to components with `storage_class`.
 
 ### Added

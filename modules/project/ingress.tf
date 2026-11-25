@@ -14,7 +14,7 @@
 resource "kubectl_manifest" "ingressroute" {
   for_each = local.routes_by_component
 
-  depends_on = [module.component, kubectl_manifest.basic_auth_middleware, kubectl_manifest.rate_limit_middleware]
+  depends_on = [module.component, kubectl_manifest.basic_auth_middleware, kubectl_manifest.rate_limit_middleware, kubectl_manifest.host_rate_limit_middleware]
 
   lifecycle {
     precondition {

@@ -609,6 +609,15 @@ basic_auth: true
 #     period:  1h
 #     burst:   10
 
+# A rate limit on every route of the component (whole-host and
+# path-scoped), counted the same way; Traefik keeps a separate counter per
+# route. Routes of other components or modules on the same host are not
+# affected. `period` defaults to 1s and `burst` to `average`.
+# host_rate_limit:
+#   average: 10
+#   period:  1s
+#   burst:   50
+
 # Optional IR-side service override for Traefik-internal services like api@internal
 # ingress_service:
 #   kind: TraefikService

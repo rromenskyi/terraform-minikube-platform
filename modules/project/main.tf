@@ -206,7 +206,9 @@ locals {
   }
 
   # Middleware chain per component, shared by its whole-host and its
-  # path-scoped IngressRoute rules. Three sources:
+  # path-scoped IngressRoute rules. Sources:
+  #   - `host_rate_limit:` (per-component, in-namespace RateLimit) — first,
+  #     so over-limit requests stop before auth and the workload
   #   - `basic_auth: true` (per-component, in-namespace middleware)
   #   - `auth: zitadel` (cross-namespace forward-auth → oauth2-proxy in
   #     `ingress-controller`)
@@ -220,6 +222,7 @@ locals {
   ir_middlewares = {
     for name, c in local.normalized_components :
     name => concat(
+      contains(keys(local.host_rate_limits), name) ? [{ name = "${name}-host-rate-limit" }] : [],
       contains(keys(local.basic_auth_components), name) ? [{ name = "${name}-basic-auth" }] : [],
       contains(keys(local.zitadel_auth_components), name) ? var.oauth2_proxy_middlewares : [],
       var.fallback_errors_middleware == null || !try(c.fallback_errors, true) ? [] : [var.fallback_errors_middleware],
@@ -268,6 +271,21 @@ locals {
   zitadel_auth_components = {
     for name, c in local.normalized_components :
     name => c if try(c.auth, "") == "zitadel"
+  }
+
+  # A request rate limit on every route of a component (`host_rate_limit:`
+  # in the component yaml): one RateLimit middleware attached to all of its
+  # own routes (whole-host and path-scoped), counted per client like
+  # `rate_limits`. Traefik keeps a separate counter per route, so a
+  # component with several routes allows the limit on each. Routes of other
+  # components or modules on the same host are not affected.
+  host_rate_limits = {
+    for name, c in local.normalized_components :
+    name => {
+      average = try(c.host_rate_limit.average, null)
+      period  = try(c.host_rate_limit.period, "1s")
+      burst   = try(c.host_rate_limit.burst, c.host_rate_limit.average, null)
+    } if try(c.host_rate_limit, null) != null
   }
 
   # Per-path request rate limits (`rate_limits:` in the component yaml),
