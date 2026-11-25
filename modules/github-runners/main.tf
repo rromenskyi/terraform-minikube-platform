@@ -369,6 +369,15 @@ resource "helm_release" "scale_set" {
     githubConfigSecret = each.value.github_secret_name != "" ? each.value.github_secret_name : "${each.key}-github-pat"
     minRunners         = each.value.min_runners
     maxRunners         = each.value.max_runners
+    # The listener Pod is owned by an AutoscalingListener, which
+    # cluster-autoscaler does not know as a controller ("not replicated"), so
+    # it would keep a power-managed node on forever. The ARC controller
+    # recreates it on another node when evicted.
+    listenerTemplate = {
+      metadata = {
+        annotations = { "cluster-autoscaler.kubernetes.io/safe-to-evict" = "true" }
+      }
+    }
     template = {
       spec = {
         nodeSelector = each.value.runner_node_selector
