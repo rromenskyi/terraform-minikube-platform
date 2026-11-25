@@ -364,6 +364,11 @@ resource "kubernetes_deployment_v1" "this" {
             "--skip-nodes-with-system-pods=false",
             # Pods with emptyDir would otherwise keep a machine on forever.
             "--skip-nodes-with-local-storage=false",
+            # DaemonSet Pods stay until the machine shuts down. Evicting them
+            # with the rest takes the CSI node plugin away before the other
+            # Pods' volumes are unmounted, and those Pods then hang in
+            # Terminating until the drain times out.
+            "--daemonset-eviction-for-occupied-nodes=false",
             "--v=2",
           ]
           port {

@@ -68,6 +68,7 @@ run "ca_args_and_pod" {
       "--max-node-provision-time=10m",
       "--skip-nodes-with-system-pods=false",
       "--skip-nodes-with-local-storage=false",
+      "--daemonset-eviction-for-occupied-nodes=false",
     ] : contains(kubernetes_deployment_v1.this["enabled"].spec[0].template[0].spec[0].container[0].args, f)])
     error_message = "cluster-autoscaler flags missing."
   }
