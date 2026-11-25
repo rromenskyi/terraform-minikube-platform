@@ -110,8 +110,8 @@ variable "smart_shutdown_timeout" {
   default     = 180
 
   validation {
-    condition     = var.smart_shutdown_timeout >= 0 && var.smart_shutdown_timeout <= 1800
-    error_message = "smart_shutdown_timeout is seconds between 0 and 1800 (the operator's stopDelay)."
+    condition     = floor(var.smart_shutdown_timeout) == var.smart_shutdown_timeout && var.smart_shutdown_timeout >= 1 && var.smart_shutdown_timeout < 1800
+    error_message = "smart_shutdown_timeout is whole seconds from 1 to below 1800 (the operator's stopDelay, which must leave time for the fast shutdown that follows)."
   }
 }
 
@@ -144,7 +144,7 @@ variable "replica_cluster" {
     - `storage_size`: null = `storage_size`.
     - `resources`: null maps = the main cluster's `resources` maps.
     - `parameters`: merged over `parameters` (e.g. a smaller `shared_buffers`).
-    It starts as a `pg_basebackup` copy of the main cluster and then streams from it (TLS client certificate of the operator's `streaming_replica` user), with the main cluster's WAL archive as fallback when backups are on. It uses the same superuser Secret, image, parameters and backup store (archived under its own name). Asynchronous: a failover to it loses what it had not received yet.
+    It starts as a `pg_basebackup` copy of the main cluster and then streams from it (TLS client certificate of the operator's `streaming_replica` user), with the main cluster's WAL archive as fallback when backups are on. It uses the same superuser Secret, image and backup store (archived under its own name), and the main `parameters` unless `parameters` here overrides some. Asynchronous: a failover to it loses what it had not received yet.
     Keep backups on with it: the source keeps no replication slot for it, so without the WAL archive an outage longer than the source's WAL retention means re-cloning it.
   EOT
   type = object({
