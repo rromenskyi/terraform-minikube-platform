@@ -273,7 +273,9 @@ locals {
   # Per-path request rate limits (`rate_limits:` in the component yaml),
   # keyed "<component>/<index>". Each entry gets its own Traefik RateLimit
   # middleware and its own IngressRoute rule on the component's whole-host
-  # routes, so the limit applies to that path only. Clients are counted by
+  # routes, so the limit applies to that path only (`prefix: true`: to the
+  # path and everything below it; `path: /` with `prefix: true` = the whole
+  # host). Clients are counted by
   # `CF-Connecting-IP`: every request arrives through the Cloudflare Tunnel,
   # so the socket peer is always cloudflared and the header carries the
   # real client.
@@ -284,6 +286,7 @@ locals {
         component = name
         name      = "${name}-rate-limit-${i}"
         path      = rl.path
+        prefix    = try(rl.prefix, false)
         methods   = try(rl.methods, [])
         average   = rl.average
         period    = try(rl.period, "1m")

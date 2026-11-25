@@ -46,16 +46,19 @@ resource "kubectl_manifest" "ingressroute" {
             },
             length(local.ir_middlewares[each.key]) > 0 ? { middlewares = local.ir_middlewares[each.key] } : {},
           )] : [],
-          # Rate-limited paths on the whole-host routes. The priority sits
-          # above every path-scoped route so the limit cannot be skipped.
+          # Rate-limited paths on the whole-host routes. An exact path sits
+          # above every path-scoped route so the limit cannot be skipped. A
+          # prefix sits below the path-scoped routes (which may belong to
+          # other components on the same host) and above this host's plain
+          # route; the longer prefix wins.
           length(each.value) == 0 ? [] : [
             for rl in values(local.rate_limits) : {
               match = join(" && ", concat(
-                ["(${join(" || ", [for d in each.value : "Host(`${d}`)"])})", "Path(`${rl.path}`)"],
+                ["(${join(" || ", [for d in each.value : "Host(`${d}`)"])})", rl.prefix ? "PathPrefix(`${rl.path}`)" : "Path(`${rl.path}`)"],
                 length(rl.methods) > 0 ? ["(${join(" || ", [for m in rl.methods : "Method(`${m}`)"])})"] : [],
               ))
               kind        = "Rule"
-              priority    = 20000 + length(rl.path)
+              priority    = (rl.prefix ? 5000 : 20000) + length(rl.path)
               services    = [local.ir_service_refs[each.key]]
               middlewares = concat([{ name = rl.name }], local.ir_middlewares[each.key])
             } if rl.component == each.key

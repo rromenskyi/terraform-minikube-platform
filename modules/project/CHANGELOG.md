@@ -8,6 +8,7 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- `rate_limits[].prefix`: limit a path and everything below it (`path: /` = the whole host). Prefix rules sit below path-scoped routes and above the host's plain route.
 - `volume_preferred_node_selectors` (StorageClass => node selectors), passed to components with `storage_class`.
 
 ### Added

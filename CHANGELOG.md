@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `rate_limits[].prefix` in component yaml: a rate limit for a path prefix or the whole host. See the project module changelog.
+
 ### Changed
 - cluster-autoscaler no longer evicts DaemonSet Pods during a scale-down, so the CSI node plugin stays until the workload volumes are unmounted. See the module changelog.
 - ARC listener Pods may be evicted by cluster-autoscaler (`safe-to-evict`), so they no longer keep a power-managed node on. See the module changelog.

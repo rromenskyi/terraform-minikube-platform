@@ -602,12 +602,20 @@ basic_auth: true
 # defaults to 1m and `burst` to `average`. Each Traefik pod keeps its own
 # counters, so the effective limit is the value times the Traefik replica
 # count.
+# `prefix: true` limits the path and everything below it (`path: /` = the
+# whole host); path-scoped routes of other components on the host are not
+# limited by it.
 # rate_limits:
 #   - path:    /wp-login.php
 #     methods: [POST]
 #     average: 10
 #     period:  1h
 #     burst:   10
+#   - path:    /
+#     prefix:  true
+#     average: 20
+#     period:  1s
+#     burst:   60
 
 # Optional IR-side service override for Traefik-internal services like api@internal
 # ingress_service:
