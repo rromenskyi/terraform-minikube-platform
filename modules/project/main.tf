@@ -206,7 +206,9 @@ locals {
   }
 
   # Middleware chain per component, shared by its whole-host and its
-  # path-scoped IngressRoute rules. Three sources:
+  # path-scoped IngressRoute rules. Sources:
+  #   - `host_rate_limit:` (per-component, in-namespace RateLimit) — first,
+  #     so over-limit requests stop before auth and the workload
   #   - `basic_auth: true` (per-component, in-namespace middleware)
   #   - `auth: zitadel` (cross-namespace forward-auth → oauth2-proxy in
   #     `ingress-controller`)
@@ -220,6 +222,7 @@ locals {
   ir_middlewares = {
     for name, c in local.normalized_components :
     name => concat(
+      contains(keys(local.host_rate_limits), name) ? [{ name = "${name}-host-rate-limit" }] : [],
       contains(keys(local.basic_auth_components), name) ? [{ name = "${name}-basic-auth" }] : [],
       contains(keys(local.zitadel_auth_components), name) ? var.oauth2_proxy_middlewares : [],
       var.fallback_errors_middleware == null || !try(c.fallback_errors, true) ? [] : [var.fallback_errors_middleware],
@@ -270,12 +273,24 @@ locals {
     name => c if try(c.auth, "") == "zitadel"
   }
 
+  # One request rate limit for everything a component serves
+  # (`host_rate_limit:` in the component yaml): a RateLimit middleware on
+  # all of its own routes (whole-host and path-scoped), counted per client
+  # like `rate_limits`. Routes of other components or modules on the same
+  # host are not affected.
+  host_rate_limits = {
+    for name, c in local.normalized_components :
+    name => {
+      average = c.host_rate_limit.average
+      period  = try(c.host_rate_limit.period, "1s")
+      burst   = try(c.host_rate_limit.burst, c.host_rate_limit.average)
+    } if try(c.host_rate_limit, null) != null
+  }
+
   # Per-path request rate limits (`rate_limits:` in the component yaml),
   # keyed "<component>/<index>". Each entry gets its own Traefik RateLimit
   # middleware and its own IngressRoute rule on the component's whole-host
-  # routes, so the limit applies to that path only (`prefix: true`: to the
-  # path and everything below it; `path: /` with `prefix: true` = the whole
-  # host). Clients are counted by
+  # routes, so the limit applies to that path only. Clients are counted by
   # `CF-Connecting-IP`: every request arrives through the Cloudflare Tunnel,
   # so the socket peer is always cloudflared and the header carries the
   # real client.
@@ -286,7 +301,6 @@ locals {
         component = name
         name      = "${name}-rate-limit-${i}"
         path      = rl.path
-        prefix    = try(rl.prefix, false)
         methods   = try(rl.methods, [])
         average   = rl.average
         period    = try(rl.period, "1m")

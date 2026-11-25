@@ -197,6 +197,32 @@ resource "kubectl_manifest" "rate_limit_middleware" {
   })
 }
 
+# One RateLimit middleware per component with `host_rate_limit:`; the
+# component's IngressRoute attaches it to all of its routes.
+resource "kubectl_manifest" "host_rate_limit_middleware" {
+  for_each = local.host_rate_limits
+
+  yaml_body = yamlencode({
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "Middleware"
+    metadata = {
+      name      = "${each.key}-host-rate-limit"
+      namespace = local.namespace
+      labels    = module.project_label.tags
+    }
+    spec = {
+      rateLimit = {
+        average = each.value.average
+        period  = each.value.period
+        burst   = each.value.burst
+        sourceCriterion = {
+          requestHeaderName = "CF-Connecting-IP"
+        }
+      }
+    }
+  })
+}
+
 resource "kubectl_manifest" "basic_auth_middleware" {
   for_each = local.basic_auth_components
 

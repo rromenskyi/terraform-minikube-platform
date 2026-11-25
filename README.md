@@ -602,23 +602,21 @@ basic_auth: true
 # defaults to 1m and `burst` to `average`. Each Traefik pod keeps its own
 # counters, so the effective limit is the value times the Traefik replica
 # count.
-# `prefix: true` limits the path and everything below it, on segment
-# boundaries (`/api` covers `/api` and `/api/...`, not `/apix`; `path: /` =
-# the whole host). Its rule sits just above the host's plain route, so any
-# more specific route on the host (path-scoped routes, other modules'
-# carve-outs such as the mail admin or the Zitadel login) still wins and is
-# not limited.
+# One rate limit for everything the component serves (all of its own
+# routes: whole-host and path-scoped), counted the same way. Routes of
+# other components or modules on the same host are not affected. `period`
+# defaults to 1s and `burst` to `average`.
+# host_rate_limit:
+#   average: 10
+#   period:  1s
+#   burst:   50
+#
 # rate_limits:
 #   - path:    /wp-login.php
 #     methods: [POST]
 #     average: 10
 #     period:  1h
 #     burst:   10
-#   - path:    /
-#     prefix:  true
-#     average: 20
-#     period:  1s
-#     burst:   60
 
 # Optional IR-side service override for Traefik-internal services like api@internal
 # ingress_service:

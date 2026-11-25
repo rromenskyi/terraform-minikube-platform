@@ -14,7 +14,7 @@
 resource "kubectl_manifest" "ingressroute" {
   for_each = local.routes_by_component
 
-  depends_on = [module.component, kubectl_manifest.basic_auth_middleware, kubectl_manifest.rate_limit_middleware]
+  depends_on = [module.component, kubectl_manifest.basic_auth_middleware, kubectl_manifest.rate_limit_middleware, kubectl_manifest.host_rate_limit_middleware]
 
   lifecycle {
     precondition {
@@ -46,26 +46,16 @@ resource "kubectl_manifest" "ingressroute" {
             },
             length(local.ir_middlewares[each.key]) > 0 ? { middlewares = local.ir_middlewares[each.key] } : {},
           )] : [],
-          # Rate-limited paths on the whole-host routes. An exact path sits
-          # above every path-scoped route so the limit cannot be skipped. A
-          # prefix (segment boundary, as for path-scoped routes; `/` = the
-          # whole host) sits just above this host's plain route, whose
-          # priority is its rule's length: every more specific route on the
-          # host, path-scoped or another module's carve-out, still wins and
-          # is not limited. The longer prefix wins among prefixes.
+          # Rate-limited paths on the whole-host routes. The priority sits
+          # above every path-scoped route so the limit cannot be skipped.
           length(each.value) == 0 ? [] : [
             for rl in values(local.rate_limits) : {
               match = join(" && ", concat(
-                [
-                  "(${join(" || ", [for d in each.value : "Host(`${d}`)"])})",
-                  !rl.prefix ? "Path(`${rl.path}`)" : rl.path == "/" ? "PathPrefix(`/`)" : "(Path(`${rl.path}`) || PathPrefix(`${rl.path}/`))",
-                ],
+                ["(${join(" || ", [for d in each.value : "Host(`${d}`)"])})", "Path(`${rl.path}`)"],
                 length(rl.methods) > 0 ? ["(${join(" || ", [for m in rl.methods : "Method(`${m}`)"])})"] : [],
               ))
-              kind = "Rule"
-              priority = (rl.prefix
-                ? length(join(" || ", [for d in each.value : "Host(`${d}`)"])) + 1 + length(rl.path)
-              : 20000 + length(rl.path))
+              kind        = "Rule"
+              priority    = 20000 + length(rl.path)
               services    = [local.ir_service_refs[each.key]]
               middlewares = concat([{ name = rl.name }], local.ir_middlewares[each.key])
             } if rl.component == each.key
