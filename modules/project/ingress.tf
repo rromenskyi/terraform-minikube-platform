@@ -28,11 +28,11 @@ resource "kubectl_manifest" "ingressroute" {
     # route of the component.
     precondition {
       condition = !contains(keys(local.host_rate_limits), each.key) || (
-        can(tonumber(local.host_rate_limits[each.key].average)) && try(tonumber(local.host_rate_limits[each.key].average) > 0, false) &&
-        can(tonumber(local.host_rate_limits[each.key].burst)) && try(tonumber(local.host_rate_limits[each.key].burst) > 0, false) &&
-        can(regex("^[0-9]+(ms|s|m|h)$", local.host_rate_limits[each.key].period))
+        can(regex("^[1-9][0-9]*$", tostring(local.host_rate_limits[each.key].average))) &&
+        can(regex("^[1-9][0-9]*$", tostring(local.host_rate_limits[each.key].burst))) &&
+        can(regex("^[1-9][0-9]*(ms|s|m|h)$", local.host_rate_limits[each.key].period))
       )
-      error_message = "component '${each.key}' in project '${local.namespace}': host_rate_limit needs a positive number `average` (and `burst`, if set) and a `period` like 1s, 500ms, 1m or 1h."
+      error_message = "component '${each.key}' in project '${local.namespace}': host_rate_limit needs a positive whole number `average` (and `burst`, if set) and a non-zero `period` like 1s, 500ms, 1m or 1h."
     }
   }
 

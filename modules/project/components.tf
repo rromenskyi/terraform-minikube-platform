@@ -215,9 +215,11 @@ resource "kubectl_manifest" "host_rate_limit_middleware" {
     }
     spec = {
       rateLimit = {
-        average = each.value.average
+        # Numbers even when the yaml quotes them (the CRD wants integers;
+        # the IngressRoute precondition rejects anything else).
+        average = try(tonumber(each.value.average), each.value.average)
         period  = each.value.period
-        burst   = each.value.burst
+        burst   = try(tonumber(each.value.burst), each.value.burst)
         sourceCriterion = {
           requestHeaderName = "CF-Connecting-IP"
         }
