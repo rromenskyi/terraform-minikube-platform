@@ -1,3 +1,3 @@
 cpu:    "32"
-memory: "48Gi"
+memory: "64Gi"
 pods:   30
