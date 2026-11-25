@@ -229,7 +229,7 @@ resource "kubectl_manifest" "host_rate_limit_middleware" {
     spec = {
       rateLimit = {
         # Numbers even when the yaml quotes them (the CRD wants integers;
-        # the IngressRoute precondition rejects anything else).
+        # the precondition above rejects anything else).
         average = try(tonumber(each.value.average), each.value.average)
         period  = each.value.period
         burst   = try(tonumber(each.value.burst), each.value.burst)
