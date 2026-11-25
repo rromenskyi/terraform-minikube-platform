@@ -373,9 +373,18 @@ resource "helm_release" "scale_set" {
     # cluster-autoscaler does not know as a controller ("not replicated"), so
     # it would keep a power-managed node on forever. The ARC controller
     # recreates it on another node when evicted.
+    # The AutoscalingListener CRD requires spec.containers once a template is
+    # set (a metadata-only template makes every listener creation fail). A
+    # container named `listener` is merged into the controller's own (only
+    # the fields set here override); the controller copies the template's
+    # terminationGracePeriodSeconds as is, so keep its default of 60.
     listenerTemplate = {
       metadata = {
         annotations = { "cluster-autoscaler.kubernetes.io/safe-to-evict" = "true" }
+      }
+      spec = {
+        containers                    = [{ name = "listener" }]
+        terminationGracePeriodSeconds = 60
       }
     }
     template = {
