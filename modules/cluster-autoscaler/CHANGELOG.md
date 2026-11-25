@@ -8,6 +8,11 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- `--daemonset-eviction-for-occupied-nodes=false`: a scale-down drain no
+  longer evicts DaemonSet Pods. It used to evict the CSI node plugin together
+  with the workload Pods, so their volumes could not be unmounted and the
+  drain ran into its 10-minute timeout. DaemonSet Pods now stop when the
+  machine shuts down, as with `kubectl drain`.
 - cluster-autoscaler v1.37.0. Its externalgrpc provider reads the
   ResourceSlices in plugpool's node group templates, so a pending pod whose
   DRA claim (a GPU) fits the devices in a template can now trigger a scale-up

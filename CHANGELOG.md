@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- cluster-autoscaler no longer evicts DaemonSet Pods during a scale-down, so the CSI node plugin stays until the workload volumes are unmounted. See the module changelog.
 - ARC listener Pods may be evicted by cluster-autoscaler (`safe-to-evict`), so they no longer keep a power-managed node on. See the module changelog.
 - `platform` namespace quota 48Gi → 64Gi memory (`config/limits/platform.yaml`): the shared Postgres gets larger limits; limits were already at 45.4Gi of 48Gi.
 - trivy 0.76.2 for trivy-operator's scan Jobs and built-in server (fixes CVE-2026-111497 in the trivy image; the latest chart 0.38.1 still ships 0.76.1), and plugin-barman-cloud chart 0.9.0 (v0.16.0; its sidecar fixes GHSA-6q48-6c7w-9gw2). **Rolls the Postgres clusters:** CNPG sees the new sidecar image in each instance's pod spec, recreates the replicas and restarts the primary (with the default `unsupervised`/`restart` update settings: a short write outage per cluster). Apply in a quiet moment. See the module changelogs.
