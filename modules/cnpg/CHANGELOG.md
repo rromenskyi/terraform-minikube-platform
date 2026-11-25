@@ -8,6 +8,7 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 ## [Unreleased]
 
 ### Added
+- `backup_read_timeout`: barman-cloud `--read-timeout` for WAL archive and restore (default 60, barman's own).
 - `smart_shutdown_timeout` (`spec.smartShutdownTimeout`, default 180 as the operator's).
 - `replica_cluster.resources` and `replica_cluster.parameters`: the second cluster's own requests/limits and parameters merged over `parameters` (e.g. a smaller `shared_buffers` on smaller nodes).
 

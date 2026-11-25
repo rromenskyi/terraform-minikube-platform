@@ -359,7 +359,13 @@ resource "kubectl_manifest" "object_store" {
           accessKeyId     = { name = kubernetes_secret_v1.backup_credentials["enabled"].metadata[0].name, key = "ACCESS_KEY_ID" }
           secretAccessKey = { name = kubernetes_secret_v1.backup_credentials["enabled"].metadata[0].name, key = "ACCESS_SECRET_KEY" }
         }
-        wal  = { compression = "gzip" }
+        # A stalled upload holds a primary's shutdown (Postgres waits for the
+        # last WAL to be archived): bound each read so boto retries instead.
+        wal = {
+          compression                  = "gzip"
+          archiveAdditionalCommandArgs = ["--read-timeout=${var.backup_read_timeout}"]
+          restoreAdditionalCommandArgs = ["--read-timeout=${var.backup_read_timeout}"]
+        }
         data = { compression = "gzip" }
       }
       # Newer boto3 sends integrity checksums that some S3-compatible stores
