@@ -337,9 +337,13 @@ locals {
   #     (`<ns>_<key>` / `<key>-postgres-credentials`). Use when one
   #     chart-managed app needs more than one Postgres logical DB in
   #     the same tenant namespace (e.g. an app + its Synapse).
-  _shared_pg_raw     = try(var.shared_services.postgres, false)
-  _shared_pg_default = can(tobool(local._shared_pg_raw)) ? tobool(local._shared_pg_raw) : try(local._shared_pg_raw.enabled, false)
-  _shared_pg_extras  = can(tobool(local._shared_pg_raw)) ? [] : try(local._shared_pg_raw.extra_databases, [])
+  #     `extensions: [<name>, ...]` (map shape only): extensions the setup
+  #     Job creates in the default DB as superuser (the tenant role can't),
+  #     e.g. `vector` (pgvector). Must be available in the cluster image.
+  _shared_pg_raw        = try(var.shared_services.postgres, false)
+  _shared_pg_default    = can(tobool(local._shared_pg_raw)) ? tobool(local._shared_pg_raw) : try(local._shared_pg_raw.enabled, false)
+  _shared_pg_extras     = can(tobool(local._shared_pg_raw)) ? [] : try(local._shared_pg_raw.extra_databases, [])
+  pg_default_extensions = can(tobool(local._shared_pg_raw)) ? [] : try(local._shared_pg_raw.extensions, [])
 
   needs_postgres = anytrue([
     for _, c in local.normalized_components : try(c.postgres, false)
