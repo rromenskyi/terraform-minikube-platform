@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `network_policies` presets per project env, with `network_policies.mail_relay_cidrs` / `internet_except` in platform.yaml for the operator-only targets. See the project module changelog.
 - `forward_auth.extra_hosts`: Zitadel-gated hosts on another domain than the auth host's (redirect URIs for them). See the oauth2-proxy module changelog.
 - `services.gpu_dra.device_shares` and dra-driver-dri 0.3.0. See the gpu-dra module changelog.
 - `shared_services.postgres.extensions` in domain yaml: Postgres extensions (e.g. pgvector) created in the project's database. See the project module changelog.

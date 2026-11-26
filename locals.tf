@@ -783,6 +783,9 @@ locals {
     monitoring = try(local._platform_raw.monitoring, {})
     # Operator gate allowlist (`forward_auth.allowed_emails` / `allowed_domains`).
     forward_auth = try(local._platform_raw.forward_auth, {})
+    # NetworkPolicy preset targets only the operator knows (network_policies.tf):
+    # `mail_relay_cidrs`, extra `internet_except` ranges.
+    network_policies = try(local._platform_raw.network_policies, {})
     # Node pools (node_pools.tf): pool name => { nodes }.
     node_pools      = try(local._platform_raw.node_pools, {})
     node_pool_label = try(local._platform_raw.node_pool_label, "node-pool")
@@ -881,6 +884,8 @@ locals {
           gcp_wif_service_accounts = try(env_spec.gcp_wif_service_accounts, {})
           # Claims for chart-managed workloads (modules/project volume_claims).
           volume_claims = try(env_spec.volume_claims, {})
+          # NetworkPolicy presets (modules/project network_policies.tf).
+          network_policies = try(env_spec.network_policies, {})
           # Engine-managed Zitadel OIDC clients for chart-deployed
           # apps. Engine creates a Zitadel Project + OIDC Application
           # per entry and emits a Secret in the project namespace

@@ -625,6 +625,32 @@ basic_auth: true
 # entry_points: [web]
 ```
 
+### NetworkPolicy presets (`network_policies:` in a domain yaml env)
+
+For pods the platform doesn't deploy itself (Argo CD apps), select them by
+labels and pick ready-made rules; the engine fills in where Traefik,
+monitoring, cluster DNS and the shared Postgres run. `ingress`/`egress`
+absent = unrestricted in that direction, an empty list = deny all.
+
+```yaml
+network_policies:
+  edge-only:
+    pods:    { app.kubernetes.io/name: [web, ingest] }
+    ingress: [traefik, monitoring]                 # + same_namespace
+  worker-egress:
+    pods:    { app.kubernetes.io/name: [worker] }
+    egress:  [dns, postgres, mail_relay, internet] # + same_namespace
+```
+
+`mail_relay` and extra ranges `internet` must not reach come from
+`platform.yaml`:
+
+```yaml
+network_policies:
+  mail_relay_cidrs: [10.0.0.1/32]
+  internet_except:  [203.0.113.0/29]   # e.g. the site's own public addresses
+```
+
 ### Resource quotas (`config/limits/*.yaml`)
 
 Every namespace this platform creates looks up `config/limits/<namespace>.yaml` first, and falls back to `config/limits/default.yaml`.
