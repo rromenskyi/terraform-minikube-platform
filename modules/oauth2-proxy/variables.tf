@@ -32,6 +32,18 @@ variable "auth_hostname" {
   type        = string
 }
 
+variable "extra_hosts" {
+  description = "Gated hostnames outside `cookie_domain` (another domain). traefik-forward-auth sends their callback to `https://<host>/_oauth` instead of the auth host and sets a host-only cookie, so each needs its own redirect URI on the Zitadel application."
+  type        = list(string)
+  default     = []
+  nullable    = false
+
+  validation {
+    condition     = alltrue([for h in var.extra_hosts : can(regex("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$", h))])
+    error_message = "extra_hosts must be plain hostnames (no scheme, port or path)."
+  }
+}
+
 variable "cookie_domain" {
   description = "Cookie scope. Set to the parent domain WITHOUT a leading dot (e.g. `example.com`) — traefik-forward-auth canonicalises this and emits cookies that cover every subdomain."
   type        = string
