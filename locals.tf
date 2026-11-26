@@ -312,10 +312,11 @@ locals {
       gpu_dra = {
         enabled         = false
         namespace       = "gpu-dra"
-        image           = "ghcr.io/ipsupport-llc/dra-driver-dri:0.2.3@sha256:b13344c1faaf5672e206c40de48419b55649950949d0d383ffc5ab146e71b672"
+        image           = "ghcr.io/ipsupport-llc/dra-driver-dri:0.3.0@sha256:ca41fb6a1f1fb8d1b62375c6994a20fc205a9663d47d534731bf041fc73a0af1"
         driver_name     = ""
         node_selector   = { gpu = "dri" }
         vram_reserve    = "256Mi"
+        device_shares   = 0
         rescan_interval = "30s"
       }
       # Piraeus Datastore: LINSTOR/DRBD block storage with CSI.

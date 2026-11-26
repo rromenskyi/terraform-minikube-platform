@@ -115,6 +115,10 @@ resource "kubernetes_daemon_set_v1" "this" {
             value = var.vram_reserve
           }
           env {
+            name  = "DEVICE_SHARES"
+            value = tostring(var.device_shares)
+          }
+          env {
             name  = "RESCAN_INTERVAL"
             value = var.rescan_interval
           }

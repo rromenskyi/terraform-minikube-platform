@@ -7,6 +7,12 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- `device_shares` (default 0): each GPU publishes a consumable `shares` capacity of N; a claim takes 1 unless it asks for more (`DEVICE_SHARES`, driver 0.3.0). Lets small claims spread one per GPU instead of piling onto the first.
+
+### Changed
+- Default image dra-driver-dri 0.3.0.
+
 ### Fixed
 - `DRIClaimVRAMOverClaim` and the "Per-pod VRAM" dashboard panel name the
   pod that uses the VRAM (`exported_namespace`/`exported_pod`) instead of the

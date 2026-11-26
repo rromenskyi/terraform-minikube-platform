@@ -31,6 +31,18 @@ variable "vram_reserve" {
   default     = "256Mi"
 }
 
+variable "device_shares" {
+  description = "Consumable `shares` capacity each GPU publishes; a claim takes one unless it asks for more. 0 publishes none (behaviour as before)."
+  type        = number
+  default     = 0
+  nullable    = false
+
+  validation {
+    condition     = var.device_shares >= 0 && floor(var.device_shares) == var.device_shares
+    error_message = "device_shares must be a whole number >= 0."
+  }
+}
+
 variable "rescan_interval" {
   description = "How often the plugin rescans sysfs (Go duration)."
   type        = string
