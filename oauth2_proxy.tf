@@ -55,4 +55,8 @@ module "oauth2_proxy" {
   # Who may pass the operator gate (gitignored config `forward_auth:`).
   allowed_emails  = try(local.platform.forward_auth.allowed_emails, [])
   allowed_domains = try(local.platform.forward_auth.allowed_domains, [])
+
+  # `auth: zitadel` hosts on other domains than the parent one
+  # (`forward_auth.extra_hosts`): each needs its own redirect URI.
+  extra_hosts = try(local.platform.forward_auth.extra_hosts, [])
 }

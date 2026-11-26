@@ -89,8 +89,9 @@ resource "zitadel_application_oidc" "this" {
   name = local.app_name
 
   # `/_oauth` is traefik-forward-auth's hard-coded callback path on the
-  # auth host (not `/oauth2/callback` like oauth2-proxy uses).
-  redirect_uris             = ["https://${var.auth_hostname}/_oauth"]
+  # auth host (not `/oauth2/callback` like oauth2-proxy uses). Gated hosts on
+  # another domain get their callback on the host itself.
+  redirect_uris             = concat(["https://${var.auth_hostname}/_oauth"], [for h in var.extra_hosts : "https://${h}/_oauth"])
   post_logout_redirect_uris = ["https://${var.auth_hostname}/"]
 
   response_types   = ["OIDC_RESPONSE_TYPE_CODE"]
