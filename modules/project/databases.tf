@@ -165,6 +165,13 @@ resource "kubernetes_job_v1" "postgres_setup" {
 
   depends_on = [kubernetes_namespace_v1.this]
 
+  lifecycle {
+    precondition {
+      condition     = alltrue([for e in local.pg_default_extensions : can(regex("^[a-z0-9_]+$", e))])
+      error_message = "project '${local.namespace}': shared_services.postgres.extensions must be extension names ([a-z0-9_]+), got ${jsonencode(local.pg_default_extensions)}."
+    }
+  }
+
   metadata {
     name      = "postgres-setup-${local.namespace}"
     namespace = var.postgres_namespace
@@ -234,13 +241,16 @@ resource "kubernetes_job_v1" "postgres_setup" {
           # re-applies are safe (tenant DB survives terraform destroy → re-apply).
           command = [
             "sh", "-c",
-            join(" && ", [
+            join(" && ", concat([
               "psql -h ${var.postgres_host} -U postgres -tc \"SELECT 1 FROM pg_database WHERE datname = '${local.pg_database}'\" | grep -q 1 || psql -h ${var.postgres_host} -U postgres -c \"CREATE DATABASE \\\"${local.pg_database}\\\"\"",
               "psql -h ${var.postgres_host} -U postgres -tc \"SELECT 1 FROM pg_roles WHERE rolname = '${local.pg_user}'\" | grep -q 1 || psql -h ${var.postgres_host} -U postgres -c \"CREATE ROLE \\\"${local.pg_user}\\\" WITH LOGIN PASSWORD '$SETUP_PASSWORD'\"",
               "psql -h ${var.postgres_host} -U postgres -c \"ALTER ROLE \\\"${local.pg_user}\\\" WITH PASSWORD '$SETUP_PASSWORD'\"",
               "psql -h ${var.postgres_host} -U postgres -c \"GRANT ALL PRIVILEGES ON DATABASE \\\"${local.pg_database}\\\" TO \\\"${local.pg_user}\\\"\"",
               "psql -h ${var.postgres_host} -U postgres -d ${local.pg_database} -c \"GRANT ALL ON SCHEMA public TO \\\"${local.pg_user}\\\"\"",
-            ])
+              ], [
+              for e in local.pg_default_extensions :
+              "psql -h ${var.postgres_host} -U postgres -d ${local.pg_database} -c \"CREATE EXTENSION IF NOT EXISTS \\\"${e}\\\"\""
+            ]))
           ]
         }
       }
