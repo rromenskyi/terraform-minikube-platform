@@ -24,6 +24,7 @@ services:
     driver_name: gpu.example.com   # a DNS subdomain you own; also the DeviceClass name
     # node_selector: { gpu: dri }  # label your GPU nodes with it
     # vram_reserve: 256Mi          # held back per GPU for the kernel driver
+    # device_shares: 0             # consumable `shares` per GPU (a claim takes 1 unless it asks for more); 0 = none
 ```
 
 ## Claiming VRAM

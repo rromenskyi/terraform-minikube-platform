@@ -16,5 +16,6 @@ module "gpu_dra" {
   driver_name     = local.platform.services.gpu_dra.driver_name
   node_selector   = local.platform.services.gpu_dra.node_selector
   vram_reserve    = local.platform.services.gpu_dra.vram_reserve
+  device_shares   = local.platform.services.gpu_dra.device_shares
   rescan_interval = local.platform.services.gpu_dra.rescan_interval
 }

@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `services.gpu_dra.device_shares` and dra-driver-dri 0.3.0. See the gpu-dra module changelog.
 - `shared_services.postgres.extensions` in domain yaml: Postgres extensions (e.g. pgvector) created in the project's database. See the project module changelog.
 - `host_rate_limit` in component yaml: a request rate limit on every route of a component. See the project module changelog.
 
