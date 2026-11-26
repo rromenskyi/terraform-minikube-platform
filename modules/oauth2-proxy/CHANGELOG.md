@@ -8,7 +8,7 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
-- `extra_hosts`: gated hostnames on another domain than `cookie_domain`. Each gets `https://<host>/_oauth` as a redirect URI on the Zitadel application; traefik-forward-auth already sends their callback there and sets a host-only cookie.
+- `extra_hosts`: gated hostnames on another domain than `cookie_domain`. Each gets `https://<host>/_oauth` as a redirect URI on the Zitadel application; traefik-forward-auth already sends their callback there and scopes the cookie to that host. The gated route must cover the whole host.
 
 ### Fixed
 - The Zitadel application puts the userinfo claims (e-mail) into the ID token

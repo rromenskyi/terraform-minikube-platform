@@ -33,7 +33,7 @@ variable "auth_hostname" {
 }
 
 variable "extra_hosts" {
-  description = "Gated hostnames outside `cookie_domain` (another domain). traefik-forward-auth sends their callback to `https://<host>/_oauth` instead of the auth host and sets a host-only cookie, so each needs its own redirect URI on the Zitadel application."
+  description = "Gated hostnames outside `cookie_domain` (another domain). traefik-forward-auth sends their callback to `https://<host>/_oauth` instead of the auth host and scopes the cookie to that host (and its subdomains), so each needs its own redirect URI on the Zitadel application. The gated route must cover the whole host, so `/_oauth` reaches the gate."
   type        = list(string)
   default     = []
   nullable    = false
