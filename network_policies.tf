@@ -12,6 +12,13 @@ locals {
       namespace  = local.postgres.namespace
       pod_labels = { "cnpg.io/cluster" = local.cnpg.name }
     } : null
+    # NodeLocal DNSCache answers on the node itself (its local IP and the
+    # kube-dns ClusterIP, no DNAT to a CoreDNS pod), so the `dns` preset
+    # also allows those addresses, as KEP-1024 advises for NetworkPolicy.
+    dns_cidrs = local.platform.services.node_local_dns.enabled ? [
+      "${module.node_local_dns.local_ip}/32",
+      "${one([for s in data.kubernetes_service_v1.kube_dns : s.spec[0].cluster_ip])}/32",
+    ] : []
     mail_relay_cidrs = try(local.platform.network_policies.mail_relay_cidrs, [])
     internet_except = concat(
       ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "169.254.0.0/16", "127.0.0.0/8"],

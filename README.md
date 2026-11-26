@@ -630,7 +630,8 @@ basic_auth: true
 For pods the platform doesn't deploy itself (Argo CD apps), select them by
 labels and pick ready-made rules; the engine fills in where Traefik,
 monitoring, cluster DNS and the shared Postgres run. `ingress`/`egress`
-absent = unrestricted in that direction, an empty list = deny all.
+absent = unrestricted in that direction, an empty list = deny all. `dns`
+also allows the NodeLocal DNSCache addresses when that cache is on.
 
 ```yaml
 network_policies:

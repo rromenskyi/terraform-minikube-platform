@@ -260,7 +260,7 @@ variable "network_policies" {
 }
 
 variable "network_policy_targets" {
-  description = "Where the presets point, from the root module: Traefik and monitoring namespaces, the shared Postgres (namespace + pod labels, or null), the mail relay CIDRs and the ranges `internet` excludes."
+  description = "Where the presets point, from the root module: Traefik and monitoring namespaces, the shared Postgres (namespace + pod labels, or null), the NodeLocal DNS addresses, the mail relay CIDRs and the ranges `internet` excludes."
   type = object({
     traefik_namespace    = string
     monitoring_namespace = string
@@ -268,6 +268,7 @@ variable "network_policy_targets" {
       namespace  = string
       pod_labels = map(string)
     })
+    dns_cidrs        = list(string)
     mail_relay_cidrs = list(string)
     internet_except  = list(string)
   })
@@ -275,6 +276,7 @@ variable "network_policy_targets" {
     traefik_namespace    = "ingress-controller"
     monitoring_namespace = "monitoring"
     postgres             = null
+    dns_cidrs            = []
     mail_relay_cidrs     = []
     internet_except      = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "169.254.0.0/16", "127.0.0.0/8"]
   }

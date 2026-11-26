@@ -111,6 +111,14 @@ resource "kubernetes_network_policy_v1" "preset" {
             match_labels = { "k8s-app" = "kube-dns" }
           }
         }
+        dynamic "to" {
+          for_each = var.network_policy_targets.dns_cidrs
+          content {
+            ip_block {
+              cidr = to.value
+            }
+          }
+        }
         ports {
           protocol = "UDP"
           port     = "53"
