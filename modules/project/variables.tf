@@ -252,3 +252,32 @@ variable "volume_claims" {
     error_message = "volume_claims: size must look like 500Mi, 250Gi or 1Ti."
   }
 }
+
+variable "network_policies" {
+  description = "NetworkPolicy presets for the project's pods (`network_policies:` in the domain yaml env): `<name> => { pods = { <label> = [values] }, ingress = [traefik|monitoring|same_namespace], egress = [dns|postgres|mail_relay|internet|same_namespace] }`. See network_policies.tf."
+  type        = any
+  default     = {}
+}
+
+variable "network_policy_targets" {
+  description = "Where the presets point, from the root module: Traefik and monitoring namespaces, the shared Postgres (namespace + pod labels, or null), the NodeLocal DNS addresses, the mail relay CIDRs and the ranges `internet` excludes."
+  type = object({
+    traefik_namespace    = string
+    monitoring_namespace = string
+    postgres = object({
+      namespace  = string
+      pod_labels = map(string)
+    })
+    dns_cidrs        = list(string)
+    mail_relay_cidrs = list(string)
+    internet_except  = list(string)
+  })
+  default = {
+    traefik_namespace    = "ingress-controller"
+    monitoring_namespace = "monitoring"
+    postgres             = null
+    dns_cidrs            = []
+    mail_relay_cidrs     = []
+    internet_except      = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "169.254.0.0/16", "127.0.0.0/8"]
+  }
+}

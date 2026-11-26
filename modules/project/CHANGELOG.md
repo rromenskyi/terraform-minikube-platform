@@ -8,6 +8,7 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- `network_policies` (domain yaml env): NetworkPolicy presets for pods deployed by Argo CD, selected by labels. Ingress presets `traefik`, `monitoring`, `same_namespace`; egress presets `dns`, `postgres` (shared CNPG), `mail_relay`, `internet` (minus private and operator-listed ranges), `same_namespace`. Targets come from the root (`network_policy_targets`).
 - `shared_services.postgres.extensions` (map shape): extensions the setup Job creates in the project's default database as superuser (e.g. `vector`). Projects without it keep the same setup Job (no replacement).
 - `host_rate_limit` (component yaml): one RateLimit middleware, counted per client, attached to every route of the component (Traefik keeps a counter per route); values are checked at plan time. No new routers, so routes of other components or modules on the same host keep their precedence.
 - `volume_preferred_node_selectors` (StorageClass => node selectors), passed to components with `storage_class`.

@@ -323,6 +323,10 @@ module "project" {
   gcp_wif_service_accounts = try(each.value.gcp_wif_service_accounts, {})
   volume_claims            = try(each.value.volume_claims, {})
 
+  # NetworkPolicy presets (network_policies.tf at the root has the targets).
+  network_policies       = try(each.value.network_policies, {})
+  network_policy_targets = local.network_policy_targets
+
   # Operator-supplied literal data for entries declared in this
   # project's `secrets:` map. When a `secrets:<name>` entry's name
   # appears as a top-level key in `var.operator_secret_values`, the
