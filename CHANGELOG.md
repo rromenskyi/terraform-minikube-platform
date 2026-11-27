@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- dra-driver-dri 0.4.0: a GPU the kernel reports hung (`ring ... timeout` with `amdgpu.gpu_recovery=0`) gets a `NoExecute` device taint until the node reboots, so its pods move to healthy GPUs; the plugin DaemonSet is now privileged (to read `/dev/kmsg`). Alerts `DRIGPUHung`, `DRIKernelLogNotWatched`. See the gpu-dra module changelog.
+- `services.node_health` (`node_health.tf`, `modules/node-health`): node-problem-detector marks a node whose kernel logs hung tasks (`KernelDeadlock`), node-readiness-controller keeps a `NoSchedule` taint on it until the condition clears (after a reboot), with alerts. Off by default; `dry_run` (default true) only reports what would be tainted. See the module README.
 - `network_policies` presets per project env, with `network_policies.mail_relay_cidrs` / `internet_except` in platform.yaml for the operator-only targets. See the project module changelog.
 - `forward_auth.extra_hosts`: Zitadel-gated hosts on another domain than the auth host's (redirect URIs for them). See the oauth2-proxy module changelog.
 - `services.gpu_dra.device_shares` and dra-driver-dri 0.3.0. See the gpu-dra module changelog.

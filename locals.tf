@@ -312,7 +312,7 @@ locals {
       gpu_dra = {
         enabled         = false
         namespace       = "gpu-dra"
-        image           = "ghcr.io/ipsupport-llc/dra-driver-dri:0.3.0@sha256:ca41fb6a1f1fb8d1b62375c6994a20fc205a9663d47d534731bf041fc73a0af1"
+        image           = "ghcr.io/ipsupport-llc/dra-driver-dri:0.4.0@sha256:47dd80a7c49c6690175849923c8f128d720b5bc59905e093879605cc5d8766c5"
         driver_name     = ""
         node_selector   = { gpu = "dri" }
         vram_reserve    = "256Mi"
@@ -369,6 +369,10 @@ locals {
       disk_health = {
         enabled  = false
         affinity = {}
+      }
+      node_health = {
+        enabled = false
+        dry_run = true
       }
       backup = {
         enabled            = false
@@ -770,6 +774,7 @@ locals {
       seafile              = merge(local._platform_defaults.services.seafile, try(local._platform_services.seafile, {}))
       security_scan        = merge(local._platform_defaults.services.security_scan, try(local._platform_services.security_scan, {}))
       disk_health          = merge(local._platform_defaults.services.disk_health, try(local._platform_services.disk_health, {}))
+      node_health          = merge(local._platform_defaults.services.node_health, try(local._platform_services.node_health, {}))
       traefik_public       = merge(local._platform_defaults.services.traefik_public, try(local._platform_services.traefik_public, {}))
       airllm               = merge(local._platform_defaults.services.airllm, try(local._platform_services.airllm, {}))
       airllm_dev           = merge(local._platform_defaults.services.airllm_dev, try(local._platform_services.airllm_dev, {}))

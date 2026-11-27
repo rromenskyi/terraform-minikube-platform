@@ -101,7 +101,7 @@ resource "kubernetes_daemon_set_v1" "this" {
         priority_class_name  = "system-node-critical"
         node_selector        = var.node_selector
         # See every GPU process to attribute VRAM to its pod: host PID namespace
-        # for the processes, SYS_PTRACE to read a non-root process's DRM fdinfo.
+        # for the processes; privileged (below) to read a non-root process's DRM fdinfo.
         host_pid = true
         container {
           name  = "plugin"
@@ -154,14 +154,14 @@ resource "kubernetes_daemon_set_v1" "this" {
             limits   = { memory = "128Mi" }
           }
           security_context {
-            run_as_user                = 0
-            allow_privilege_escalation = false
-            read_only_root_filesystem  = true
-            capabilities {
-              drop = ["ALL"]
-              # Read other pods' /proc/<pid>/fdinfo (DRM VRAM per process).
-              add = ["SYS_PTRACE"]
-            }
+            # Privileged to open /dev/kmsg: the plugin taints a GPU the
+            # kernel reports hung (an unprivileged container cannot open it,
+            # whatever its capabilities). It also covers reading other pods'
+            # /proc/<pid>/fdinfo (DRM VRAM per process), which needed
+            # SYS_PTRACE before.
+            privileged                = true
+            run_as_user               = 0
+            read_only_root_filesystem = true
           }
           volume_mount {
             name       = "plugins-registry"
@@ -178,6 +178,11 @@ resource "kubernetes_daemon_set_v1" "this" {
           volume_mount {
             name       = "sys"
             mount_path = "/sys"
+            read_only  = true
+          }
+          volume_mount {
+            name       = "kmsg"
+            mount_path = "/dev/kmsg"
             read_only  = true
           }
         }
@@ -207,6 +212,13 @@ resource "kubernetes_daemon_set_v1" "this" {
           host_path {
             path = "/sys"
             type = "Directory"
+          }
+        }
+        volume {
+          name = "kmsg"
+          host_path {
+            path = "/dev/kmsg"
+            type = "CharDevice"
           }
         }
       }
@@ -270,6 +282,25 @@ resource "kubectl_manifest" "rules" {
             annotations = {
               summary = "No dra-driver-dri plugin is running (GPU claims cannot be prepared)"
             }
+          },
+          {
+            # A GPU the kernel reported hung (ring timeout with
+            # gpu_recovery=0): the plugin tainted it NoExecute, its pods were
+            # evicted and it stays unusable until the node reboots.
+            alert  = "DRIGPUHung"
+            expr   = "dri_gpu_hung == 1"
+            labels = { severity = "critical" }
+            annotations = {
+              summary = "{{ $labels.node }} {{ $labels.device }}: GPU hung; its pods were evicted and it stays unusable until the node reboots"
+            }
+          },
+          {
+            # Only plugins that try to detect hangs export the gauge.
+            alert       = "DRIKernelLogNotWatched"
+            expr        = "dri_kernel_log_watched == 0"
+            for         = "15m"
+            labels      = { severity = "warning" }
+            annotations = { summary = "{{ $labels.node }}: GPU hang detection is off (the plugin cannot read /dev/kmsg)" }
           },
           {
             alert       = "DRIPrepareErrors"
