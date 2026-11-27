@@ -18,4 +18,8 @@ module "gpu_dra" {
   vram_reserve    = local.platform.services.gpu_dra.vram_reserve
   device_shares   = local.platform.services.gpu_dra.device_shares
   rescan_interval = local.platform.services.gpu_dra.rescan_interval
+  # The plugin keeps a hung node's GPUs tainted, so it must start there.
+  tolerations = local.platform.services.node_health.enabled ? [
+    { key = module.node_health.taint_key, operator = "Exists", effect = "NoSchedule" },
+  ] : []
 }

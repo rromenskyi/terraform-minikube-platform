@@ -36,6 +36,18 @@ The condition is permanent until node-problem-detector restarts:
   that node. It re-reads only the last five minutes of the kernel log, so
   wait until five minutes after the last hung-task line.
 
+Any restart of node-problem-detector clears the condition the same way,
+including a chart or image rollout: if the node is still hung but printed
+its last hung-task line more than five minutes earlier, the taint goes and
+`NodeKernelDeadlock` resolves. Reboot a node that raised the alert rather
+than waiting for it to resolve.
+
+Other DaemonSets do not tolerate the taint: a pod of theirs replaced on a
+tainted node (rollout, crash with a new pod) stays Pending until the node
+reboots. The GPU plugin (gpu-dra) tolerates it, since it must keep a hung
+node's GPUs tainted. Deleting the rule (or `enabled = false`) removes its
+taints through the controller's finalizer.
+
 The kernel prints at most `kernel.hung_task_warnings` (default 10)
 hung-task lines per boot. Once they are used up, a later hang in the same
 boot prints nothing and is not detected.

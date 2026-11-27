@@ -100,6 +100,15 @@ resource "kubernetes_daemon_set_v1" "this" {
         service_account_name = kubernetes_service_account_v1.this["enabled"].metadata[0].name
         priority_class_name  = "system-node-critical"
         node_selector        = var.node_selector
+        dynamic "toleration" {
+          for_each = var.tolerations
+          content {
+            key      = toleration.value.key
+            operator = toleration.value.operator
+            value    = toleration.value.value
+            effect   = toleration.value.effect
+          }
+        }
         # See every GPU process to attribute VRAM to its pod: host PID namespace
         # for the processes; privileged (below) to read a non-root process's DRM fdinfo.
         host_pid = true

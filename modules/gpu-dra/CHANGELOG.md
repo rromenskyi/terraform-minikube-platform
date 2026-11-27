@@ -9,6 +9,7 @@ the project itself follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 - Hung-GPU taint (dra-driver-dri 0.4.0): the DaemonSet is privileged and mounts `/dev/kmsg`; on an `amdgpu ... ring ... timeout` with `gpu_recovery=0` the driver publishes the GPU with a `NoExecute` taint `<driver_name>/hung` until the node reboots, so its pods move to healthy GPUs. Alerts `DRIGPUHung` (critical) and `DRIKernelLogNotWatched`.
+- `tolerations` (default none): extra tolerations of the plugin DaemonSet, so it can start on a node another taint marks as hung.
 - `device_shares` (default 0): each GPU publishes a consumable `shares` capacity of N; a claim takes 1 unless it asks for more (`DEVICE_SHARES`, driver 0.3.0). Lets small claims spread one per GPU instead of piling onto the first.
 
 ### Changed

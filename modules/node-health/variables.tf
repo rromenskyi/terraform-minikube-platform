@@ -1,5 +1,5 @@
 variable "enabled" {
-  description = "Install node-problem-detector, node-readiness-controller, the KernelDeadlock taint rule and its alerts. False collapses every resource to zero."
+  description = "Install node-problem-detector, node-readiness-controller, the KernelDeadlock taint rule and its alerts. False removes them; the NodeReadinessRule CRD stays (Helm never deletes CRDs)."
   type        = bool
   default     = false
 }
@@ -11,7 +11,7 @@ variable "namespace" {
 }
 
 variable "node_selector" {
-  description = "Labels of the nodes the KernelDeadlock taint rule covers (`spec.nodeSelector.matchLabels` of the NodeReadinessRule). node-readiness-controller rejects an empty selector; the default matches every Linux node. Immutable: changing it replaces the rule."
+  description = "Labels of the nodes the KernelDeadlock taint rule covers (`spec.nodeSelector.matchLabels` of the NodeReadinessRule). node-readiness-controller rejects an empty selector; the default matches every Linux node. Changing it replaces the rule."
   type        = map(string)
   default     = { "kubernetes.io/os" = "linux" }
 
@@ -55,7 +55,7 @@ variable "npd_resources" {
 }
 
 variable "nrc_chart_version" {
-  description = "Version of the node-readiness-controller Helm chart (https://github.com/kubernetes-sigs/node-readiness-controller, OCI oci://registry.k8s.io/node-readiness-controller/charts). The image follows the chart's app version. Alpha project: its API (readiness.node.x-k8s.io/v1alpha1) may change between versions."
+  description = "Version of the node-readiness-controller Helm chart (https://github.com/kubernetes-sigs/node-readiness-controller, OCI oci://registry.k8s.io/node-readiness-controller/charts). The image follows the chart's app version. Alpha project: its API (readiness.node.x-k8s.io/v1alpha1) may change between versions, and Helm installs the CRD only once (never upgrades it): on a bump, apply the new chart's CRD first."
   type        = string
   default     = "0.6.0"
 }

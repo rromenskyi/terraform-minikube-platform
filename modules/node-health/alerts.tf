@@ -23,7 +23,7 @@ resource "kubectl_manifest" "rules" {
             expr   = "kube_node_status_condition{condition=\"KernelDeadlock\",status=\"true\"} == 1"
             labels = { severity = "critical" }
             annotations = {
-              summary     = "{{ $labels.node }}: kernel tasks are hung; new pods are kept off the node"
+              summary     = "{{ $labels.node }}: kernel tasks are hung${var.dry_run ? " (taint in dry-run: new pods still land there)" : "; new pods are kept off the node"}"
               description = "node-problem-detector saw \"task ... blocked for more than N seconds\" in the kernel log (journalctl -k). Processes in state D cannot be killed; a reboot is usually the only fix.${var.dry_run ? " The taint is in dry-run mode: nothing was tainted." : ""} If the stall was transient, delete the node-problem-detector pod on that node more than five minutes after the last hung-task line to clear the condition."
             }
           },

@@ -25,6 +25,17 @@ variable "node_selector" {
   type        = map(string)
 }
 
+variable "tolerations" {
+  description = "Extra tolerations of the plugin DaemonSet, e.g. for a taint that marks a hung node: the plugin must still start there to keep its GPUs tainted and its ResourceSlice current. Objects with key, operator, value, effect."
+  type = list(object({
+    key      = string
+    operator = string
+    value    = optional(string)
+    effect   = optional(string)
+  }))
+  default = []
+}
+
 variable "vram_reserve" {
   description = "VRAM held back per GPU for the kernel driver (Kubernetes quantity)."
   type        = string

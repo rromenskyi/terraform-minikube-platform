@@ -19,6 +19,11 @@ resource "kubectl_manifest" "kernel_deadlock_rule" {
   for_each   = local.set
   depends_on = [helm_release.node_readiness_controller]
 
+  # Most of the rule's spec is immutable (CEL `self == oldSelf`); replace
+  # it on any change. Deleting it makes the controller's finalizer remove
+  # its taints, which is harmless: the new rule puts them back.
+  force_new = true
+
   yaml_body = yamlencode({
     apiVersion = "readiness.node.x-k8s.io/v1alpha1"
     kind       = "NodeReadinessRule"
