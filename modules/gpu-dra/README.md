@@ -53,7 +53,10 @@ is not enforced by the kernel: size models and contexts to the
 
 ## Alerts
 
-`DRIPrepareErrors`, `DRIVRAMOverUse` (used > claimed + reserve for 10 min),
+`DRIGPUHung` (critical: the kernel reported a GPU hung, the driver tainted
+it `NoExecute` and evicted its pods; it stays unusable until the node
+reboots), `DRIKernelLogNotWatched` (the plugin tries to detect hangs but
+cannot read `/dev/kmsg`), `DRIPrepareErrors`, `DRIVRAMOverUse` (used > claimed + reserve for 10 min),
 `DRIVRAMNearlyFull` (> 95 %), `DRIVRAMEvictedToRAM` (GTT > 1 GiB while VRAM
 is over 90 % used, for 5 min), and `DRIPluginMissing`. The last one fires
 only when **no** plugin pod is up anywhere: a per-node check would need node
